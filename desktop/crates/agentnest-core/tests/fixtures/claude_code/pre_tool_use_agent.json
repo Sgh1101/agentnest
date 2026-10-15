@@ -1,0 +1,28 @@
+{
+  "_source": "doc-derived",
+  "description": "Agent tool: description in the headline",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Agent",
+    "tool_use_id": "toolu_a1",
+    "tool_input": {
+      "description": "Explore the repository layout",
+      "prompt": "find files",
+      "subagent_type": "Explore"
+    }
+  },
+  "expect": [
+    {
+      "kind": "tool_started",
+      "state_hint": "working",
+      "headline": "보조 에이전트에게 맡겼어요: Explore the repository …",
+      "detail": {
+        "tool_name": "Agent",
+        "tool_input_summary": "Explore the repository layout"
+      }
+    }
+  ]
+}

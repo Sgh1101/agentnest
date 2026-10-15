@@ -1,0 +1,34 @@
+{
+  "_source": "doc-derived",
+  "description": "claude-code-hooks.md 5.6 example (Write create)",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "C:\\dev\\agentnest\\docs\\file.txt",
+      "content": "file content"
+    },
+    "tool_response": {
+      "filePath": "C:\\dev\\agentnest\\docs\\file.txt",
+      "type": "create"
+    },
+    "tool_use_id": "toolu_01ABC123",
+    "duration_ms": 12
+  },
+  "expect": [
+    {
+      "kind": "file_modified",
+      "category": "file",
+      "state_hint": "writing_code",
+      "headline": "file.txt 파일을 새로 만들었어요",
+      "detail": {
+        "file_path": "…\\docs\\file.txt",
+        "op": "create",
+        "duration_ms": 12
+      }
+    }
+  ]
+}

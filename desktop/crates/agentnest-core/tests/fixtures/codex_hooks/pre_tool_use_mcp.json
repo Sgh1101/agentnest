@@ -1,0 +1,29 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "mcp__server__tool form",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "tool_name": "mcp__github__create_issue",
+    "tool_use_id": "call_4",
+    "tool_input": {
+      "title": "x"
+    }
+  },
+  "expect": [
+    {
+      "kind": "tool_started",
+      "state_hint": "working",
+      "headline": "github의 create_issue을(를) 쓰고 있어요",
+      "detail": {
+        "mcp_server": "github"
+      }
+    }
+  ]
+}

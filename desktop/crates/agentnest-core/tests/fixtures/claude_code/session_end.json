@@ -1,0 +1,21 @@
+{
+  "_source": "doc-derived",
+  "description": "claude-code-hooks.md 5.13 example",
+  "hook": {
+    "session_id": "abc123",
+    "transcript_path": "/Users/me/.claude/projects/x/00893aaf.jsonl",
+    "cwd": "/Users/me/scratch",
+    "hook_event_name": "SessionEnd",
+    "reason": "other"
+  },
+  "expect": [
+    {
+      "kind": "session_ended",
+      "category": "lifecycle",
+      "headline": "세션을 마쳤어요",
+      "detail": {
+        "reason": "other"
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "PostToolUse apply_patch: one file_modified per patched file",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "tool_name": "apply_patch",
+    "tool_use_id": "call_2",
+    "tool_input": "*** Begin Patch\n*** Update File: src/a.rs\n*** Add File: docs/n.md\n*** End Patch",
+    "tool_response": "Done"
+  },
+  "expect": [
+    {
+      "kind": "file_modified",
+      "state_hint": "writing_code",
+      "detail": {
+        "op": "edit",
+        "file_path": "…/src/a.rs"
+      }
+    },
+    {
+      "kind": "file_modified",
+      "detail": {
+        "op": "create"
+      }
+    }
+  ]
+}

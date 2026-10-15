@@ -1,0 +1,31 @@
+{
+  "_source": "doc-derived",
+  "description": "claude-code-hooks.md 5.1 example (resume with context tokens), POSIX cwd without git",
+  "hook": {
+    "session_id": "abc123",
+    "transcript_path": "/Users/me/.claude/projects/x/00893aaf.jsonl",
+    "cwd": "/Users/me/scratch",
+    "hook_event_name": "SessionStart",
+    "source": "resume",
+    "model": "claude-opus-5",
+    "seconds_since_last_response": 5400,
+    "context_tokens": 182340,
+    "prompt_cache_likely_expired": true,
+    "estimated_cache_write_usd": 1.1396
+  },
+  "expect": [
+    {
+      "kind": "session_started",
+      "state_hint": null,
+      "headline": "세션을 이어서 시작했어요",
+      "detail": {
+        "source_reason": "resume",
+        "model": "claude-opus-5"
+      },
+      "project": {
+        "project_key": "/users/me/scratch",
+        "name": "scratch"
+      }
+    }
+  ]
+}

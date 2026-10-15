@@ -1,0 +1,28 @@
+{
+  "_source": "doc-derived",
+  "description": "PermissionDenied (auto mode only)",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PermissionDenied",
+    "tool_name": "Bash",
+    "tool_use_id": "toolu_pd",
+    "tool_input": {
+      "command": "rm -rf /"
+    },
+    "reason": "auto mode classifier blocked this"
+  },
+  "expect": [
+    {
+      "kind": "permission_denied_auto",
+      "category": "approval",
+      "severity": "notice",
+      "headline": "Bash 사용이 자동으로 거부됐어요",
+      "detail": {
+        "tool_name": "Bash",
+        "reason": "auto mode classifier blocked this"
+      }
+    }
+  ]
+}

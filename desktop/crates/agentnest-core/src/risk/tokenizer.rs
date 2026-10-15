@@ -154,7 +154,11 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
                 finish_segment(&mut raw, &mut tokens, &mut tok, &mut cur_piped, piped_after);
             }
             '&' => {
-                let prev = if i > 0 { chars.get(i - 1).copied() } else { None };
+                let prev = if i > 0 {
+                    chars.get(i - 1).copied()
+                } else {
+                    None
+                };
                 if next == Some('&') {
                     i += 1;
                     finish_segment(&mut raw, &mut tokens, &mut tok, &mut cur_piped, false);
@@ -203,7 +207,10 @@ pub fn substitutions(text: &str) -> Vec<String> {
         match c {
             '\'' if !in_double => in_single = true,
             '"' => in_double = !in_double,
-            '$' | '<' | '>' if chars.get(i + 1) == Some(&'(') && (c == '$' || is_proc_subst_start(&chars, i)) => {
+            '$' | '<' | '>'
+                if chars.get(i + 1) == Some(&'(')
+                    && (c == '$' || is_proc_subst_start(&chars, i)) =>
+            {
                 let (body, end) = paren_body(&chars, i + 2);
                 out.push(body);
                 i = end;
@@ -230,7 +237,11 @@ pub fn substitutions(text: &str) -> Vec<String> {
 }
 
 fn is_proc_subst_start(chars: &[char], i: usize) -> bool {
-    i == 0 || matches!(chars[i - 1], ' ' | '\t' | '=' | '\n' | ';' | '|' | '&' | '(')
+    i == 0
+        || matches!(
+            chars[i - 1],
+            ' ' | '\t' | '=' | '\n' | ';' | '|' | '&' | '('
+        )
 }
 
 /// Reads up to the matching `)`; returns the body and the index just after it (or the end of input).
@@ -317,7 +328,11 @@ pub fn unwrap_command(tokens: &[String]) -> Unwrapped<'_> {
         if ELEVATORS.contains(&n) {
             elevated = true;
             idx += 1;
-            idx = skip_wrapper_flags(tokens, idx, &["-u", "-g", "-h", "-p", "-c", "-d", "-r", "-t", "-t", "-u"]);
+            idx = skip_wrapper_flags(
+                tokens,
+                idx,
+                &["-u", "-g", "-h", "-p", "-c", "-d", "-r", "-t", "-t", "-u"],
+            );
             continue;
         }
         match n {
@@ -337,13 +352,22 @@ pub fn unwrap_command(tokens: &[String]) -> Unwrapped<'_> {
                 idx += 1;
                 idx = skip_wrapper_flags(tokens, idx, &["-s", "-k"]);
                 // the duration
-                if idx < tokens.len() && tokens[idx].chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                if idx < tokens.len()
+                    && tokens[idx]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_digit())
+                {
                     idx += 1;
                 }
             }
             "xargs" => {
                 idx += 1;
-                idx = skip_wrapper_flags(tokens, idx, &["-n", "-i", "-l", "-p", "-s", "-d", "-e", "-a"]);
+                idx = skip_wrapper_flags(
+                    tokens,
+                    idx,
+                    &["-n", "-i", "-l", "-p", "-s", "-d", "-e", "-a"],
+                );
             }
             _ => break,
         }
@@ -381,11 +405,14 @@ pub enum Inner {
     Opaque,
 }
 
-const POSIX_SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "csh", "tcsh"];
+const POSIX_SHELLS: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "csh", "tcsh",
+];
 
 /// `true` if the command word is a shell or script interpreter that can execute a downloaded script from stdin.
 pub fn is_shell_interpreter(name: &str) -> bool {
-    POSIX_SHELLS.contains(&name) || matches!(name, "powershell" | "pwsh" | "iex" | "invoke-expression")
+    POSIX_SHELLS.contains(&name)
+        || matches!(name, "powershell" | "pwsh" | "iex" | "invoke-expression")
 }
 
 /// The command line carried by `bash -c "..."`, `cmd /c ...`, `powershell -Command ...`, `-EncodedCommand`, `eval ...`
@@ -422,7 +449,10 @@ pub fn inner_payload(tokens: &[String]) -> Option<Inner> {
                     if "command".starts_with(flag) || flag == "c" {
                         return Some(Inner::Command(rest[i + 1..].join(" ")));
                     }
-                    if flag == "e" || flag == "ec" || "encodedcommand".starts_with(flag) && flag.len() >= 2 {
+                    if flag == "e"
+                        || flag == "ec"
+                        || "encodedcommand".starts_with(flag) && flag.len() >= 2
+                    {
                         return Some(match rest.get(i + 1).and_then(|b| decode_utf16le_b64(b)) {
                             Some(cmd) => Inner::Command(cmd),
                             None => Inner::Opaque,
@@ -474,7 +504,10 @@ mod tests {
     use super::*;
 
     fn toks(cmd: &str) -> Vec<Vec<String>> {
-        split_segments(cmd, Shell::Posix).into_iter().map(|s| s.tokens).collect()
+        split_segments(cmd, Shell::Posix)
+            .into_iter()
+            .map(|s| s.tokens)
+            .collect()
     }
 
     fn v(items: &[&str]) -> Vec<String> {
@@ -485,7 +518,15 @@ mod tests {
     fn splits_on_all_separators() {
         assert_eq!(
             toks("a && b || c ; d | e & f\ng"),
-            vec![v(&["a"]), v(&["b"]), v(&["c"]), v(&["d"]), v(&["e"]), v(&["f"]), v(&["g"])]
+            vec![
+                v(&["a"]),
+                v(&["b"]),
+                v(&["c"]),
+                v(&["d"]),
+                v(&["e"]),
+                v(&["f"]),
+                v(&["g"])
+            ]
         );
         let segs = split_segments("cat x | grep y && echo z", Shell::Posix);
         assert_eq!(segs.len(), 3);
@@ -496,27 +537,47 @@ mod tests {
 
     #[test]
     fn quotes_protect_separators_and_are_removed() {
-        assert_eq!(toks("echo \"a && b\" 'c; d'"), vec![v(&["echo", "a && b", "c; d"])]);
-        assert_eq!(toks("rm   -rf    \"node_modules\""), vec![v(&["rm", "-rf", "node_modules"])]);
-        assert_eq!(toks("git commit -m \"fix: a \\\" b\""), vec![v(&["git", "commit", "-m", "fix: a \" b"])]);
+        assert_eq!(
+            toks("echo \"a && b\" 'c; d'"),
+            vec![v(&["echo", "a && b", "c; d"])]
+        );
+        assert_eq!(
+            toks("rm   -rf    \"node_modules\""),
+            vec![v(&["rm", "-rf", "node_modules"])]
+        );
+        assert_eq!(
+            toks("git commit -m \"fix: a \\\" b\""),
+            vec![v(&["git", "commit", "-m", "fix: a \" b"])]
+        );
         assert_eq!(toks("echo ''"), vec![v(&["echo", ""])]);
     }
 
     #[test]
     fn unbalanced_quote_falls_back_to_naive_splitting() {
         let segs = split_segments("echo \"unterminated ; rm -rf /", Shell::Posix);
-        assert!(segs.iter().any(|s| s.tokens.first().map(String::as_str) == Some("rm")));
+        assert!(segs
+            .iter()
+            .any(|s| s.tokens.first().map(String::as_str) == Some("rm")));
     }
 
     #[test]
     fn windows_paths_keep_their_backslashes() {
-        assert_eq!(toks("del /s /q C:\\"), vec![v(&["del", "/s", "/q", "C:\\"])]);
-        assert_eq!(toks("reg add HKLM\\Software\\Foo /v Bar"), vec![v(&["reg", "add", "HKLM\\Software\\Foo", "/v", "Bar"])]);
+        assert_eq!(
+            toks("del /s /q C:\\"),
+            vec![v(&["del", "/s", "/q", "C:\\"])]
+        );
+        assert_eq!(
+            toks("reg add HKLM\\Software\\Foo /v Bar"),
+            vec![v(&["reg", "add", "HKLM\\Software\\Foo", "/v", "Bar"])]
+        );
     }
 
     #[test]
     fn redirections_are_not_separators() {
-        assert_eq!(toks("cargo test 2>&1 | tail -5"), vec![v(&["cargo", "test", "2>&1"]), v(&["tail", "-5"])]);
+        assert_eq!(
+            toks("cargo test 2>&1 | tail -5"),
+            vec![v(&["cargo", "test", "2>&1"]), v(&["tail", "-5"])]
+        );
         assert_eq!(toks("cmd &> out.txt"), vec![v(&["cmd", "&>", "out.txt"])]);
     }
 
@@ -530,7 +591,10 @@ mod tests {
     #[test]
     fn substitutions_are_extracted() {
         assert_eq!(substitutions("echo $(rm -rf /) done"), vec!["rm -rf /"]);
-        assert_eq!(substitutions("echo `date` $(a $(b))"), vec!["date", "a $(b)"]);
+        assert_eq!(
+            substitutions("echo `date` $(a $(b))"),
+            vec!["date", "a $(b)"]
+        );
         assert_eq!(substitutions("bash <(curl x.sh)"), vec!["curl x.sh"]);
         assert!(substitutions("echo '$(not run)'").is_empty());
         assert_eq!(substitutions("echo \"$(in dq)\""), vec!["in dq"]);
@@ -540,7 +604,10 @@ mod tests {
 
     #[test]
     fn base_command_strips_dirs_and_suffixes() {
-        assert_eq!(base_command("C:\\Windows\\System32\\Shutdown.EXE"), "shutdown");
+        assert_eq!(
+            base_command("C:\\Windows\\System32\\Shutdown.EXE"),
+            "shutdown"
+        );
         assert_eq!(base_command("./gradlew.bat"), "gradlew");
         assert_eq!(base_command("/usr/bin/sudo"), "sudo");
         assert_eq!(base_command(".exe"), ".exe");
@@ -566,32 +633,76 @@ mod tests {
 
     #[test]
     fn inner_payloads() {
-        assert_eq!(inner_payload(&v(&["bash", "-c", "rm -rf /"])), Some(Inner::Command("rm -rf /".into())));
-        assert_eq!(inner_payload(&v(&["sh", "-lc", "x"])), Some(Inner::Command("x".into())));
-        assert_eq!(inner_payload(&v(&["bash", "script.sh"])), None);
-        assert_eq!(inner_payload(&v(&["cmd.exe", "/c", "del", "/s", "x"])), Some(Inner::Command("del /s x".into())));
         assert_eq!(
-            inner_payload(&v(&["powershell", "-NoProfile", "-Command", "Remove-Item", "-Recurse", "x"])),
+            inner_payload(&v(&["bash", "-c", "rm -rf /"])),
+            Some(Inner::Command("rm -rf /".into()))
+        );
+        assert_eq!(
+            inner_payload(&v(&["sh", "-lc", "x"])),
+            Some(Inner::Command("x".into()))
+        );
+        assert_eq!(inner_payload(&v(&["bash", "script.sh"])), None);
+        assert_eq!(
+            inner_payload(&v(&["cmd.exe", "/c", "del", "/s", "x"])),
+            Some(Inner::Command("del /s x".into()))
+        );
+        assert_eq!(
+            inner_payload(&v(&[
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Remove-Item",
+                "-Recurse",
+                "x"
+            ])),
             Some(Inner::Command("Remove-Item -Recurse x".into()))
         );
-        assert_eq!(inner_payload(&v(&["pwsh", "-enc", "!!notbase64!!"])), Some(Inner::Opaque));
+        assert_eq!(
+            inner_payload(&v(&["pwsh", "-enc", "!!notbase64!!"])),
+            Some(Inner::Opaque)
+        );
         // "Get-Date" in UTF-16LE base64
         let enc = STANDARD.encode(
-            "Get-Date".encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>(),
+            "Get-Date"
+                .encode_utf16()
+                .flat_map(|u| u.to_le_bytes())
+                .collect::<Vec<u8>>(),
         );
         assert_eq!(
             inner_payload(&v(&["powershell", "-EncodedCommand", &enc])),
             Some(Inner::Command("Get-Date".into()))
         );
-        assert_eq!(inner_payload(&v(&["eval", "rm", "-rf", "x"])), Some(Inner::Command("rm -rf x".into())));
-        assert_eq!(inner_payload(&v(&["wsl", "-d", "Ubuntu", "-e", "rm", "-rf", "/"])), Some(Inner::Command("rm -rf /".into())));
+        assert_eq!(
+            inner_payload(&v(&["eval", "rm", "-rf", "x"])),
+            Some(Inner::Command("rm -rf x".into()))
+        );
+        assert_eq!(
+            inner_payload(&v(&["wsl", "-d", "Ubuntu", "-e", "rm", "-rf", "/"])),
+            Some(Inner::Command("rm -rf /".into()))
+        );
         assert_eq!(inner_payload(&v(&["python", "-c", "x"])), None);
         assert_eq!(inner_payload(&[]), None);
     }
 
     #[test]
     fn tokenizer_is_total_on_garbage() {
-        for s in ["", "   ", ";;;", "&&&&", "||", "|&", "\"", "'", "`", "$(", "$((", "<(", "a\\", "\u{0}", "😀 && 😀"] {
+        for s in [
+            "",
+            "   ",
+            ";;;",
+            "&&&&",
+            "||",
+            "|&",
+            "\"",
+            "'",
+            "`",
+            "$(",
+            "$((",
+            "<(",
+            "a\\",
+            "\u{0}",
+            "😀 && 😀",
+        ] {
             let _ = split_segments(s, Shell::Posix);
             let _ = split_segments(s, Shell::PowerShell);
             let _ = substitutions(s);
@@ -599,7 +710,9 @@ mod tests {
         let mut state: u64 = 42;
         let alphabet: Vec<char> = "ab '\"`$()<>|&;\n\\ -/.=é".chars().collect();
         for _ in 0..3000 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let len = (state >> 58) as usize + 1;
             let mut st = state;
             let s: String = (0..len)

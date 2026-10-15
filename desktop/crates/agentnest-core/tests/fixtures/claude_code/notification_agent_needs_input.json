@@ -1,0 +1,22 @@
+{
+  "_source": "doc-derived",
+  "description": "agent_needs_input -> notification the reducer maps to awaiting_input",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "Notification",
+    "message": "Which database should I use?",
+    "notification_type": "agent_needs_input"
+  },
+  "expect": [
+    {
+      "kind": "notification",
+      "state_hint": "awaiting_input",
+      "headline": "입력이 필요해요",
+      "detail": {
+        "notification_type": "agent_needs_input"
+      }
+    }
+  ]
+}

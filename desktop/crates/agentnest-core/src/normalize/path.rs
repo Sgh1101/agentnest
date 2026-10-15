@@ -39,10 +39,10 @@ pub fn normalize(p: &str) -> String {
         } else {
             (drive, rest) // drive-relative, e.g. `C:foo`
         }
-    } else if s.starts_with("//") {
-        ("//".to_owned(), &s[2..])
-    } else if s.starts_with('/') {
-        ("/".to_owned(), &s[1..])
+    } else if let Some(rest) = s.strip_prefix("//") {
+        ("//".to_owned(), rest)
+    } else if let Some(rest) = s.strip_prefix('/') {
+        ("/".to_owned(), rest)
     } else if s == "~" || s.starts_with("~/") {
         ("~/".to_owned(), s[1..].trim_start_matches('/'))
     } else {
@@ -122,7 +122,9 @@ pub fn resolve(path: &str, cwd: Option<&str>) -> String {
         return n;
     }
     match cwd {
-        Some(c) if !c.is_empty() => normalize(&format!("{}/{}", normalize(&expand_home_alias(c)), n)),
+        Some(c) if !c.is_empty() => {
+            normalize(&format!("{}/{}", normalize(&expand_home_alias(c)), n))
+        }
         _ => n,
     }
 }
@@ -150,7 +152,11 @@ pub fn relative_to(path: &str, root: &str) -> Option<String> {
         return None;
     }
     let rest = path.get(root.len()..)?.trim_start_matches('/');
-    Some(if rest.is_empty() { ".".to_owned() } else { rest.to_owned() })
+    Some(if rest.is_empty() {
+        ".".to_owned()
+    } else {
+        rest.to_owned()
+    })
 }
 
 /// The last path segment (after the last `/` or `\`). Empty for empty input or a trailing separator-only path.
@@ -231,22 +237,43 @@ mod tests {
     #[test]
     fn resolve_and_containment() {
         let cwd = "C:\\dev\\agentnest";
-        assert_eq!(resolve("src\\main.rs", Some(cwd)), "C:/dev/agentnest/src/main.rs");
-        assert_eq!(resolve("C:\\dev\\agentnest\\..\\other\\a", Some(cwd)), "C:/dev/other/a");
+        assert_eq!(
+            resolve("src\\main.rs", Some(cwd)),
+            "C:/dev/agentnest/src/main.rs"
+        );
+        assert_eq!(
+            resolve("C:\\dev\\agentnest\\..\\other\\a", Some(cwd)),
+            "C:/dev/other/a"
+        );
         assert_eq!(resolve("$HOME/.ssh/id_rsa", Some(cwd)), "~/.ssh/id_rsa");
         assert_eq!(resolve("%USERPROFILE%\\x", Some(cwd)), "~/x");
         assert_eq!(resolve("$env:USERPROFILE", None), "~");
         assert_eq!(resolve("rel/x", None), "rel/x");
         let root = normalize(cwd);
-        assert!(is_within("c:/DEV/agentnest/src", &root), "windows paths compare case-insensitively");
+        assert!(
+            is_within("c:/DEV/agentnest/src", &root),
+            "windows paths compare case-insensitively"
+        );
         assert!(is_within(&root, &root));
-        assert!(!is_within("C:/dev/agentnest2/x", &root), "prefix without a separator boundary is outside");
+        assert!(
+            !is_within("C:/dev/agentnest2/x", &root),
+            "prefix without a separator boundary is outside"
+        );
         assert!(!is_within("C:/dev/other", &root));
-        assert!(!is_within("/Home/me/Proj/x", "/home/me/proj"), "posix paths are case-sensitive");
+        assert!(
+            !is_within("/Home/me/Proj/x", "/home/me/proj"),
+            "posix paths are case-sensitive"
+        );
         assert!(is_within("/home/me/proj/x", "/home/me/proj"));
         assert!(is_within("/anything", "/"));
-        assert_eq!(relative_to("C:/dev/agentnest/src/main.rs", "C:/dev/agentnest").as_deref(), Some("src/main.rs"));
-        assert_eq!(relative_to("C:/DEV/agentnest/src/main.rs", "c:/dev/agentnest").as_deref(), Some("src/main.rs"));
+        assert_eq!(
+            relative_to("C:/dev/agentnest/src/main.rs", "C:/dev/agentnest").as_deref(),
+            Some("src/main.rs")
+        );
+        assert_eq!(
+            relative_to("C:/DEV/agentnest/src/main.rs", "c:/dev/agentnest").as_deref(),
+            Some("src/main.rs")
+        );
         assert_eq!(relative_to("D:/x", "C:/dev"), None);
         assert_eq!(relative_to("/a", "/a").as_deref(), Some("."));
     }
@@ -256,7 +283,10 @@ mod tests {
         assert_eq!(basename("C:\\dev\\agentnest\\src\\main.rs"), "main.rs");
         assert_eq!(basename("/a/b/"), "b");
         assert_eq!(basename(""), "");
-        assert_eq!(last_segments("C:\\dev\\agentnest", 2), vec!["dev", "agentnest"]);
+        assert_eq!(
+            last_segments("C:\\dev\\agentnest", 2),
+            vec!["dev", "agentnest"]
+        );
         assert_eq!(last_segments("/a", 2), vec!["a"]);
         assert_eq!(path_hint("C:\\dev\\agentnest"), "…\\dev\\agentnest");
         assert_eq!(path_hint("/home/me/proj"), "…/me/proj");
@@ -270,9 +300,39 @@ mod tests {
     #[test]
     fn weird_input_never_panics() {
         let samples = [
-            "", " ", "\0", "\\", "/", "//", "///", "\\\\", "\\\\?\\", "C:", "C:\\", "C:foo", ":", "~", "~~", "~user/x",
-            "..", "../..", "a/../../..", "/../../x", "C:\\..\\..\\..", "😀/😀\\😀", "a\u{202e}b", "%userprofile%", "$HOME",
-            "${HOME}", "\\\\server", "\\\\server\\share", "//?/", "//./pipe/x", "a//", "./", "x:y:z",
+            "",
+            " ",
+            "\0",
+            "\\",
+            "/",
+            "//",
+            "///",
+            "\\\\",
+            "\\\\?\\",
+            "C:",
+            "C:\\",
+            "C:foo",
+            ":",
+            "~",
+            "~~",
+            "~user/x",
+            "..",
+            "../..",
+            "a/../../..",
+            "/../../x",
+            "C:\\..\\..\\..",
+            "😀/😀\\😀",
+            "a\u{202e}b",
+            "%userprofile%",
+            "$HOME",
+            "${HOME}",
+            "\\\\server",
+            "\\\\server\\share",
+            "//?/",
+            "//./pipe/x",
+            "a//",
+            "./",
+            "x:y:z",
         ];
         for s in samples {
             let n = normalize(s);
@@ -287,7 +347,11 @@ mod tests {
             let _ = extension(s);
             let _ = segments(&n);
             let _ = is_absolute(&n);
-            assert_eq!(normalize(&n), n, "normalisation must be idempotent for {s:?}");
+            assert_eq!(
+                normalize(&n),
+                n,
+                "normalisation must be idempotent for {s:?}"
+            );
         }
     }
 
@@ -297,7 +361,9 @@ mod tests {
         let alphabet: Vec<char> = "ab/\\.:~%$ \u{0}é가😀-_".chars().collect();
         let mut state: u64 = 0x1234_5678_9abc_def0;
         for _ in 0..3000 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             let len = (state >> 60) as usize + 1;
             let mut s = String::new();
             let mut st = state;

@@ -1,0 +1,53 @@
+{
+  "_source": "doc-derived",
+  "description": "claude-code-hooks.md 3 example (PreToolUse Bash npm test)",
+  "hook": {
+    "session_id": "abc123",
+    "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+    "transcript_path": "/home/user/.claude/projects/x/transcript.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "scratchpad_dir": "/tmp/claude-1000/x/abc123/scratchpad",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm test",
+      "description": "Run test suite",
+      "timeout": 120000,
+      "run_in_background": false
+    },
+    "tool_use_id": "toolu_01ABC123"
+  },
+  "expect": [
+    {
+      "kind": "command_started",
+      "category": "command",
+      "state_hint": "testing",
+      "headline": "테스트를 돌리고 있어요 (npm test)",
+      "summary_detail": "Run test suite.",
+      "detail": {
+        "tool_name": "Bash",
+        "command": "npm test",
+        "description": "Run test suite",
+        "command_class": "test",
+        "run_in_background": false,
+        "cwd_hint": "…\\dev\\agentnest"
+      },
+      "native_event": "PreToolUse",
+      "native_ids": {
+        "tool_use_id": "toolu_01ABC123",
+        "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+        "session_id": "abc123"
+      }
+    },
+    {
+      "kind": "test_run",
+      "category": "command",
+      "state_hint": "testing",
+      "detail": {
+        "command_class": "test",
+        "runner": "npm"
+      }
+    }
+  ]
+}

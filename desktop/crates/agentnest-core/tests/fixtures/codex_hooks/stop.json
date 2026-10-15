@@ -1,0 +1,28 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "Stop: completed, no background tasks in Codex",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "Stop",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "stop_hook_active": false,
+    "last_assistant_message": "테스트를 모두 통과했어요. 다음으로 문서를 고칠게요."
+  },
+  "expect": [
+    {
+      "kind": "turn_completed",
+      "state_hint": "completed",
+      "headline": "이번 작업을 마쳤어요",
+      "summary_detail": "테스트를 모두 통과했어요.",
+      "detail": {
+        "background_tasks": 0,
+        "session_crons": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "PermissionRequest is observation-only until C6: no events, a draft without deny_and_stop",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PermissionRequest",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "tool_name": "shell",
+    "tool_input": {
+      "command": "rm -rf build"
+    }
+  },
+  "expect": [],
+  "expect_draft": {
+    "session_key": "codex:0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "tool_name": "shell",
+    "origin": "codex.hook.cli",
+    "available_decisions": [
+      "allow",
+      "deny"
+    ],
+    "agent_id": null
+  }
+}

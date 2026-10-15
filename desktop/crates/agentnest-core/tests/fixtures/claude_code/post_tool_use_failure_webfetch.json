@@ -1,0 +1,31 @@
+{
+  "_source": "doc-derived",
+  "description": "non-shell tool failure -> tool_failed",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PostToolUseFailure",
+    "tool_name": "WebFetch",
+    "tool_input": {
+      "url": "https://example.com"
+    },
+    "tool_use_id": "toolu_wff",
+    "error": "Request failed with status code 503\nstack...",
+    "is_interrupt": false
+  },
+  "expect": [
+    {
+      "kind": "tool_failed",
+      "category": "error",
+      "severity": "warning",
+      "state_hint": "error",
+      "headline": "WebFetch 도구가 실패했어요",
+      "detail": {
+        "tool_name": "WebFetch",
+        "error": "Request failed with status code 503",
+        "is_interrupt": false
+      }
+    }
+  ]
+}

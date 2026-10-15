@@ -1,0 +1,29 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "candidate patch tool name `apply_patch` (UNVERIFIED C10): writing_code",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "tool_name": "apply_patch",
+    "tool_use_id": "call_2",
+    "tool_input": "*** Begin Patch\n*** Update File: src\\main.rs\n@@\n-a\n+b\n*** End Patch"
+  },
+  "expect": [
+    {
+      "kind": "tool_started",
+      "state_hint": "writing_code",
+      "headline": "main.rs 파일을 고치고 있어요",
+      "detail": {
+        "tool_name": "apply_patch",
+        "tool_input_summary": "main.rs",
+        "file_path": "…\\src\\main.rs"
+      }
+    }
+  ]
+}

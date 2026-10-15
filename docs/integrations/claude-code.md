@@ -140,7 +140,7 @@ HTTP 클라이언트: 훅은 `http://127.0.0.1`에만 말하므로 TLS가 필요
 | `PostToolUse{Bash}` | `command_completed` (+ `test_passed`) | `exit_code?`, `stdout_tail`(1 KiB), `stderr_tail`, `duration_ms` | — |
 | `PostToolUse{기타}` | `tool_completed` | `duration_ms`, `result_summary` | — |
 | `PostToolUseFailure{error}` | `command_failed`/`tool_failed` (+ `test_failed`) | `error`(첫 줄 `Exit code N`), `is_interrupt` | `error`(transient) |
-| `Notification{notification_type}` | `notification`; `idle_prompt` → `idle`; `permission_prompt` → `approval_requested{channel:local_only}`(보류 승인이 없을 때만); `agent_needs_input` → `awaiting_input` 힌트 | `notification_type`, `message` | 타입별 |
+| `Notification{notification_type}` | `notification`; `idle_prompt` → `idle`; `permission_prompt` → `notification{notification_type:"permission_prompt"}`(`state_hint: awaiting_approval`; **리듀서가** 보류 승인이 없을 때만 `awaiting_approval`로 올린다 — `approval_requested` 이벤트로 만들지 않는다: 닫아 줄 `approval_resolved`가 없다); `agent_needs_input` → `notification{notification_type:"agent_needs_input"}`(`state_hint: awaiting_input`) | `notification_type`, `message` | 타입별 |
 | `SubagentStart`/`SubagentStop` | `subagent_started`/`subagent_stopped` | `agent_id`, `agent_type`, `final_message_preview` | — |
 | `Stop{last_assistant_message, background_tasks, session_crons}` | `turn_completed` | `final_message_preview`(300자), `background_tasks`(수), `session_crons`(수) | `completed`/`working` |
 | `StopFailure{error}` | `turn_failed` | `error_code`(rate_limit/overloaded/…), `error_message` | `error`(sticky) |

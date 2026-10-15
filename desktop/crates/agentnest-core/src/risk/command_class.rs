@@ -63,30 +63,18 @@ const FS_TOOLS: &[&str] = &[
 ];
 
 const BUILD_TOOLS: &[&str] = &[
-    "tsc",
-    "webpack",
-    "esbuild",
-    "rollup",
-    "eslint",
-    "prettier",
-    "rustfmt",
-    "rustc",
-    "javac",
-    "gcc",
-    "g++",
-    "clang",
-    "clang++",
-    "biome",
+    "tsc", "webpack", "esbuild", "rollup", "eslint", "prettier", "rustfmt", "rustc", "javac",
+    "gcc", "g++", "clang", "clang++", "biome",
 ];
 
 const TEST_TOOLS: &[&str] = &[
-    "pytest", "py.test", "tox", "nox", "vitest", "jest", "ctest", "phpunit", "rspec", "mocha", "karma",
-    "ava",
+    "pytest", "py.test", "tox", "nox", "vitest", "jest", "ctest", "phpunit", "rspec", "mocha",
+    "karma", "ava",
 ];
 
 const PACKAGE_MANAGERS: &[&str] = &[
-    "winget", "choco", "scoop", "brew", "apt", "apt-get", "yum", "dnf", "pacman", "zypper", "apk", "gem",
-    "conda", "mamba", "nuget", "composer", "pipx",
+    "winget", "choco", "scoop", "brew", "apt", "apt-get", "yum", "dnf", "pacman", "zypper", "apk",
+    "gem", "conda", "mamba", "nuget", "composer", "pipx",
 ];
 
 /// Segments that do not say anything about what the command does (`cd`, `echo`, assignments, ...).
@@ -224,7 +212,19 @@ fn script_class(script: &str) -> CommandClass {
     let starts = |p: &[&str]| p.iter().any(|x| s.starts_with(x));
     if starts(&["test", "jest", "vitest", "e2e", "spec"]) {
         CommandClass::Test
-    } else if starts(&["build", "typecheck", "type-check", "lint", "check", "compile", "format", "fmt", "tsc", "prettier", "eslint"]) {
+    } else if starts(&[
+        "build",
+        "typecheck",
+        "type-check",
+        "lint",
+        "check",
+        "compile",
+        "format",
+        "fmt",
+        "tsc",
+        "prettier",
+        "eslint",
+    ]) {
         CommandClass::Build
     } else {
         CommandClass::Shell
@@ -256,7 +256,9 @@ fn class_of(tokens: &[String], depth: u8) -> CommandClass {
     }
     if PACKAGE_MANAGERS.contains(&n) {
         return match first_non_flag(&args_lc, &[]).map(|(_, s)| s) {
-            Some("install" | "add" | "remove" | "uninstall" | "upgrade" | "i") => CommandClass::Package,
+            Some("install" | "add" | "remove" | "uninstall" | "upgrade" | "i") => {
+                CommandClass::Package
+            }
             _ => CommandClass::Shell,
         };
     }
@@ -264,19 +266,32 @@ fn class_of(tokens: &[String], depth: u8) -> CommandClass {
         "git" | "gh" => CommandClass::Vcs,
         "cargo" => match first_non_flag(&args_lc, &[]).map(|(_, s)| s) {
             Some("test" | "t" | "nextest") => CommandClass::Test,
-            Some("build" | "b" | "check" | "c" | "clippy" | "fmt" | "doc" | "bench") => CommandClass::Build,
-            Some("add" | "install" | "remove" | "rm" | "uninstall" | "update") => CommandClass::Package,
+            Some("build" | "b" | "check" | "c" | "clippy" | "fmt" | "doc" | "bench") => {
+                CommandClass::Build
+            }
+            Some("add" | "install" | "remove" | "rm" | "uninstall" | "update") => {
+                CommandClass::Package
+            }
             _ => CommandClass::Shell,
         },
         "npm" | "pnpm" | "yarn" | "bun" => {
-            let value_flags = ["--filter", "-f", "-c", "--dir", "--prefix", "-w", "--workspace", "--cwd"];
+            let value_flags = [
+                "--filter",
+                "-f",
+                "-c",
+                "--dir",
+                "--prefix",
+                "-w",
+                "--workspace",
+                "--cwd",
+            ];
             let Some((idx, sub)) = first_non_flag(&args_lc, &value_flags) else {
                 return CommandClass::Shell;
             };
             match sub {
                 "test" | "t" | "tst" => CommandClass::Test,
-                "install" | "i" | "ci" | "add" | "remove" | "rm" | "uninstall" | "un" | "update" | "up" | "link"
-                | "unlink" => CommandClass::Package,
+                "install" | "i" | "ci" | "add" | "remove" | "rm" | "uninstall" | "un"
+                | "update" | "up" | "link" | "unlink" => CommandClass::Package,
                 "run" | "run-script" => first_non_flag(&args[idx + 1..], &[])
                     .map(|(_, s)| script_class(s))
                     .unwrap_or(CommandClass::Shell),
@@ -310,7 +325,9 @@ fn class_of(tokens: &[String], depth: u8) -> CommandClass {
             _ => CommandClass::Shell,
         },
         "uv" | "poetry" | "pdm" | "hatch" => match first_non_flag(&args_lc, &[]) {
-            Some((_, "add" | "sync" | "pip" | "remove" | "install" | "update" | "lock")) => CommandClass::Package,
+            Some((_, "add" | "sync" | "pip" | "remove" | "install" | "update" | "lock")) => {
+                CommandClass::Package
+            }
             Some((i, "run")) if depth < 3 => class_of(&args[i + 1..], depth + 1),
             _ => CommandClass::Shell,
         },
@@ -323,10 +340,12 @@ fn class_of(tokens: &[String], depth: u8) -> CommandClass {
         "mvn" | "mvnw" => {
             if args_lc.iter().any(|a| a == "test") {
                 CommandClass::Test
-            } else if args_lc
-                .iter()
-                .any(|a| matches!(a.as_str(), "compile" | "package" | "verify" | "install" | "clean" | "assemble"))
-            {
+            } else if args_lc.iter().any(|a| {
+                matches!(
+                    a.as_str(),
+                    "compile" | "package" | "verify" | "install" | "clean" | "assemble"
+                )
+            }) {
                 CommandClass::Build
             } else {
                 CommandClass::Shell
@@ -342,9 +361,12 @@ fn class_of(tokens: &[String], depth: u8) -> CommandClass {
             if args_lc.iter().any(|a| a.contains("test")) {
                 CommandClass::Test
             } else if args_lc.iter().any(|a| {
-                ["assemble", "build", "lint", "compile", "jar", "bundle", "check", "detekt", "ktlint", "spotless"]
-                    .iter()
-                    .any(|k| a.contains(k))
+                [
+                    "assemble", "build", "lint", "compile", "jar", "bundle", "check", "detekt",
+                    "ktlint", "spotless",
+                ]
+                .iter()
+                .any(|k| a.contains(k))
             }) {
                 CommandClass::Build
             } else {
@@ -352,7 +374,10 @@ fn class_of(tokens: &[String], depth: u8) -> CommandClass {
             }
         }
         "make" | "gmake" | "nmake" => {
-            if args_lc.iter().any(|a| matches!(a.as_str(), "test" | "tests" | "check")) {
+            if args_lc
+                .iter()
+                .any(|a| matches!(a.as_str(), "test" | "tests" | "check"))
+            {
                 CommandClass::Test
             } else {
                 CommandClass::Build
@@ -396,15 +421,22 @@ pub fn runner(command: &str, shell: Shell) -> Option<String> {
         if segment_class(&seg.tokens) != CommandClass::Test {
             continue;
         }
-        let Some(first) = u.tokens.first() else { continue };
+        let Some(first) = u.tokens.first() else {
+            continue;
+        };
         let name = base_command(first);
         let args = &u.tokens[1..];
         return Some(match name.as_str() {
             "python" | "python3" | "py" => {
                 let pos = args.iter().position(|a| a.eq_ignore_ascii_case("-m"));
-                pos.and_then(|p| args.get(p + 1)).map(|m| base_command(m)).unwrap_or(name)
+                pos.and_then(|p| args.get(p + 1))
+                    .map(|m| base_command(m))
+                    .unwrap_or(name)
             }
-            "npx" | "bunx" | "pnpx" => skip_npx_flags(args).first().map(|t| base_command(t)).unwrap_or(name),
+            "npx" | "bunx" | "pnpx" => skip_npx_flags(args)
+                .first()
+                .map(|t| base_command(t))
+                .unwrap_or(name),
             _ => name,
         });
     }
@@ -467,13 +499,40 @@ mod tests {
         }
         assert_eq!(cls("git status"), C::Vcs);
         assert_eq!(cls("gh pr list"), C::Vcs);
-        for c in ["npm i", "npm install", "npm ci", "pnpm add zod", "pnpm install", "pip install x", "cargo add serde", "cargo install ripgrep", "winget install Git.Git"] {
+        for c in [
+            "npm i",
+            "npm install",
+            "npm ci",
+            "pnpm add zod",
+            "pnpm install",
+            "pip install x",
+            "cargo add serde",
+            "cargo install ripgrep",
+            "winget install Git.Git",
+        ] {
             assert_eq!(cls(c), C::Package, "{c}");
         }
-        for c in ["ls -la", "cat x", "find . -name x", "rg foo", "grep -r x .", "dir", "Get-ChildItem -Recurse", "type a.txt"] {
+        for c in [
+            "ls -la",
+            "cat x",
+            "find . -name x",
+            "rg foo",
+            "grep -r x .",
+            "dir",
+            "Get-ChildItem -Recurse",
+            "type a.txt",
+        ] {
             assert_eq!(cls(c), C::Fs, "{c}");
         }
-        for c in ["curl https://x", "wget x", "Invoke-WebRequest x", "irm x", "iwr x", "ssh a@b", "scp a b:c"] {
+        for c in [
+            "curl https://x",
+            "wget x",
+            "Invoke-WebRequest x",
+            "irm x",
+            "iwr x",
+            "ssh a@b",
+            "scp a b:c",
+        ] {
             assert_eq!(cls(c), C::Network, "{c}");
         }
         for c in ["echo hi", "rm -rf x", "docker ps", "Get-Date", "", "   "] {
@@ -489,7 +548,10 @@ mod tests {
         assert_eq!(cls("rm -rf target && cargo build"), C::Build);
         assert_eq!(cls("git add . && git commit -m x"), C::Vcs);
         assert_eq!(cls("CI=1 RUST_LOG=debug cargo test"), C::Test);
-        assert_eq!(cls("cd a && cd \"b c\" && env CI=1 NODE_ENV=test cargo build"), C::Build);
+        assert_eq!(
+            cls("cd a && cd \"b c\" && env CI=1 NODE_ENV=test cargo build"),
+            C::Build
+        );
         assert_eq!(cls("sudo cargo test"), C::Test);
         assert_eq!(cls("bash -c \"cargo test\""), C::Test);
         assert_eq!(cls("cargo test 2>&1 | tee out.log"), C::Test);
@@ -511,10 +573,22 @@ mod tests {
     #[test]
     fn runners() {
         assert_eq!(runner("cargo test", Shell::Posix).as_deref(), Some("cargo"));
-        assert_eq!(runner("python -m pytest -q", Shell::Posix).as_deref(), Some("pytest"));
-        assert_eq!(runner("npx vitest run", Shell::Posix).as_deref(), Some("vitest"));
-        assert_eq!(runner("cd x && pnpm test", Shell::Posix).as_deref(), Some("pnpm"));
-        assert_eq!(runner("./gradlew.bat :core:test", Shell::Posix).as_deref(), Some("gradlew"));
+        assert_eq!(
+            runner("python -m pytest -q", Shell::Posix).as_deref(),
+            Some("pytest")
+        );
+        assert_eq!(
+            runner("npx vitest run", Shell::Posix).as_deref(),
+            Some("vitest")
+        );
+        assert_eq!(
+            runner("cd x && pnpm test", Shell::Posix).as_deref(),
+            Some("pnpm")
+        );
+        assert_eq!(
+            runner("./gradlew.bat :core:test", Shell::Posix).as_deref(),
+            Some("gradlew")
+        );
         assert_eq!(runner("cargo build", Shell::Posix), None);
         assert_eq!(runner("", Shell::Posix), None);
     }

@@ -1,0 +1,25 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "UserPromptSubmit",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "prompt": "cargo test 돌려줘"
+  },
+  "expect": [
+    {
+      "kind": "prompt_submitted",
+      "state_hint": "working",
+      "detail": {
+        "prompt_preview": "cargo test 돌려줘",
+        "prompt_len": 14
+      }
+    }
+  ]
+}

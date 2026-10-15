@@ -274,13 +274,18 @@ impl Rule {
 // ---------------------------------------------------------------------------------------------------------------------
 
 fn under(path: &str, prefix: &str) -> bool {
-    path == prefix || path.strip_prefix(prefix).is_some_and(|r| r.starts_with('/'))
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|r| r.starts_with('/'))
 }
 
 /// System locations: `C:\Windows`, `Program Files`, `/etc`, `/usr`, `/bin`, ... and raw devices below `/dev`.
 pub fn is_system_path(path: &str) -> bool {
     let p = path.to_lowercase();
-    const POSIX: [&str; 9] = ["/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64", "/sys", "/proc"];
+    const POSIX: [&str; 9] = [
+        "/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64", "/sys", "/proc",
+    ];
     if POSIX.iter().any(|d| under(&p, d)) {
         return true;
     }
@@ -292,7 +297,11 @@ pub fn is_system_path(path: &str) -> bool {
         );
     }
     // drive-letter paths and WSL mounts: `x:/windows`, `x:/program files`, `/mnt/x/windows`
-    let rest = if p.len() >= 3 && p.as_bytes()[0].is_ascii_alphabetic() && p.as_bytes()[1] == b':' && p.as_bytes()[2] == b'/' {
+    let rest = if p.len() >= 3
+        && p.as_bytes()[0].is_ascii_alphabetic()
+        && p.as_bytes()[1] == b':'
+        && p.as_bytes()[2] == b'/'
+    {
         Some(&p[3..])
     } else if let Some(r) = p.strip_prefix("/mnt/") {
         match r.split_once('/') {
@@ -325,7 +334,10 @@ pub fn is_secret_write_path(path: &str) -> bool {
     if KEY_BASENAMES.iter().any(|k| base.starts_with(k)) {
         return true;
     }
-    matches!(extension(&p).as_str(), "pem" | "pfx" | "key" | "p12" | "ppk")
+    matches!(
+        extension(&p).as_str(),
+        "pem" | "pfx" | "key" | "p12" | "ppk"
+    )
 }
 
 /// Files that hold secrets: `.env*`, `credentials`, `secrets`, `.npmrc`, `.pypirc`, `.netrc`, private keys.
@@ -337,7 +349,10 @@ pub fn is_secret_read_path(path: &str) -> bool {
     }
     if let Some(rest) = base.strip_prefix(".env.") {
         // templates are meant to be committed
-        return !matches!(rest, "example" | "sample" | "template" | "dist" | "defaults");
+        return !matches!(
+            rest,
+            "example" | "sample" | "template" | "dist" | "defaults"
+        );
     }
     if matches!(base, ".npmrc" | ".pypirc" | ".netrc" | "_netrc") {
         return true;
@@ -351,7 +366,7 @@ pub fn is_secret_read_path(path: &str) -> bool {
     if stem_ok("credentials") || stem_ok("secrets") {
         return true;
     }
-    if KEY_BASENAMES.iter().any(|k| base == *k) {
+    if KEY_BASENAMES.contains(&base) {
         return true;
     }
     matches!(extension(&p).as_str(), "key" | "pfx" | "p12" | "ppk")
@@ -360,9 +375,12 @@ pub fn is_secret_read_path(path: &str) -> bool {
 /// Locations whose reads are sensitive but not secrets themselves: `~/.ssh`, `~/.aws`, `%APPDATA%`, ...
 pub fn is_read_sensitive_path(path: &str) -> bool {
     let p = path.to_lowercase();
-    segments(&p)
-        .iter()
-        .any(|s| matches!(*s, ".ssh" | ".aws" | ".gnupg" | ".kube" | ".azure" | "appdata"))
+    segments(&p).iter().any(|s| {
+        matches!(
+            *s,
+            ".ssh" | ".aws" | ".gnupg" | ".kube" | ".azure" | "appdata"
+        )
+    })
 }
 
 /// Build and policy files: `.github/workflows/*`, `*.gradle(.kts)`, `Cargo.toml`, `package.json`,
@@ -370,25 +388,36 @@ pub fn is_read_sensitive_path(path: &str) -> bool {
 pub fn is_build_or_policy_file(path: &str) -> bool {
     let p = path.to_lowercase();
     let segs = segments(&p);
-    if segs.windows(2).any(|w| w[0] == ".github" && w[1] == "workflows") {
+    if segs
+        .windows(2)
+        .any(|w| w[0] == ".github" && w[1] == "workflows")
+    {
         return true;
     }
     let base = basename(&p);
-    if base.ends_with(".gradle.kts") || base.ends_with(".gradle") || base == "cargo.toml" || base == "package.json" {
+    if base.ends_with(".gradle.kts")
+        || base.ends_with(".gradle")
+        || base == "cargo.toml"
+        || base == "package.json"
+    {
         return true;
     }
-    if segs.len() >= 2 && segs[segs.len() - 2] == ".claude" && base.starts_with("settings") && base.ends_with(".json") {
+    if segs.len() >= 2
+        && segs[segs.len() - 2] == ".claude"
+        && base.starts_with("settings")
+        && base.ends_with(".json")
+    {
         return true;
     }
     false
 }
 
-/// File paths named in an `apply_patch` style patch text (`*** Update File: path`, `*** Add File:`, `*** Delete File:`,
-/// `*** Move to:`).
+/// File changes named in an `apply_patch` style patch text: `(path, kind)` with `kind` in `add` / `update` / `delete`
+/// (`*** Add File:`, `*** Update File:`, `*** Move to:`, `*** Delete File:`).
 ///
 /// `// UNVERIFIED (Phase 0 C10)`: the Codex hooks `apply_patch` input format is not verified; the parser is tolerant
 /// and returns nothing for text it does not understand.
-pub fn apply_patch_paths(tool_input: &serde_json::Value) -> Vec<String> {
+pub fn apply_patch_changes(tool_input: &serde_json::Value) -> Vec<(String, &'static str)> {
     let text = match tool_input {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Object(map) => ["input", "patch", "command", "content"]
@@ -409,16 +438,29 @@ pub fn apply_patch_paths(tool_input: &serde_json::Value) -> Vec<String> {
     let mut out = Vec::new();
     for line in text.lines() {
         let l = line.trim();
-        for marker in ["*** Update File:", "*** Add File:", "*** Delete File:", "*** Move to:"] {
+        for (marker, kind) in [
+            ("*** Update File:", "update"),
+            ("*** Add File:", "add"),
+            ("*** Delete File:", "delete"),
+            ("*** Move to:", "update"),
+        ] {
             if let Some(rest) = l.strip_prefix(marker) {
                 let path = rest.trim();
                 if !path.is_empty() && out.len() < 200 {
-                    out.push(path.to_owned());
+                    out.push((path.to_owned(), kind));
                 }
             }
         }
     }
     out
+}
+
+/// The file paths of [`apply_patch_changes`].
+pub fn apply_patch_paths(tool_input: &serde_json::Value) -> Vec<String> {
+    apply_patch_changes(tool_input)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect()
 }
 
 #[cfg(test)]
@@ -427,23 +469,36 @@ mod tests {
 
     #[test]
     fn levels_and_extra_confirmation() {
-        assert!(Level::Low < Level::Medium && Level::Medium < Level::High && Level::High < Level::Critical);
+        assert!(
+            Level::Low < Level::Medium
+                && Level::Medium < Level::High
+                && Level::High < Level::Critical
+        );
         assert_eq!(Level::Low.raised(), Level::Medium);
         assert_eq!(Level::High.raised(), Level::Critical);
         assert_eq!(Level::Critical.raised(), Level::Critical);
         assert_eq!(Level::High.extra_confirmation(), ExtraConfirmation::Hold);
-        assert_eq!(Level::Critical.extra_confirmation(), ExtraConfirmation::HoldAndReconfirm);
+        assert_eq!(
+            Level::Critical.extra_confirmation(),
+            ExtraConfirmation::HoldAndReconfirm
+        );
         assert_eq!(Level::Medium.extra_confirmation(), ExtraConfirmation::None);
     }
 
     #[test]
     fn rule_table_matches_the_fixture_reason_levels() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../protocol/fixtures/risk_cases.json");
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../protocol/fixtures/risk_cases.json"
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let levels = v["reason_levels"].as_object().unwrap();
         assert_eq!(levels.len(), Rule::ALL.len());
         for r in Rule::ALL {
-            let want = levels.get(r.code()).unwrap_or_else(|| panic!("fixture lacks {}", r.code()));
+            let want = levels
+                .get(r.code())
+                .unwrap_or_else(|| panic!("fixture lacks {}", r.code()));
             let got = match r.level() {
                 Level::Low => "low",
                 Level::Medium => "medium",
@@ -465,35 +520,93 @@ mod tests {
 
     #[test]
     fn system_paths() {
-        for p in ["C:/Windows/System32/x.dll", "c:/windows/system32/x.dll", "/etc/hosts", "/usr/local/bin/tool", "C:/Program Files/App/c.ini", "C:/Program Files (x86)/A", "/mnt/c/Windows/x", "/dev/sda", "D:/Windows"] {
+        for p in [
+            "C:/Windows/System32/x.dll",
+            "c:/windows/system32/x.dll",
+            "/etc/hosts",
+            "/usr/local/bin/tool",
+            "C:/Program Files/App/c.ini",
+            "C:/Program Files (x86)/A",
+            "/mnt/c/Windows/x",
+            "/dev/sda",
+            "D:/Windows",
+        ] {
             assert!(is_system_path(p), "{p}");
         }
-        for p in ["C:/dev/agentnest/etc/config.toml", "C:/dev/agentnest/docs/windows.md", "/home/me/usr/x", "/dev/null", "/etcetera/x", "/mnt/c/Users/me", "~/etc"] {
+        for p in [
+            "C:/dev/agentnest/etc/config.toml",
+            "C:/dev/agentnest/docs/windows.md",
+            "/home/me/usr/x",
+            "/dev/null",
+            "/etcetera/x",
+            "/mnt/c/Users/me",
+            "~/etc",
+        ] {
             assert!(!is_system_path(p), "{p}");
         }
     }
 
     #[test]
     fn secret_and_policy_paths() {
-        for p in ["C:/Users/me/.ssh/authorized_keys", "/home/me/.gnupg/gpg.conf", "C:/dev/certs/server.pem", "C:/dev/deploy.pfx", "C:/dev/signing.key", "/home/me/.ssh/id_rsa", "/x/id_ed25519.pub"] {
+        for p in [
+            "C:/Users/me/.ssh/authorized_keys",
+            "/home/me/.gnupg/gpg.conf",
+            "C:/dev/certs/server.pem",
+            "C:/dev/deploy.pfx",
+            "C:/dev/signing.key",
+            "/home/me/.ssh/id_rsa",
+            "/x/id_ed25519.pub",
+        ] {
             assert!(is_secret_write_path(p), "{p}");
         }
-        for p in ["C:/dev/docs/keys.md", "C:/dev/src/monkey.rs", "C:/dev/src/key.rs"] {
+        for p in [
+            "C:/dev/docs/keys.md",
+            "C:/dev/src/monkey.rs",
+            "C:/dev/src/key.rs",
+        ] {
             assert!(!is_secret_write_path(p), "{p}");
         }
-        for p in [".env", "C:/dev/.env.local", "~/.npmrc", "C:/Users/me/.pypirc", "/home/me/.aws/credentials", "/x/secrets.yml", "/x/id_rsa", "/x/a.key"] {
+        for p in [
+            ".env",
+            "C:/dev/.env.local",
+            "~/.npmrc",
+            "C:/Users/me/.pypirc",
+            "/home/me/.aws/credentials",
+            "/x/secrets.yml",
+            "/x/id_rsa",
+            "/x/a.key",
+        ] {
             assert!(is_secret_read_path(p), "{p}");
         }
-        for p in ["C:/dev/README.md", "C:/dev/docs/environment.md", "/x/.env.example", "/x/credentials-guide.md", "/x/secrets-policy.md", "/x/.envrc"] {
+        for p in [
+            "C:/dev/README.md",
+            "C:/dev/docs/environment.md",
+            "/x/.env.example",
+            "/x/credentials-guide.md",
+            "/x/secrets-policy.md",
+            "/x/.envrc",
+        ] {
             assert!(!is_secret_read_path(p), "{p}");
         }
         assert!(is_read_sensitive_path("~/.ssh/known_hosts"));
         assert!(is_read_sensitive_path("C:/Users/me/AppData/Roaming/x"));
         assert!(!is_read_sensitive_path("C:/dev/agentnest/src"));
-        for p in ["C:/dev/.github/workflows/ci.yml", "C:/dev/app/build.gradle.kts", "C:/dev/Cargo.toml", "C:/dev/package.json", "C:/dev/.claude/settings.json", "C:/dev/.claude/settings.local.json"] {
+        for p in [
+            "C:/dev/.github/workflows/ci.yml",
+            "C:/dev/app/build.gradle.kts",
+            "C:/dev/Cargo.toml",
+            "C:/dev/package.json",
+            "C:/dev/.claude/settings.json",
+            "C:/dev/.claude/settings.local.json",
+        ] {
             assert!(is_build_or_policy_file(p), "{p}");
         }
-        for p in ["C:/dev/Cargo.lock", "C:/dev/src/main.rs", "C:/dev/.github/CODEOWNERS", "C:/dev/.claude/commands/x.md"] {
+        for p in [
+            "C:/dev/Cargo.lock",
+            "C:/dev/src/main.rs",
+            "C:/dev/.github/CODEOWNERS",
+            "C:/dev/.claude/commands/x.md",
+        ] {
             assert!(!is_build_or_policy_file(p), "{p}");
         }
     }
@@ -501,9 +614,18 @@ mod tests {
     #[test]
     fn apply_patch_paths_are_parsed_tolerantly() {
         let patch = "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-a\n+b\n*** Add File: docs/n.md\n*** Delete File: old.txt\n*** End Patch";
-        assert_eq!(apply_patch_paths(&serde_json::json!(patch)), vec!["src/a.rs", "docs/n.md", "old.txt"]);
-        assert_eq!(apply_patch_paths(&serde_json::json!({"input": patch})).len(), 3);
-        assert_eq!(apply_patch_paths(&serde_json::json!({"command": ["apply_patch", patch]})).len(), 3);
+        assert_eq!(
+            apply_patch_paths(&serde_json::json!(patch)),
+            vec!["src/a.rs", "docs/n.md", "old.txt"]
+        );
+        assert_eq!(
+            apply_patch_paths(&serde_json::json!({"input": patch})).len(),
+            3
+        );
+        assert_eq!(
+            apply_patch_paths(&serde_json::json!({"command": ["apply_patch", patch]})).len(),
+            3
+        );
         assert!(apply_patch_paths(&serde_json::json!(42)).is_empty());
         assert!(apply_patch_paths(&serde_json::json!("garbage")).is_empty());
     }

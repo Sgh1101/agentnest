@@ -493,7 +493,7 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
 | `approval_resolved` | 보류 승인 0건 | `pre_approval_state` 또는 `working` | `denied_and_stopped`면 `idle` |
 | Codex `activeFlags:[waitingOnUserInput]`, `item/tool/requestUserInput`, Claude `Notification{agent_needs_input}` | — | `awaiting_input` | 캐릭터는 승인 요청과 같은 "손 들기"(배지 `?`) |
 | `Notification{permission_prompt}` | 상태 ≠ `awaiting_approval` | `awaiting_approval` | `PermissionRequest`가 오지 않는 샌드박스 네트워크 프롬프트 보완 [검증] |
-| `tool_failed` / `command_failed` | — | `error`(transient, 5초) | 다음 `*_started`/`prompt_submitted`에서 해제 |
+| `tool_failed` / `command_failed` | `detail.is_interrupt != true` | `error`(transient, 5초) | 다음 `*_started`/`prompt_submitted`에서 해제. 사용자 인터럽트(`is_interrupt: true`)는 오류가 아니므로 상태·`counters.errors`에 영향 없음 |
 | `test_failed` | — | `error`(30초 sticky) | 같은 세션 `test_passed`/`turn_completed`/`prompt_submitted`면 즉시 해제 |
 | `turn_failed` / `agent_error`(Codex `systemError`, `error` 알림 포함) | — | `error`(sticky) | `prompt_submitted` 또는 `session_started{resume}`에서만 해제 |
 | `turn_completed` | `background_tasks == 0` | `completed` | 60초 뒤 타이머로 `idle` |

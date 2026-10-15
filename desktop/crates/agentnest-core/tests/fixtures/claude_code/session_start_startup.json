@@ -1,0 +1,45 @@
+{
+  "_source": "doc-derived",
+  "description": "claude-code-hooks.md 5.1 (source=startup), Windows cwd",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "SessionStart",
+    "source": "startup",
+    "model": "claude-opus-5",
+    "permission_mode": "default"
+  },
+  "expect": [
+    {
+      "kind": "session_started",
+      "category": "lifecycle",
+      "severity": "info",
+      "state_hint": "idle",
+      "headline": "세션을 시작했어요",
+      "detail": {
+        "source_reason": "startup",
+        "model": "claude-opus-5",
+        "permission_mode": "default"
+      },
+      "native_event": "SessionStart",
+      "channel": "claude_code.hook.http",
+      "native_ids": {
+        "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+      },
+      "project": {
+        "project_key": "c:/dev/agentnest",
+        "name": "agentnest",
+        "repo": "owner/agentnest",
+        "branch": "main"
+      },
+      "redacted": false
+    }
+  ],
+  "expect_meta": [
+    {
+      "permission_mode": "default",
+      "model": "claude-opus-5"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "_source": "doc-derived",
+  "description": "WebFetch: host only, no query or fragment",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "WebFetch",
+    "tool_use_id": "toolu_wf",
+    "tool_input": {
+      "url": "https://docs.rs/serde/latest/serde/?token=abc123#derive",
+      "prompt": "summarize"
+    }
+  },
+  "expect": [
+    {
+      "kind": "tool_started",
+      "state_hint": "working",
+      "headline": "docs.rs 에서 자료를 가져오고 있어요",
+      "detail": {
+        "tool_name": "WebFetch",
+        "tool_input_summary": "docs.rs"
+      }
+    }
+  ],
+  "forbid": [
+    "abc123",
+    "derive"
+  ]
+}

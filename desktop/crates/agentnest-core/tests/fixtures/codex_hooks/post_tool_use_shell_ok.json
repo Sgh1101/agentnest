@@ -1,0 +1,43 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "PostToolUse shell with a successful result",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "tool_name": "shell",
+    "tool_use_id": "call_1",
+    "tool_input": {
+      "command": "cargo test -p core"
+    },
+    "tool_response": {
+      "exit_code": 0,
+      "stdout": "test result: ok. 3 passed; token=abc123secret\n",
+      "stderr": ""
+    }
+  },
+  "expect": [
+    {
+      "kind": "command_completed",
+      "detail": {
+        "exit_code": 0,
+        "command_class": "test"
+      },
+      "redacted": true
+    },
+    {
+      "kind": "test_passed",
+      "detail": {
+        "runner": "cargo"
+      }
+    }
+  ],
+  "forbid": [
+    "abc123secret"
+  ]
+}

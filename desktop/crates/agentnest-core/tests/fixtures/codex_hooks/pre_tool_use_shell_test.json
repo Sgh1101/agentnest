@@ -1,0 +1,44 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "candidate shell tool name `shell` with an argv command",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "tool_name": "shell",
+    "tool_use_id": "call_1",
+    "tool_input": {
+      "command": [
+        "bash",
+        "-lc",
+        "cargo test -p core"
+      ]
+    }
+  },
+  "expect": [
+    {
+      "kind": "command_started",
+      "state_hint": "testing",
+      "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
+      "detail": {
+        "command": "cargo test -p core",
+        "command_class": "test"
+      },
+      "native_ids": {
+        "tool_use_id": "call_1",
+        "turn_id": "turn-1"
+      }
+    },
+    {
+      "kind": "test_run",
+      "detail": {
+        "runner": "cargo"
+      }
+    }
+  ]
+}

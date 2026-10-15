@@ -272,11 +272,7 @@ fn patterns() -> Option<&'static Vec<Pattern>> {
         .as_ref()
 }
 
-fn apply_patterns(
-    input: &str,
-    replacement: &str,
-    only: Option<&[&str]>,
-) -> Masked {
+fn apply_patterns(input: &str, replacement: &str, only: Option<&[&str]>) -> Masked {
     let Some(pats) = patterns() else {
         // Fail closed: a broken pattern table must never turn masking into a no-op.
         return Masked {
@@ -329,6 +325,24 @@ pub fn mask_cmd_preview(input: &str) -> Masked {
     apply_patterns(input, CMD_MASK, None)
 }
 
+/// Masks secrets like [`mask`] but without the 40+ character rule. For text that a template clips afterwards (the final
+/// summary is masked again with [`mask`] by the post-processing, see `normalize`): the long-token rule would also turn
+/// a long identifier or hash in agent prose into `<redacted>` before the template could show a prefix of it.
+pub fn mask_keep_long_tokens(input: &str) -> Masked {
+    apply_patterns(
+        input,
+        REDACTED,
+        Some(&[
+            "keyword_assignment",
+            "aws_access_key",
+            "github_token",
+            "sk_token",
+            "private_key_block",
+            "jwt",
+        ]),
+    )
+}
+
 /// Masks secrets in a **file path** (no keyword and no 40+ character rule; see [`PATH_SAFE_PATTERNS`]).
 pub fn mask_path(input: &str) -> Masked {
     apply_patterns(input, REDACTED, Some(&PATH_SAFE_PATTERNS))
@@ -344,21 +358,15 @@ pub fn clip(s: &str, n: usize) -> String {
     if n == 0 {
         return String::new();
     }
-    let mut count = 0usize;
-    for (idx, _) in s.char_indices() {
+    for (count, (idx, _)) in s.char_indices().enumerate() {
         if count == n {
             // more than n characters: cut to n-1 and add the ellipsis
-            let cut = s
-                .char_indices()
-                .nth(n - 1)
-                .map(|(i, _)| i)
-                .unwrap_or(idx);
+            let cut = s.char_indices().nth(n - 1).map(|(i, _)| i).unwrap_or(idx);
             let mut out = String::with_capacity(cut + 3);
             out.push_str(&s[..cut]);
             out.push('…');
             return out;
         }
-        count += 1;
     }
     s.to_owned()
 }
@@ -437,7 +445,9 @@ pub fn bound_detail(detail: &mut Value) -> (bool, bool) {
     // Total size: shrink the longest strings until the object fits. The loop is bounded (every round strictly
     // shrinks the longest string or stops).
     for _ in 0..64 {
-        let size = serde_json::to_vec(detail).map(|v| v.len()).unwrap_or(usize::MAX);
+        let size = serde_json::to_vec(detail)
+            .map(|v| v.len())
+            .unwrap_or(usize::MAX);
         if size <= DETAIL_JSON_MAX_BYTES {
             return (redacted, truncated);
         }
@@ -447,9 +457,16 @@ pub fn bound_detail(detail: &mut Value) -> (bool, bool) {
         truncated = true;
     }
     // Last resort: drop everything but short scalars so the bound always holds.
-    if serde_json::to_vec(detail).map(|v| v.len()).unwrap_or(usize::MAX) > DETAIL_JSON_MAX_BYTES {
+    if serde_json::to_vec(detail)
+        .map(|v| v.len())
+        .unwrap_or(usize::MAX)
+        > DETAIL_JSON_MAX_BYTES
+    {
         if let Value::Object(map) = detail {
-            map.retain(|_, v| matches!(v, Value::Bool(_) | Value::Number(_)) || v.as_str().is_some_and(|s| s.len() <= 64));
+            map.retain(|_, v| {
+                matches!(v, Value::Bool(_) | Value::Number(_))
+                    || v.as_str().is_some_and(|s| s.len() <= 64)
+            });
         }
         truncated = true;
     }
@@ -502,7 +519,9 @@ fn bound_value(
             if masked.redacted {
                 *redacted = true;
             }
-            let limit = key.map(limit_for_key).unwrap_or(Limit::HeadBytes(DETAIL_STRING_MAX_BYTES));
+            let limit = key
+                .map(limit_for_key)
+                .unwrap_or(Limit::HeadBytes(DETAIL_STRING_MAX_BYTES));
             let (text, cut) = match limit {
                 Limit::Chars(n) => {
                     let clipped = clip(&masked.text, n);
@@ -533,7 +552,11 @@ fn bound_value(
                 items.truncate(100);
                 *truncated = true;
             }
-            let child_key = if key == Some("file_paths") { Some("file_path") } else { key };
+            let child_key = if key == Some("file_paths") {
+                Some("file_path")
+            } else {
+                key
+            };
             for item in items.iter_mut() {
                 bound_value(child_key, item, redacted, truncated, depth + 1);
             }
@@ -668,7 +691,11 @@ mod tests {
             let name = c["name"].as_str().unwrap();
             let got = mask(c["input"].as_str().unwrap());
             assert_eq!(got.text, c["expect"]["output"].as_str().unwrap(), "{name}");
-            assert_eq!(got.redacted, c["expect"]["redacted"].as_bool().unwrap(), "{name}");
+            assert_eq!(
+                got.redacted,
+                c["expect"]["redacted"].as_bool().unwrap(),
+                "{name}"
+            );
         }
     }
 
@@ -679,7 +706,12 @@ mod tests {
         assert!(!cases.is_empty());
         for c in cases {
             let got = mask_cmd_preview(c["input"].as_str().unwrap());
-            assert_eq!(got.text, c["expect"]["output"].as_str().unwrap(), "{}", c["name"]);
+            assert_eq!(
+                got.text,
+                c["expect"]["output"].as_str().unwrap(),
+                "{}",
+                c["name"]
+            );
         }
     }
 
@@ -687,7 +719,10 @@ mod tests {
     fn mask_path_keeps_long_posix_paths() {
         let p = "/home/someone/projects/agentnest-protocol-experiments/crates/agentnest-core/src";
         assert_eq!(mask_path(p).text, p);
-        assert!(mask(p).redacted, "the generic masker intentionally over-masks long path-like runs");
+        assert!(
+            mask(p).redacted,
+            "the generic masker intentionally over-masks long path-like runs"
+        );
         assert!(mask_path("/x/ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8/y").redacted);
     }
 
@@ -781,7 +816,10 @@ mod tests {
 
     #[test]
     fn log_helpers() {
-        assert_eq!(shorten_path_for_log("C:\\dev\\agentnest\\src\\main.rs"), "…/src/main.rs");
+        assert_eq!(
+            shorten_path_for_log("C:\\dev\\agentnest\\src\\main.rs"),
+            "…/src/main.rs"
+        );
         assert_eq!(shorten_path_for_log("/a/b/c"), "…/b/c");
         assert_eq!(shorten_path_for_log(""), "…/");
         assert_eq!(mask_ip("192.168.0.10"), "192.168.0.x");
@@ -789,7 +827,10 @@ mod tests {
         assert_eq!(mask_ip("not an ip"), "x");
         let s = command_log_summary("cargo test");
         assert!(s.starts_with("len=10 sha256="));
-        assert_eq!(session_key_prefix("claude_code:7f1e2d3c-4b5a"), "claude_code:");
+        assert_eq!(
+            session_key_prefix("claude_code:7f1e2d3c-4b5a"),
+            "claude_code:"
+        );
         assert_eq!(session_key_prefix("short"), "short");
     }
 
@@ -829,7 +870,9 @@ mod tests {
         let nonce = Nonce::new(SECRET_TEXT.as_bytes());
         let device = DeviceToken::new(SECRET_TEXT);
         let hook = HookToken::new(SECRET_TEXT);
-        let pem = TlsKeyPem::new(format!("-----BEGIN PRIVATE KEY-----\n{SECRET_TEXT}\n-----END PRIVATE KEY-----"));
+        let pem = TlsKeyPem::new(format!(
+            "-----BEGIN PRIVATE KEY-----\n{SECRET_TEXT}\n-----END PRIVATE KEY-----"
+        ));
         let plain = Secret::new(SECRET_TEXT);
         let raw = SecretBytes::new(SECRET_TEXT.as_bytes());
 
@@ -852,7 +895,10 @@ mod tests {
         });
 
         let logged = String::from_utf8(cap.0.lock().unwrap().clone()).unwrap();
-        assert!(logged.contains("<redacted>"), "the redaction marker must be visible: {logged}");
+        assert!(
+            logged.contains("<redacted>"),
+            "the redaction marker must be visible: {logged}"
+        );
         for sink in [formatted.as_str(), logged.as_str()] {
             assert!(!sink.contains(SECRET_TEXT), "secret leaked: {sink}");
             assert!(!sink.contains("S3CR3T"), "secret prefix leaked: {sink}");

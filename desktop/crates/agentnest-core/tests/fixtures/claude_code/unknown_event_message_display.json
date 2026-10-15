@@ -1,0 +1,29 @@
+{
+  "_source": "doc-derived",
+  "description": "MessageDisplay is not registered; if it arrives it is kept as an unknown-hook notification",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "MessageDisplay",
+    "turn_id": "t1",
+    "message_id": "m1",
+    "index": 0,
+    "final": true,
+    "delta": "hello"
+  },
+  "expect": [
+    {
+      "kind": "notification",
+      "category": "notification",
+      "headline": "알 수 없는 훅 이벤트가 왔어요",
+      "detail": {
+        "notification_type": "unknown_hook:MessageDisplay",
+        "message": ""
+      }
+    }
+  ],
+  "forbid": [
+    "hello"
+  ]
+}

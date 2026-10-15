@@ -1,0 +1,26 @@
+{
+  "_source": "doc-derived",
+  "description": "StopFailure rate_limit",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "StopFailure",
+    "error": "rate_limit",
+    "error_details": "429 Too Many Requests",
+    "last_assistant_message": "API Error: Rate limit reached"
+  },
+  "expect": [
+    {
+      "kind": "turn_failed",
+      "category": "error",
+      "severity": "error",
+      "state_hint": "error",
+      "headline": "사용량 한도에 걸려 멈췄어요",
+      "detail": {
+        "error_code": "rate_limit",
+        "error_message": "429 Too Many Requests"
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "_source": "synthetic (codex.md 5.3; replaced by Phase 0 C10 captures)",
+  "synthetic": true,
+  "description": "SubagentStop with agent context",
+  "hook": {
+    "session_id": "0199e0a4-7c1d-7b3c-9e4d-2a7b1c3d4e5f",
+    "turn_id": "turn-1",
+    "transcript_path": null,
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "SubagentStop",
+    "model": "gpt-5-codex",
+    "permission_mode": "on-request",
+    "agent_id": "sa-1",
+    "agent_type": "reviewer",
+    "last_assistant_message": "done"
+  },
+  "expect": [
+    {
+      "kind": "subagent_stopped",
+      "detail": {
+        "agent_id": "sa-1",
+        "agent_type": "reviewer"
+      },
+      "actor": {
+        "agent_id": "sa-1",
+        "agent_type": "reviewer",
+        "is_subagent": true
+      }
+    }
+  ]
+}

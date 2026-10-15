@@ -1,0 +1,26 @@
+{
+  "_source": "doc-derived",
+  "description": "PreToolUse Grep -> file_read with the pattern",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Grep",
+    "tool_use_id": "toolu_g1",
+    "tool_input": {
+      "pattern": "TODO",
+      "path": "C:\\dev\\agentnest\\src"
+    }
+  },
+  "expect": [
+    {
+      "kind": "file_read",
+      "headline": "'TODO'을(를) 찾고 있어요",
+      "detail": {
+        "pattern": "TODO",
+        "file_path": "…\\agentnest\\src"
+      }
+    }
+  ]
+}

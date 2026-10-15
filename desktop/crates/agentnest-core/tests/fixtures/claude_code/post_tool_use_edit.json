@@ -1,0 +1,29 @@
+{
+  "_source": "doc-derived",
+  "description": "PostToolUse Edit -> file_modified op=edit",
+  "hook": {
+    "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "transcript_path": "C:\\Users\\me\\.claude\\projects\\x\\t.jsonl",
+    "cwd": "C:\\dev\\agentnest",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "C:\\dev\\agentnest\\src\\main.rs",
+      "old_string": "a",
+      "new_string": "b"
+    },
+    "tool_response": {
+      "filePath": "C:\\dev\\agentnest\\src\\main.rs"
+    },
+    "tool_use_id": "toolu_e1"
+  },
+  "expect": [
+    {
+      "kind": "file_modified",
+      "headline": "main.rs 파일을 고쳤어요",
+      "detail": {
+        "op": "edit"
+      }
+    }
+  ]
+}
