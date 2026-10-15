@@ -30,12 +30,12 @@ use agentnest_protocol::limits::{
     EVENTS_PAGE_MAX_BYTES, MAX_FRAME_C2S_BYTES, MAX_FRAME_S2C_BYTES, SNAPSHOT_MAX_BYTES,
 };
 use agentnest_protocol::{
-    ApprovalOutcome, ApprovalResolvedPayload, ByePayload, ByeReason, ChallengePayload, DecisionPayload,
-    DecisionResultPayload, Delivery, ErrorCode, ErrorPayload, EventsPagePayload, EventsRequestPayload,
-    Focus, Frame, Heartbeat, HelloPayload, Hosts, Limits, Message, ObservedResult, PairPayload,
-    PairPendingPayload, PairResultPayload, PcInfo, Policy, PongPayload, ProtocolError, ProtocolInfo,
-    RemoteApprovalPolicy, ResolvedBy, Resync, ResyncMode, SnapshotPayload, UnpairPayload,
-    WelcomePayload,
+    ApprovalOutcome, ApprovalResolvedPayload, ByePayload, ByeReason, ChallengePayload,
+    DecisionPayload, DecisionResultPayload, Delivery, ErrorCode, ErrorPayload, EventsPagePayload,
+    EventsRequestPayload, Focus, Frame, Heartbeat, HelloPayload, Hosts, Limits, Message,
+    ObservedResult, PairPayload, PairPendingPayload, PairResultPayload, PcInfo, Policy,
+    PongPayload, ProtocolError, ProtocolInfo, RemoteApprovalPolicy, ResolvedBy, Resync, ResyncMode,
+    SnapshotPayload, UnpairPayload, WelcomePayload,
 };
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket};
 use serde_json::{json, Value};
@@ -108,7 +108,11 @@ struct AuthState {
 
 /// Runs one WebSocket connection to its end.
 pub async fn run(socket: WebSocket, ctx: Arc<LinkContext>, ip: IpAddr) {
-    let mut conn = Conn { ws: socket, ctx: ctx.clone(), ip };
+    let mut conn = Conn {
+        ws: socket,
+        ctx: ctx.clone(),
+        ip,
+    };
     let admission = match ctx.admission.admit(ip) {
         Ok(a) => a,
         Err(Rejection::ConnectionCap) | Err(Rejection::TooManyPreAuth) => {
@@ -163,7 +167,10 @@ impl Conn {
 
     async fn send_text(&mut self, text: String) -> bool {
         if text.len() > MAX_FRAME_S2C_BYTES {
-            tracing::error!(len = text.len(), "an outgoing frame exceeds the frame limit and was dropped");
+            tracing::error!(
+                len = text.len(),
+                "an outgoing frame exceeds the frame limit and was dropped"
+            );
             return true;
         }
         self.ws.send(WsMessage::Text(text.into())).await.is_ok()
@@ -176,7 +183,14 @@ impl Conn {
         }
     }
 
-    async fn send_error(&mut self, code: ErrorCode, message: &str, message_ko: &str, in_reply_to: Option<String>, fatal: bool) -> bool {
+    async fn send_error(
+        &mut self,
+        code: ErrorCode,
+        message: &str,
+        message_ko: &str,
+        in_reply_to: Option<String>,
+        fatal: bool,
+    ) -> bool {
         self.send(Message::Error(ErrorPayload {
             code,
             message: message.to_owned(),
@@ -279,8 +293,14 @@ impl Conn {
         admission.record_failure();
         tokio::time::sleep(Duration::from_millis(self.ctx.timing.auth_fail_delay_ms)).await;
         // the reason is never revealed: unknown device, wrong token and wrong challenge look the same
-        self.send_error(ErrorCode::AuthFailed, "authentication failed", "인증하지 못했어요.", in_reply_to, true)
-            .await;
+        self.send_error(
+            ErrorCode::AuthFailed,
+            "authentication failed",
+            "인증하지 못했어요.",
+            in_reply_to,
+            true,
+        )
+        .await;
         self.close(4002).await;
     }
 
@@ -291,23 +311,33 @@ impl Conn {
         hello: HelloPayload,
     ) -> Option<EntryInfo> {
         if hello.protocol != agentnest_protocol::PROTOCOL_VERSION {
-            self.send_error(ErrorCode::ProtoVersion, "unsupported protocol", "앱을 업데이트해 주세요.", None, true).await;
+            self.send_error(
+                ErrorCode::ProtoVersion,
+                "unsupported protocol",
+                "앱을 업데이트해 주세요.",
+                None,
+                true,
+            )
+            .await;
             self.close(4010).await;
             return None;
         }
         let devices = self.ctx.devices.clone();
         let (id, token) = (hello.device_id.clone(), hello.device_token.clone());
-        let outcome = tokio::task::spawn_blocking(move || devices.authenticate(&id, token.expose()))
-            .await
-            .ok()
-            .and_then(Result::ok);
+        let outcome =
+            tokio::task::spawn_blocking(move || devices.authenticate(&id, token.expose()))
+                .await
+                .ok()
+                .and_then(Result::ok);
         let challenge_ok = challenge.matches_b64(&hello.challenge_b64);
         match outcome {
             Some(AuthOutcome::Ok(rec)) if challenge_ok => {
                 let ip_masked = mask_ip(&self.ip.to_string());
                 let devices = self.ctx.devices.clone();
                 let id = rec.device_id.clone();
-                let _ = tokio::task::spawn_blocking(move || devices.touch_seen(&id, Some(&ip_masked))).await;
+                let _ =
+                    tokio::task::spawn_blocking(move || devices.touch_seen(&id, Some(&ip_masked)))
+                        .await;
                 Some(EntryInfo {
                     device_id: rec.device_id,
                     last_seq: hello.last_seq,
@@ -317,7 +347,14 @@ impl Conn {
             }
             Some(AuthOutcome::Revoked) if challenge_ok => {
                 // valid credentials of a revoked device: the phone deletes its token
-                self.send_error(ErrorCode::DeviceRevoked, "device revoked", "PC에서 연결을 해제했어요.", None, true).await;
+                self.send_error(
+                    ErrorCode::DeviceRevoked,
+                    "device revoked",
+                    "PC에서 연결을 해제했어요.",
+                    None,
+                    true,
+                )
+                .await;
                 self.close(4003).await;
                 None
             }
@@ -354,23 +391,24 @@ impl Conn {
         pair: PairPayload,
     ) -> Option<EntryInfo> {
         let pc = self.ctx.pc_info();
-        let mut pending: PendingConfirmation = match self.ctx.pairing.begin(&pc.pc_id, &pair, challenge) {
-            Ok(p) => p,
-            Err(PairFailure::BadMessage) => {
-                // a malformed pair is a protocol violation, nothing is revealed
-                self.close(4004).await;
-                return None;
-            }
-            Err(PairFailure::Busy) => {
-                self.pair_fail(ErrorCode::PairBusy, true).await;
-                return None;
-            }
-            Err(PairFailure::Failed) => {
-                admission.record_failure();
-                self.pair_fail(ErrorCode::PairFailed, true).await;
-                return None;
-            }
-        };
+        let mut pending: PendingConfirmation =
+            match self.ctx.pairing.begin(&pc.pc_id, &pair, challenge) {
+                Ok(p) => p,
+                Err(PairFailure::BadMessage) => {
+                    // a malformed pair is a protocol violation, nothing is revealed
+                    self.close(4004).await;
+                    return None;
+                }
+                Err(PairFailure::Busy) => {
+                    self.pair_fail(ErrorCode::PairBusy, true).await;
+                    return None;
+                }
+                Err(PairFailure::Failed) => {
+                    admission.record_failure();
+                    self.pair_fail(ErrorCode::PairFailed, true).await;
+                    return None;
+                }
+            };
         // PairPending: only pair_pending / pair_result / error may be sent from here on
         let pending_frame = Message::PairPending(PairPendingPayload {
             pairing_id: pending.pairing_id.clone(),
@@ -386,6 +424,7 @@ impl Conn {
             return None;
         };
         let deadline = Instant::now() + Duration::from_millis(self.ctx.timing.pair_confirm_ms);
+        #[allow(clippy::never_loop)]
         let verdict = loop {
             tokio::select! {
                 d = &mut decision_rx => {
@@ -504,7 +543,8 @@ impl Conn {
             server_time: format_ms(self.now_ms()),
             heartbeat: Heartbeat {
                 client_ping_interval_s: 30,
-                server_idle_close_s: u32::try_from(self.ctx.timing.idle_close_ms / 1000).unwrap_or(90),
+                server_idle_close_s: u32::try_from(self.ctx.timing.idle_close_ms / 1000)
+                    .unwrap_or(90),
             },
             resync,
             limits: Limits {
@@ -536,7 +576,9 @@ impl Conn {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let conn_id = ctx.registry.register(&device_id, cmd_tx);
         ctx.broker.device_connected().await;
-        ctx.bus.emit(DaemonEvent::Device(DeviceUiEvent::Online { device_id: device_id.clone() }));
+        ctx.bus.emit(DaemonEvent::Device(DeviceUiEvent::Online {
+            device_id: device_id.clone(),
+        }));
         let mut st = AuthState {
             device_id: device_id.clone(),
             conn_id,
@@ -559,7 +601,9 @@ impl Conn {
         // leave: the registry entry first, then the broker (grace period / hand-off)
         let went_offline = ctx.registry.unregister(&device_id, st.conn_id);
         if went_offline {
-            ctx.bus.emit(DaemonEvent::Device(DeviceUiEvent::Offline { device_id: device_id.clone() }));
+            ctx.bus.emit(DaemonEvent::Device(DeviceUiEvent::Offline {
+                device_id: device_id.clone(),
+            }));
             ctx.broker.device_disconnected().await;
         }
     }
@@ -577,9 +621,21 @@ impl Conn {
             }
         };
         let resync = match plan {
-            ResyncPlan::None => Resync { mode: ResyncMode::None, from_seq: None, to_seq: None },
-            ResyncPlan::Replay { from, to } => Resync { mode: ResyncMode::Replay, from_seq: Some(from), to_seq: Some(to) },
-            ResyncPlan::Snapshot => Resync { mode: ResyncMode::Snapshot, from_seq: None, to_seq: None },
+            ResyncPlan::None => Resync {
+                mode: ResyncMode::None,
+                from_seq: None,
+                to_seq: None,
+            },
+            ResyncPlan::Replay { from, to } => Resync {
+                mode: ResyncMode::Replay,
+                from_seq: Some(from),
+                to_seq: Some(to),
+            },
+            ResyncPlan::Snapshot => Resync {
+                mode: ResyncMode::Snapshot,
+                from_seq: None,
+                to_seq: None,
+            },
         };
         let welcome = self.welcome(resync);
         if !self.send(welcome).await {
@@ -653,7 +709,12 @@ impl Conn {
         st.sent_up_to = p.seq;
         let text = self.stream_text(p.seq, &p.msg_type, &p.payload);
         if p.msg_type == "approval_request" {
-            let request_id = p.payload.get("request_id").and_then(Value::as_str).unwrap_or("").to_owned();
+            let request_id = p
+                .payload
+                .get("request_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
             if !self.send_text(text.clone()).await {
                 return false;
             }
@@ -669,7 +730,11 @@ impl Conn {
         }
         st.acks.insert(
             request_id.to_owned(),
-            AckTrack { text, last_sent: Instant::now(), retries: 0 },
+            AckTrack {
+                text,
+                last_sent: Instant::now(),
+                retries: 0,
+            },
         );
         self.ctx.broker.mark_sent(request_id, &st.device_id).await;
     }
@@ -684,7 +749,9 @@ impl Conn {
             .map(|(id, _)| id.clone())
             .collect();
         for id in due {
-            let Some(a) = st.acks.get_mut(&id) else { continue };
+            let Some(a) = st.acks.get_mut(&id) else {
+                continue;
+            };
             if a.retries >= max {
                 st.acks.remove(&id);
                 self.ctx.broker.delivery_failed(&id);
@@ -705,7 +772,11 @@ impl Conn {
     async fn replay(&mut self, st: &mut AuthState, after_seq: i64) -> bool {
         let store = self.ctx.store.clone();
         let now = format_ms(self.now_ms());
-        let items = match tokio::task::spawn_blocking(move || store.stream_replay_since(after_seq, REPLAY_LIMIT, &now)).await {
+        let items = match tokio::task::spawn_blocking(move || {
+            store.stream_replay_since(after_seq, REPLAY_LIMIT, &now)
+        })
+        .await
+        {
             Ok(Ok(v)) => v,
             _ => return self.send_snapshot(st).await,
         };
@@ -726,9 +797,15 @@ impl Conn {
                     let session_key = row
                         .session_key
                         .clone()
-                        .or_else(|| row.payload.get("session_key").and_then(Value::as_str).map(str::to_owned))
+                        .or_else(|| {
+                            row.payload
+                                .get("session_key")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        })
                         .unwrap_or_default();
-                    let payload = resolved_replacement(&request_id, &session_key, state, self.now_ms());
+                    let payload =
+                        resolved_replacement(&request_id, &session_key, state, self.now_ms());
                     let text = self.stream_text(row.seq, "approval_resolved", &payload);
                     if !self.send_text(text).await {
                         return false;
@@ -758,30 +835,51 @@ impl Conn {
 
     async fn build_snapshot(
         ctx: Arc<LinkContext>,
-    ) -> Option<(i64, SnapshotPayload, Vec<agentnest_protocol::ApprovalRequest>)> {
+    ) -> Option<(
+        i64,
+        SnapshotPayload,
+        Vec<agentnest_protocol::ApprovalRequest>,
+    )> {
         let store = ctx.store.clone();
         // 1. the sequence the snapshot stands for is read FIRST: everything read afterwards is at least as new, and the
         //    live stream (seq > snapshot.seq) repairs the difference
         let seq0 = {
             let s = store.clone();
-            tokio::task::spawn_blocking(move || s.stream_bounds()).await.ok()?.ok()?.max_seq
+            tokio::task::spawn_blocking(move || s.stream_bounds())
+                .await
+                .ok()?
+                .ok()?
+                .max_seq
         };
         let pending = ctx.broker.pending_cards().await;
         let sessions = ctx.pipeline.snapshot_sessions(snapshot::MAX_SESSIONS).await;
         let adapters = ctx.pipeline.adapters().await;
-        let focus = ctx.pipeline.focus().await.map(|(session_key, state)| Focus { session_key, state });
+        let focus = ctx
+            .pipeline
+            .focus()
+            .await
+            .map(|(session_key, state)| Focus { session_key, state });
         let (mut recent_events, recent_errors) = {
             let s = store.clone();
-            tokio::task::spawn_blocking(move || Ok::<_, crate::store::StoreError>((s.recent_events(50)?, s.recent_errors(5)?)))
-                .await
-                .ok()?
-                .ok()?
+            tokio::task::spawn_blocking(move || {
+                Ok::<_, crate::store::StoreError>((s.recent_events(50)?, s.recent_errors(5)?))
+            })
+            .await
+            .ok()?
+            .ok()?
         };
         recent_events.retain(|e| e.seq.is_none_or(|s| s <= seq0));
         let mut recent_errors = recent_errors;
         recent_errors.retain(|e| e.seq.is_none_or(|s| s <= seq0));
         let (payload, followups) = snapshot::build(
-            SnapshotInputs { sessions, pending, recent_errors, recent_events, adapters, focus },
+            SnapshotInputs {
+                sessions,
+                pending,
+                recent_errors,
+                recent_events,
+                adapters,
+                focus,
+            },
             SNAPSHOT_MAX_BYTES,
         );
         Some((seq0, payload, followups))
@@ -789,10 +887,21 @@ impl Conn {
 
     async fn send_snapshot(&mut self, st: &mut AuthState) -> bool {
         let Some((seq0, payload, followups)) = Self::build_snapshot(self.ctx.clone()).await else {
-            self.send_error(ErrorCode::Internal, "snapshot unavailable", "잠시 후 다시 시도해 주세요.", None, false).await;
+            self.send_error(
+                ErrorCode::Internal,
+                "snapshot unavailable",
+                "잠시 후 다시 시도해 주세요.",
+                None,
+                false,
+            )
+            .await;
             return true;
         };
-        let ids: Vec<String> = payload.pending_approvals.iter().map(|c| c.request_id.clone()).collect();
+        let ids: Vec<String> = payload
+            .pending_approvals
+            .iter()
+            .map(|c| c.request_id.clone())
+            .collect();
         let Some(text) = self.frame_text(Some(seq0), Message::Snapshot(Box::new(payload))) else {
             return true;
         };
@@ -824,7 +933,9 @@ impl Conn {
             .and_then(Result::ok)
             .flatten()
             .unwrap_or(seq0);
-            let Ok(payload) = serde_json::to_value(&card) else { continue };
+            let Ok(payload) = serde_json::to_value(&card) else {
+                continue;
+            };
             let text = self.stream_text(seq, "approval_request", &payload);
             if !self.send_text(text.clone()).await {
                 return false;
@@ -841,12 +952,25 @@ impl Conn {
     async fn strike(&mut self, st: &mut AuthState, in_reply_to: Option<String>) -> Flow {
         st.strikes += 1;
         if st.strikes >= MAX_RATE_STRIKES {
-            self.send_error(ErrorCode::RateLimited, "too many requests", "요청이 너무 많아요.", in_reply_to, true).await;
+            self.send_error(
+                ErrorCode::RateLimited,
+                "too many requests",
+                "요청이 너무 많아요.",
+                in_reply_to,
+                true,
+            )
+            .await;
             self.close(4005).await;
             return Flow::End;
         }
         if !self
-            .send_error(ErrorCode::RateLimited, "rate limited", "잠시 후 다시 시도해 주세요.", in_reply_to, false)
+            .send_error(
+                ErrorCode::RateLimited,
+                "rate limited",
+                "잠시 후 다시 시도해 주세요.",
+                in_reply_to,
+                false,
+            )
             .await
         {
             return Flow::End;
@@ -858,19 +982,42 @@ impl Conn {
         let frame = match Frame::parse(text) {
             Ok(f) => f,
             Err(ProtocolError::VersionMismatch(_)) => {
-                self.send_error(ErrorCode::ProtoVersion, "unsupported protocol", "앱을 업데이트해 주세요.", None, true).await;
+                self.send_error(
+                    ErrorCode::ProtoVersion,
+                    "unsupported protocol",
+                    "앱을 업데이트해 주세요.",
+                    None,
+                    true,
+                )
+                .await;
                 self.close(4010).await;
                 return Flow::End;
             }
             Err(_) => {
                 st.bad_messages += 1;
                 if st.bad_messages >= MAX_BAD_MESSAGES {
-                    self.send_error(ErrorCode::BadMessage, "too many malformed messages", "잘못된 메시지가 너무 많아요.", None, true).await;
+                    self.send_error(
+                        ErrorCode::BadMessage,
+                        "too many malformed messages",
+                        "잘못된 메시지가 너무 많아요.",
+                        None,
+                        true,
+                    )
+                    .await;
                     self.close(4004).await;
                     return Flow::End;
                 }
                 // a schema violation (for example a decision with a value that does not exist) changes nothing
-                if !self.send_error(ErrorCode::BadMessage, "malformed message", "메시지 형식이 올바르지 않아요.", None, false).await {
+                if !self
+                    .send_error(
+                        ErrorCode::BadMessage,
+                        "malformed message",
+                        "메시지 형식이 올바르지 않아요.",
+                        None,
+                        false,
+                    )
+                    .await
+                {
                     return Flow::End;
                 }
                 return Flow::Continue;
@@ -883,13 +1030,17 @@ impl Conn {
                 if let Some(seq) = ack.through_seq {
                     let devices = self.ctx.devices.clone();
                     let id = st.device_id.clone();
-                    let _ = tokio::task::spawn_blocking(move || devices.set_last_acked(&id, seq)).await;
+                    let _ =
+                        tokio::task::spawn_blocking(move || devices.set_last_acked(&id, seq)).await;
                 }
                 if !ack.approval_ids.is_empty() {
                     for id in &ack.approval_ids {
                         st.acks.remove(id);
                     }
-                    self.ctx.broker.mark_acked(&ack.approval_ids, &st.device_id).await;
+                    self.ctx
+                        .broker
+                        .mark_acked(&ack.approval_ids, &st.device_id)
+                        .await;
                 }
                 Flow::Continue
             }
@@ -897,29 +1048,51 @@ impl Conn {
                 if !st.ping_rl.try_acquire(now) {
                     return self.strike(st, Some(frame_id)).await;
                 }
-                let pong = Message::Pong(PongPayload { in_reply_to: frame_id, server_time: format_ms(now) });
-                if self.send(pong).await { Flow::Continue } else { Flow::End }
+                let pong = Message::Pong(PongPayload {
+                    in_reply_to: frame_id,
+                    server_time: format_ms(now),
+                });
+                if self.send(pong).await {
+                    Flow::Continue
+                } else {
+                    Flow::End
+                }
             }
             Message::SnapshotRequest(_) => {
                 if !st.snapshot_rl.try_acquire(now) {
                     return self.strike(st, Some(frame_id)).await;
                 }
-                if self.send_snapshot(st).await { Flow::Continue } else { Flow::End }
+                if self.send_snapshot(st).await {
+                    Flow::Continue
+                } else {
+                    Flow::End
+                }
             }
             Message::EventsRequest(req) => {
                 if !st.events_rl.try_acquire(now) {
                     return self.strike(st, Some(frame_id)).await;
                 }
-                if self.handle_events_request(&frame_id, req).await { Flow::Continue } else { Flow::End }
+                if self.handle_events_request(&frame_id, req).await {
+                    Flow::Continue
+                } else {
+                    Flow::End
+                }
             }
             Message::Decision(d) => {
                 if !st.decision_rl.try_acquire(now) {
                     return self.strike(st, Some(frame_id)).await;
                 }
-                if self.handle_decision(st, &frame_id, d).await { Flow::Continue } else { Flow::End }
+                if self.handle_decision(st, &frame_id, d).await {
+                    Flow::Continue
+                } else {
+                    Flow::End
+                }
             }
             Message::ApprovalSeen(s) => {
-                self.ctx.broker.mark_seen(&s.request_id, &st.device_id).await;
+                self.ctx
+                    .broker
+                    .mark_seen(&s.request_id, &st.device_id)
+                    .await;
                 Flow::Continue
             }
             Message::Unpair(u) => self.handle_unpair(st, u).await,
@@ -951,7 +1124,13 @@ impl Conn {
             Ok(Ok(p)) => p,
             _ => {
                 return self
-                    .send_error(ErrorCode::Internal, "events unavailable", "잠시 후 다시 시도해 주세요.", Some(frame_id.to_owned()), false)
+                    .send_error(
+                        ErrorCode::Internal,
+                        "events unavailable",
+                        "잠시 후 다시 시도해 주세요.",
+                        Some(frame_id.to_owned()),
+                        false,
+                    )
                     .await;
             }
         };
@@ -965,12 +1144,19 @@ impl Conn {
         .await
     }
 
-    async fn handle_decision(&mut self, st: &mut AuthState, frame_id: &str, d: DecisionPayload) -> bool {
+    async fn handle_decision(
+        &mut self,
+        st: &mut AuthState,
+        frame_id: &str,
+        d: DecisionPayload,
+    ) -> bool {
         let outcome: DecisionOutcome = self
             .ctx
             .broker
             .apply_decision(DecisionInput {
-                source: DecisionSource::Phone { device_id: st.device_id.clone() },
+                source: DecisionSource::Phone {
+                    device_id: st.device_id.clone(),
+                },
                 decision_id: frame_id.to_owned(),
                 request_id: d.request_id.clone(),
                 session_key: Some(d.session_key),
@@ -1013,9 +1199,18 @@ impl Conn {
         if revoked {
             self.ctx
                 .audit
-                .log(device_actor(&st.device_id), actions::DEVICE_REVOKED, Some(st.device_id.clone()), Some(json!({"reason": "user_phone"})))
+                .log(
+                    device_actor(&st.device_id),
+                    actions::DEVICE_REVOKED,
+                    Some(st.device_id.clone()),
+                    Some(json!({"reason": "user_phone"})),
+                )
                 .await;
-            self.ctx.bus.emit(DaemonEvent::Device(DeviceUiEvent::Revoked { device_id: st.device_id.clone() }));
+            self.ctx
+                .bus
+                .emit(DaemonEvent::Device(DeviceUiEvent::Revoked {
+                    device_id: st.device_id.clone(),
+                }));
         }
         self.send(Message::Bye(ByePayload {
             reason: ByeReason::Unpaired,
@@ -1045,25 +1240,46 @@ enum Verdict {
 }
 
 /// The `approval_resolved` payload that replaces an `approval_request` during replay.
-fn resolved_replacement(request_id: &str, session_key: &str, state: ApprovalReplayState, now_ms: i64) -> Value {
+fn resolved_replacement(
+    request_id: &str,
+    session_key: &str,
+    state: ApprovalReplayState,
+    now_ms: i64,
+) -> Value {
     let (outcome, resolved_by, resolved_at, delivery, observed) = match state {
-        ApprovalReplayState::Resolved { outcome, resolved_by, resolved_at, delivery, observed_result, .. } => (
-            outcome.map(|o| ApprovalOutcome::from_wire(&o)).unwrap_or(ApprovalOutcome::Expired),
-            resolved_by.map(|r| ResolvedBy::from_wire(&r)).unwrap_or(ResolvedBy::System),
+        ApprovalReplayState::Resolved {
+            outcome,
+            resolved_by,
+            resolved_at,
+            delivery,
+            observed_result,
+            ..
+        } => (
+            outcome
+                .map(|o| ApprovalOutcome::from_wire(&o))
+                .unwrap_or(ApprovalOutcome::Expired),
+            resolved_by
+                .map(|r| ResolvedBy::from_wire(&r))
+                .unwrap_or(ResolvedBy::System),
             resolved_at.unwrap_or_else(|| format_ms(now_ms)),
-            delivery.map(|d| Delivery::from_wire(&d)).unwrap_or(Delivery::NotDelivered),
+            delivery
+                .map(|d| Delivery::from_wire(&d))
+                .unwrap_or(Delivery::NotDelivered),
             ObservedResult::from_wire(&observed_result),
         ),
         // expired while pending, or the row is gone
-        ApprovalReplayState::Pending | ApprovalReplayState::Expired | ApprovalReplayState::Gone => (
-            ApprovalOutcome::Expired,
-            ResolvedBy::Timeout,
-            format_ms(now_ms),
-            Delivery::NotDelivered,
-            ObservedResult::Undetermined,
-        ),
+        ApprovalReplayState::Pending | ApprovalReplayState::Expired | ApprovalReplayState::Gone => {
+            (
+                ApprovalOutcome::Expired,
+                ResolvedBy::Timeout,
+                format_ms(now_ms),
+                Delivery::NotDelivered,
+                ObservedResult::Undetermined,
+            )
+        }
     };
-    let message_ko = crate::approvals::card::resolved_message_ko(&outcome, agentnest_protocol::AgentKind::Other);
+    let message_ko =
+        crate::approvals::card::resolved_message_ko(&outcome, agentnest_protocol::AgentKind::Other);
     serde_json::to_value(ApprovalResolvedPayload {
         request_id: request_id.to_owned(),
         session_key: session_key.to_owned(),

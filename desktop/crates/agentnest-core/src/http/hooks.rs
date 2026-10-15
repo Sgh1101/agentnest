@@ -18,11 +18,13 @@
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use agentnest_adapter_api::{AdapterMode, AdapterStatusKind, AgentKind, RawObservation, SourceChannel};
+use agentnest_adapter_api::{
+    AdapterMode, AdapterStatusKind, AgentKind, RawObservation, SourceChannel,
+};
 use agentnest_protocol::canonical::tool_input_sha256;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -61,6 +63,9 @@ pub struct HttpSettings {
     pub force_ask_on_critical: AtomicBool,
     /// Hold Codex hooks `PermissionRequest` (feature `codex-hooks-approval` AND Codex mode hooks). UNVERIFIED (C6).
     pub codex_hold: AtomicBool,
+    /// Extra time (ms) a held request waits beyond the approval TTL for the broker's own answer before the handler
+    /// answers "no decision" itself (the broker timer not running is an abnormal case). Tests shorten it.
+    pub hold_slack_ms: AtomicU64,
 }
 
 impl HttpSettings {
@@ -69,6 +74,7 @@ impl HttpSettings {
         Self {
             force_ask_on_critical: AtomicBool::new(force_ask_on_critical),
             codex_hold: AtomicBool::new(codex_hold),
+            hold_slack_ms: AtomicU64::new(HOLD_SLACK_MS),
         }
     }
 }
@@ -153,7 +159,11 @@ impl HttpContext {
             info,
             queue: tx,
             dedupe: Mutex::new(DedupeWindow::default()),
-            rate: Mutex::new(TokenBucket::new(OBSERVATION_RATE_PER_S, OBSERVATION_RATE_PER_S, now)),
+            rate: Mutex::new(TokenBucket::new(
+                OBSERVATION_RATE_PER_S,
+                OBSERVATION_RATE_PER_S,
+                now,
+            )),
             statusline_seen: Mutex::new(HashMap::new()),
         });
         tokio::spawn(worker(rx, pipeline, broker, env));
@@ -185,6 +195,7 @@ fn json_reply(v: Value) -> Response {
     (StatusCode::OK, Json(v)).into_response()
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_body(body: &Bytes) -> Result<Value, Response> {
     match serde_json::from_slice::<Value>(body) {
         Ok(v @ Value::Object(_)) => Ok(v),
@@ -285,7 +296,8 @@ pub async fn codex_hook(
     let name = hook_event_name(&value).unwrap_or("").to_owned();
     if name == "PermissionRequest" {
         // UNVERIFIED (Phase 0 C6): whether a hooks PermissionRequest can be answered. Until then it is observed only.
-        if cfg!(feature = "codex-hooks-approval") && ctx.settings.codex_hold.load(Ordering::Relaxed) {
+        if cfg!(feature = "codex-hooks-approval") && ctx.settings.codex_hold.load(Ordering::Relaxed)
+        {
             return hold(ctx, HookFlavor::Codex, value, SourceChannel::CodexHookCli).await;
         }
         return no_decision();
@@ -338,7 +350,9 @@ pub async fn statusline_hook(State(ctx): State<Arc<HttpContext>>, body: Bytes) -
     }
     let pipeline = ctx.pipeline.clone();
     tokio::spawn(async move {
-        pipeline.apply_meta(&session_key, AgentKind::ClaudeCode, &patch).await;
+        pipeline
+            .apply_meta(&session_key, AgentKind::ClaudeCode, &patch)
+            .await;
     });
     no_decision()
 }
@@ -376,8 +390,10 @@ async fn hold(
             };
             claude_draft(&value, &ctx_norm).map_err(|e| e.to_string())
         }
-        HookFlavor::Codex => crate::adapters::codex::hooks::permission_request_draft(&value, &ctx.env)
-            .map_err(|e| e.to_string()),
+        HookFlavor::Codex => {
+            crate::adapters::codex::hooks::permission_request_draft(&value, &ctx.env)
+                .map_err(|e| e.to_string())
+        }
     };
     let mut draft = match draft_result {
         Ok(d) => d,
@@ -391,7 +407,8 @@ async fn hold(
     let (responder, rx) = HookResponder::new(flavor);
     let mut guard = DropGuard::new(ctx.broker.clone(), draft.binding.clone());
     let wait = Duration::from_millis(
-        u64::try_from(ctx.broker.settings().ttl_ms()).unwrap_or(120_000) + HOLD_SLACK_MS,
+        u64::try_from(ctx.broker.settings().ttl_ms()).unwrap_or(120_000)
+            + ctx.settings.hold_slack_ms.load(Ordering::Relaxed),
     );
     let broker = ctx.broker.clone();
     let opened = AssertUnwindSafe(async move { broker.open(draft, Box::new(responder)).await })
@@ -467,7 +484,9 @@ async fn worker(
                     pipeline.ingest_event(e, db_key).await;
                 }
                 RawObservation::SessionMeta { session_key, patch } => {
-                    pipeline.apply_meta(&session_key, adapter_kind(adapter), &patch).await;
+                    pipeline
+                        .apply_meta(&session_key, adapter_kind(adapter), &patch)
+                        .await;
                 }
                 RawObservation::Health(h) => {
                     pipeline
@@ -508,7 +527,12 @@ async fn worker(
                 ),
             };
             pipeline
-                .set_adapter_status(kind, AdapterStatusKind::Connected, mode, Some(detail.to_owned()))
+                .set_adapter_status(
+                    kind,
+                    AdapterStatusKind::Connected,
+                    mode,
+                    Some(detail.to_owned()),
+                )
                 .await;
         }
         // outcome correlation for approved / denied calls

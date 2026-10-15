@@ -1,6 +1,7 @@
 //! Helpers shared by the integration tests of `agentnest-core` (not a test target itself).
 #![allow(dead_code)]
 
+pub mod e2e;
 pub mod harness;
 
 use std::collections::{BTreeMap, HashMap};

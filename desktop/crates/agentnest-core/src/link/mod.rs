@@ -11,7 +11,7 @@
 //! Everything a phone can do ends in the broker, the device registry or the store; the link never decides.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -268,7 +268,9 @@ impl LinkServer {
         identity: &ServerIdentity,
         listener: std::net::TcpListener,
     ) -> Result<Self, crate::identity::IdentityError> {
-        let addr = listener.local_addr().map_err(crate::identity::IdentityError::Io)?;
+        let addr = listener
+            .local_addr()
+            .map_err(crate::identity::IdentityError::Io)?;
         let tls = RustlsConfig::from_config(identity.rustls_server_config()?);
         let app = Router::new()
             .route(LINK_PATH, get(ws_handler))
@@ -276,8 +278,9 @@ impl LinkServer {
         let handle: Handle<SocketAddr> = Handle::new();
         let server = axum_server::from_tcp_rustls(listener, tls.clone())
             .map_err(crate::identity::IdentityError::Io)?
-            .handle(handle.clone())
-            .http1_only();
+            // no `http1_only()`: axum-server then serves the connection without upgrade support and every WebSocket handshake
+            // would end right after the 101 (ALPN already offers only http/1.1)
+            .handle(handle.clone());
         let task = tokio::spawn(async move {
             if let Err(e) = server
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -296,8 +299,12 @@ impl LinkServer {
     }
 
     /// Swaps the certificate (same key, new SANs) without dropping connections.
-    pub fn reload_identity(&self, identity: &ServerIdentity) -> Result<(), crate::identity::IdentityError> {
-        self.tls.reload_from_config(identity.rustls_server_config()?);
+    pub fn reload_identity(
+        &self,
+        identity: &ServerIdentity,
+    ) -> Result<(), crate::identity::IdentityError> {
+        self.tls
+            .reload_from_config(identity.rustls_server_config()?);
         Ok(())
     }
 
@@ -334,11 +341,6 @@ impl LinkServer {
     }
 }
 
-#[allow(dead_code)]
-fn _ordering_is_used() -> Ordering {
-    Ordering::Relaxed
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,14 +348,32 @@ mod tests {
     #[test]
     fn private_sources_are_lan_and_loopback_only() {
         for ok in [
-            "127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.0.10", "100.64.0.1", "100.127.255.255",
-            "169.254.3.4", "::1", "fd00::5", "fc00::1", "fe80::1", "::ffff:192.168.0.10",
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.0.10",
+            "100.64.0.1",
+            "100.127.255.255",
+            "169.254.3.4",
+            "::1",
+            "fd00::5",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:192.168.0.10",
         ] {
             assert!(is_private_source(ok.parse().unwrap()), "{ok}");
         }
         for bad in [
-            "8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "100.63.255.255", "100.128.0.1", "192.169.0.1",
-            "2001:4860:4860::8888", "::ffff:8.8.8.8",
+            "8.8.8.8",
+            "1.1.1.1",
+            "172.15.0.1",
+            "172.32.0.1",
+            "100.63.255.255",
+            "100.128.0.1",
+            "192.169.0.1",
+            "2001:4860:4860::8888",
+            "::ffff:8.8.8.8",
         ] {
             assert!(!is_private_source(bad.parse().unwrap()), "{bad}");
         }

@@ -240,7 +240,12 @@ mod tests {
         assert_ne!(c1, c2);
         assert_eq!(reg.online_count(), 1);
         match rx1.try_recv().unwrap() {
-            ConnCommand::Bye { reason, close_code, reconnect, .. } => {
+            ConnCommand::Bye {
+                reason,
+                close_code,
+                reconnect,
+                ..
+            } => {
                 assert_eq!(reason, ByeReason::SupersededConnection);
                 assert_eq!(close_code, 4009);
                 assert!(reconnect);
@@ -263,7 +268,12 @@ mod tests {
         assert!(!reg.is_online("dev_a"));
         assert_eq!(*reg.presence().borrow(), 0);
         match rx.try_recv().unwrap() {
-            ConnCommand::Bye { reason, close_code, reconnect, .. } => {
+            ConnCommand::Bye {
+                reason,
+                close_code,
+                reconnect,
+                ..
+            } => {
                 assert_eq!(reason, ByeReason::DeviceRevoked);
                 assert_eq!(close_code, 4003);
                 assert!(!reconnect);
@@ -281,7 +291,10 @@ mod tests {
         reg.register("dev_a", tx);
         assert!(reg.send_to("dev_a", ConnCommand::Close { code: 1000 }));
         assert!(!reg.send_to("dev_x", ConnCommand::Close { code: 1000 }));
-        assert!(matches!(rx.try_recv().unwrap(), ConnCommand::Close { code: 1000 }));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            ConnCommand::Close { code: 1000 }
+        ));
         assert_eq!(reg.send_all(|| ConnCommand::Close { code: 1001 }), 1);
     }
 

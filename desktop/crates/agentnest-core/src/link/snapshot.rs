@@ -50,7 +50,10 @@ fn size_of(p: &SnapshotPayload) -> usize {
 
 fn wants_attention(s: &SessionState) -> bool {
     !s.pending_approval_ids.is_empty()
-        || matches!(s.state, AgentState::AwaitingApproval | AgentState::AwaitingInput)
+        || matches!(
+            s.state,
+            AgentState::AwaitingApproval | AgentState::AwaitingInput
+        )
 }
 
 /// Builds the snapshot payload within `max_bytes` and returns the approval cards that must follow as separate frames.
@@ -72,8 +75,10 @@ pub fn build(inputs: SnapshotInputs, max_bytes: usize) -> (SnapshotPayload, Vec<
     let keep = recent_errors.len().saturating_sub(5);
     recent_errors.drain(..keep);
 
-    let mut t = SnapshotTruncated::default();
-    t.pending_approvals = !followups.is_empty();
+    let t = SnapshotTruncated {
+        pending_approvals: !followups.is_empty(),
+        ..SnapshotTruncated::default()
+    };
     let mut payload = SnapshotPayload {
         sessions,
         pending_approvals: pending,
@@ -164,9 +169,9 @@ pub fn build(inputs: SnapshotInputs, max_bytes: usize) -> (SnapshotPayload, Vec<
 mod tests {
     use super::*;
     use agentnest_protocol::{
-        ApprovalDetails, Counters, DetailsKind, EventCategory, EventKind, EventSource, EventSummary,
-        ExtraConfirmation, LocalPrompt, ProjectRef, RecentCommand, RecentFile, RemoteApproval,
-        RiskLevel, Secret, Severity, SourceChannel, TurnInfo,
+        ApprovalDetails, Counters, DetailsKind, EventCategory, EventKind, EventSource,
+        EventSummary, ExtraConfirmation, LocalPrompt, ProjectRef, RecentCommand, RecentFile,
+        RemoteApproval, RiskLevel, Secret, Severity, SourceChannel, TurnInfo,
     };
     use std::collections::BTreeMap;
 
@@ -200,7 +205,9 @@ mod tests {
                 kind: DetailsKind::Command,
                 command: Some("c".repeat(2000)),
                 cwd_hint: Some("…\\apps\\desktop".into()),
-                file_paths: (0..50).map(|n| format!("desktop/apps/desktop/src/some/long/path/f{n}.rs")).collect(),
+                file_paths: (0..50)
+                    .map(|n| format!("desktop/apps/desktop/src/some/long/path/f{n}.rs"))
+                    .collect(),
                 diff_preview: Some("d".repeat(4096)),
                 content_preview: Some("p".repeat(4096)),
                 mcp_server: None,
@@ -208,14 +215,18 @@ mod tests {
                 truncated: false,
                 permission_suggestions_count: Some(1),
             },
-            tool_input_sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".into(),
+            tool_input_sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+                .into(),
             risk: agentnest_protocol::Risk {
                 level: RiskLevel::High,
                 reasons: vec!["recursive_delete".into()],
                 reasons_ko: vec!["폴더를 통째로 지우는 명령이에요".into()],
                 extra_confirmation: ExtraConfirmation::Hold,
             },
-            allowed_decisions: vec![agentnest_protocol::Decision::Allow, agentnest_protocol::Decision::Deny],
+            allowed_decisions: vec![
+                agentnest_protocol::Decision::Allow,
+                agentnest_protocol::Decision::Deny,
+            ],
             auth_required_for: vec![agentnest_protocol::Decision::Allow],
             permission_mode: Some("default".into()),
             local_prompt: LocalPrompt::Unverified,
@@ -234,10 +245,17 @@ mod tests {
             kind: EventKind::CommandStarted,
             category: EventCategory::Command,
             severity: Severity::Info,
-            summary: EventSummary { headline: "명령을 실행하고 있어요".into(), detail: Some("d".into()) },
+            summary: EventSummary {
+                headline: "명령을 실행하고 있어요".into(),
+                detail: Some("d".into()),
+            },
             state_hint: None,
             detail: json!({"command": "c".repeat(detail_len)}),
-            source: EventSource { channel: SourceChannel::ClaudeCodeHookHttp, native_event: Some("PreToolUse".into()), native_ids: BTreeMap::new() },
+            source: EventSource {
+                channel: SourceChannel::ClaudeCodeHookHttp,
+                native_event: Some("PreToolUse".into()),
+                native_ids: BTreeMap::new(),
+            },
             redacted: false,
         }
     }
@@ -248,7 +266,11 @@ mod tests {
             agent_kind: agentnest_protocol::AgentKind::ClaudeCode,
             agent_label: "Claude Code".into(),
             project: project(),
-            state: if pending { AgentState::AwaitingApproval } else { AgentState::Working },
+            state: if pending {
+                AgentState::AwaitingApproval
+            } else {
+                AgentState::Working
+            },
             state_since: "2026-10-15T12:34:50.000Z".into(),
             headline: "작업하고 있어요".into(),
             detail: None,
@@ -256,10 +278,27 @@ mod tests {
             turn: TurnInfo::default(),
             permission_mode: None,
             remote_approval: RemoteApproval::Available,
-            pending_approval_ids: if pending { vec![format!("ar_{i:08x}-0000-7000-8000-000000000000")] } else { vec![] },
+            pending_approval_ids: if pending {
+                vec![format!("ar_{i:08x}-0000-7000-8000-000000000000")]
+            } else {
+                vec![]
+            },
             counters: Counters::default(),
-            recent_files: (0..5).map(|n| RecentFile { path_hint: format!("…\\src\\f{n}.rs"), op: agentnest_protocol::FileOp::Update, at: "2026-10-15T12:34:40.000Z".into() }).collect(),
-            recent_commands: (0..3).map(|n| RecentCommand { command_preview: format!("cargo test {n}"), command_class: agentnest_protocol::CommandClass::Test, exit_code: None, at: "2026-10-15T12:34:50.000Z".into() }).collect(),
+            recent_files: (0..5)
+                .map(|n| RecentFile {
+                    path_hint: format!("…\\src\\f{n}.rs"),
+                    op: agentnest_protocol::FileOp::Update,
+                    at: "2026-10-15T12:34:40.000Z".into(),
+                })
+                .collect(),
+            recent_commands: (0..3)
+                .map(|n| RecentCommand {
+                    command_preview: format!("cargo test {n}"),
+                    command_class: agentnest_protocol::CommandClass::Test,
+                    exit_code: None,
+                    at: "2026-10-15T12:34:50.000Z".into(),
+                })
+                .collect(),
             last_test: None,
             meta: Default::default(),
             last_event_seq: Some(10),
@@ -274,14 +313,20 @@ mod tests {
             sessions: (0..20).map(|i| session(i, i < n_cards)).collect(),
             pending: (0..n_cards).map(big_card).collect(),
             recent_errors: vec![],
-            recent_events: (1..=n_events as i64).map(|i| event(i, event_detail)).collect(),
+            recent_events: (1..=n_events as i64)
+                .map(|i| event(i, event_detail))
+                .collect(),
             adapters: vec![],
             focus: None,
         }
     }
 
     fn all_ids(p: &SnapshotPayload, followups: &[ApprovalRequest]) -> Vec<String> {
-        let mut v: Vec<String> = p.pending_approvals.iter().map(|c| c.request_id.clone()).collect();
+        let mut v: Vec<String> = p
+            .pending_approvals
+            .iter()
+            .map(|c| c.request_id.clone())
+            .collect();
         v.extend(followups.iter().map(|c| c.request_id.clone()));
         v.sort();
         v
@@ -333,8 +378,15 @@ mod tests {
         // previews are cut next: tight budget with several cards
         let (p, follow) = build(inputs(8, 50, 100), 140_000);
         assert!(p.truncated.recent_events_detail && p.truncated.approval_previews);
-        assert!(p.pending_approvals.iter().all(|c| c.details.diff_preview.is_none() && c.details.truncated));
-        assert!(follow.is_empty(), "previews were enough: {}", serde_json::to_vec(&p).unwrap().len());
+        assert!(p
+            .pending_approvals
+            .iter()
+            .all(|c| c.details.diff_preview.is_none() && c.details.truncated));
+        assert!(
+            follow.is_empty(),
+            "previews were enough: {}",
+            serde_json::to_vec(&p).unwrap().len()
+        );
         // many cards: events reduced, then cards move out
         let (p, follow) = build(inputs(20, 50, 2000), 70_000);
         assert!(p.truncated.recent_events);
@@ -362,12 +414,19 @@ mod tests {
         let (p, _follow) = build(inputs(3, 0, 0), 22_000);
         assert!(p.truncated.sessions || serde_json::to_vec(&p).unwrap().len() <= 22_000);
         for s in &p.sessions {
-            if s.session_key == "claude_code:s0" || s.session_key == "claude_code:s1" || s.session_key == "claude_code:s2" {
+            if s.session_key == "claude_code:s0"
+                || s.session_key == "claude_code:s1"
+                || s.session_key == "claude_code:s2"
+            {
                 assert!(!s.pending_approval_ids.is_empty());
             }
         }
         let attention: Vec<_> = p.sessions.iter().filter(|s| wants_attention(s)).collect();
-        assert_eq!(attention.len(), 3, "sessions with pending approvals are never dropped");
+        assert_eq!(
+            attention.len(),
+            3,
+            "sessions with pending approvals are never dropped"
+        );
         // summaries were emptied before sessions were dropped
         assert!(p.sessions.iter().all(|s| s.recent_files.is_empty()));
     }
@@ -381,7 +440,11 @@ mod tests {
         let (p, _) = build(i, 10_000_000);
         assert_eq!(p.sessions.len(), 20);
         assert_eq!(p.recent_events.len(), 50);
-        assert_eq!(p.recent_events.first().unwrap().seq, Some(31), "the newest 50 are kept");
+        assert_eq!(
+            p.recent_events.first().unwrap().seq,
+            Some(31),
+            "the newest 50 are kept"
+        );
         assert_eq!(p.recent_errors.len(), 5);
     }
 }

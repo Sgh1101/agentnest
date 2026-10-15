@@ -34,7 +34,10 @@ impl FilePermissions for PlatformPermissions {
     fn restrict_to_current_user(&self, path: &Path) -> io::Result<()> {
         // Remove inherited ACEs and grant only the current user full control. No shell is involved.
         let user = std::env::var("USERNAME").map_err(|_| {
-            io::Error::new(io::ErrorKind::NotFound, "USERNAME is not set; cannot restrict the ACL")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "USERNAME is not set; cannot restrict the ACL",
+            )
         })?;
         let status = std::process::Command::new("icacls")
             .arg(path)
@@ -60,11 +63,7 @@ impl FilePermissions for PlatformPermissions {
 /// Writes `bytes` to `path` so that the file is never readable by others: on Unix it is **created** with mode
 /// `0600` (no window in which it is world readable), then the permission tooling runs (a no-op change on Unix, the ACL
 /// step on Windows). The write is atomic (temporary file, then rename).
-pub fn write_user_only(
-    path: &Path,
-    bytes: &[u8],
-    perms: &dyn FilePermissions,
-) -> io::Result<()> {
+pub fn write_user_only(path: &Path, bytes: &[u8], perms: &dyn FilePermissions) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -157,13 +156,33 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = AclFileKeyStore::new(dir.path().join("identity").join("server-key.pem"));
         assert!(store.load().unwrap().is_none());
-        store.store(&TlsKeyPem::new("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")).unwrap();
-        let mode = std::fs::metadata(store.path()).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "the private key must not be readable by others");
-        assert!(store.load().unwrap().unwrap().expose().contains("PRIVATE KEY"));
+        store
+            .store(&TlsKeyPem::new(
+                "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+            ))
+            .unwrap();
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the private key must not be readable by others"
+        );
+        assert!(store
+            .load()
+            .unwrap()
+            .unwrap()
+            .expose()
+            .contains("PRIVATE KEY"));
         // replacing keeps the mode
         store.store(&TlsKeyPem::new("second")).unwrap();
-        let mode = std::fs::metadata(store.path()).unwrap().permissions().mode() & 0o777;
+        let mode = std::fs::metadata(store.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
         assert_eq!(mode, 0o600);
         assert_eq!(store.load().unwrap().unwrap().expose(), "second");
         store.delete().unwrap();

@@ -320,8 +320,8 @@ impl AppConfig {
     /// Validates and writes the configuration atomically (temporary file, then rename).
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
         self.validate()?;
-        let text = serde_json::to_string_pretty(self)
-            .map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let text =
+            serde_json::to_string_pretty(self).map_err(|e| ConfigError::Parse(e.to_string()))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -389,7 +389,10 @@ mod tests {
         let c = AppConfig::default();
         c.validate().unwrap();
         assert_eq!(c.approval.ttl_s, 120);
-        assert_eq!(c.approval.critical_remote, CriticalRemote::ExtraConfirmation);
+        assert_eq!(
+            c.approval.critical_remote,
+            CriticalRemote::ExtraConfirmation
+        );
         assert!(!c.approval.deny_requires_auth);
         assert!(!c.approval.daemon_down_deny);
         assert_eq!(c.approval.reconnect_grace_s, 10);
@@ -421,7 +424,10 @@ mod tests {
     #[test]
     fn the_serialised_config_contains_none_of_the_forbidden_fields() {
         let mut all = Vec::new();
-        keys(&serde_json::to_value(AppConfig::default()).unwrap(), &mut all);
+        keys(
+            &serde_json::to_value(AppConfig::default()).unwrap(),
+            &mut all,
+        );
         assert!(all.len() >= 10, "{all:?}");
         for k in &all {
             for bad in [
@@ -459,8 +465,14 @@ mod tests {
         ];
         for key in forbidden {
             // top level and inside every section
-            for section in [None, Some("approval"), Some("pairing"), Some("risk"), Some("link"), Some("codex")]
-            {
+            for section in [
+                None,
+                Some("approval"),
+                Some("pairing"),
+                Some("risk"),
+                Some("link"),
+                Some("codex"),
+            ] {
                 let doc = match section {
                     None => json!({ key: true }),
                     Some(s) => json!({ s: { key: true } }),
@@ -478,7 +490,16 @@ mod tests {
     fn ranges_are_enforced() {
         for ttl in [0, 59, 181, 600, u32::MAX] {
             let r = AppConfig::from_json(&json!({"approval": {"ttl_s": ttl}}).to_string());
-            assert!(matches!(r, Err(ConfigError::Invalid { key: "approval.ttl_s", .. })), "{ttl}");
+            assert!(
+                matches!(
+                    r,
+                    Err(ConfigError::Invalid {
+                        key: "approval.ttl_s",
+                        ..
+                    })
+                ),
+                "{ttl}"
+            );
         }
         for ttl in [60, 120, 180] {
             AppConfig::from_json(&json!({"approval": {"ttl_s": ttl}}).to_string()).unwrap();
@@ -506,7 +527,10 @@ mod tests {
     fn save_and_load_round_trip_in_a_temp_dir() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::in_dir(dir.path());
-        assert_eq!(AppConfig::load(&paths.config).unwrap(), AppConfig::default());
+        assert_eq!(
+            AppConfig::load(&paths.config).unwrap(),
+            AppConfig::default()
+        );
         let mut c = AppConfig::default();
         c.approval.ttl_s = 150;
         c.approval.deny_requires_auth = true;
@@ -518,7 +542,10 @@ mod tests {
         assert!(c.save(&paths.config).is_err());
         // a file with a forbidden key refuses to load
         std::fs::write(&paths.config, r#"{"hook_bind_addr":"0.0.0.0"}"#).unwrap();
-        assert!(matches!(AppConfig::load(&paths.config), Err(ConfigError::Parse(_))));
+        assert!(matches!(
+            AppConfig::load(&paths.config),
+            Err(ConfigError::Parse(_))
+        ));
     }
 
     #[test]

@@ -175,16 +175,25 @@ mod tests {
     fn allowed_requests_become_executed_on_post_or_post_failure() {
         let mut c = Correlator::new();
         tracked(&mut c, "ar_1", TrackedOutcome::Allowed);
-        assert_eq!(c.observe(&obs(HookPhase::Pre, 2_000)), None, "PreToolUse is never evidence");
+        assert_eq!(
+            c.observe(&obs(HookPhase::Pre, 2_000)),
+            None,
+            "PreToolUse is never evidence"
+        );
         assert_eq!(c.len(), 1);
         assert_eq!(
             c.observe(&obs(HookPhase::Post, 5_000)),
-            Some(Correlated { request_id: "ar_1".into(), observed: ObservedResult::Executed })
+            Some(Correlated {
+                request_id: "ar_1".into(),
+                observed: ObservedResult::Executed
+            })
         );
         assert!(c.is_empty());
         tracked(&mut c, "ar_2", TrackedOutcome::Allowed);
         assert_eq!(
-            c.observe(&obs(HookPhase::PostFailure, 5_000)).unwrap().observed,
+            c.observe(&obs(HookPhase::PostFailure, 5_000))
+                .unwrap()
+                .observed,
             ObservedResult::Executed
         );
     }
@@ -193,9 +202,17 @@ mod tests {
     fn denied_requests_are_declined_unless_the_tool_ran_anyway() {
         let mut c = Correlator::new();
         tracked(&mut c, "ar_1", TrackedOutcome::Denied);
-        assert_eq!(c.observe(&obs(HookPhase::PostFailure, 5_000)).unwrap().observed, ObservedResult::Declined);
+        assert_eq!(
+            c.observe(&obs(HookPhase::PostFailure, 5_000))
+                .unwrap()
+                .observed,
+            ObservedResult::Declined
+        );
         tracked(&mut c, "ar_2", TrackedOutcome::Denied);
-        assert_eq!(c.observe(&obs(HookPhase::Post, 5_000)).unwrap().observed, ObservedResult::Executed);
+        assert_eq!(
+            c.observe(&obs(HookPhase::Post, 5_000)).unwrap().observed,
+            ObservedResult::Executed
+        );
     }
 
     #[test]
@@ -207,7 +224,13 @@ mod tests {
             ("claude_code:s1", "Edit", "abc"),
             ("claude_code:s1", "Bash", "abd"),
         ] {
-            let o = Observation { session_key: s, tool_name: t, input_sha256: h, phase: HookPhase::Post, now_ms: 2_000 };
+            let o = Observation {
+                session_key: s,
+                tool_name: t,
+                input_sha256: h,
+                phase: HookPhase::Post,
+                now_ms: 2_000,
+            };
             assert_eq!(c.observe(&o), None);
         }
         assert_eq!(c.len(), 1);
@@ -217,10 +240,14 @@ mod tests {
     fn the_window_is_sixty_seconds() {
         let mut c = Correlator::new();
         tracked(&mut c, "ar_1", TrackedOutcome::Allowed);
-        assert!(c.observe(&obs(HookPhase::Post, 1_000 + CORRELATION_WINDOW_MS + 1)).is_none());
+        assert!(c
+            .observe(&obs(HookPhase::Post, 1_000 + CORRELATION_WINDOW_MS + 1))
+            .is_none());
         assert!(c.is_empty(), "expired entries are pruned");
         tracked(&mut c, "ar_2", TrackedOutcome::Allowed);
-        assert!(c.observe(&obs(HookPhase::Post, 1_000 + CORRELATION_WINDOW_MS)).is_some());
+        assert!(c
+            .observe(&obs(HookPhase::Post, 1_000 + CORRELATION_WINDOW_MS))
+            .is_some());
     }
 
     #[test]
@@ -228,18 +255,38 @@ mod tests {
         let mut c = Correlator::new();
         tracked(&mut c, "ar_1", TrackedOutcome::Allowed);
         tracked(&mut c, "ar_2", TrackedOutcome::Allowed);
-        assert_eq!(c.observe(&obs(HookPhase::Post, 3_000)).unwrap().request_id, "ar_1");
-        assert_eq!(c.observe(&obs(HookPhase::Post, 3_100)).unwrap().request_id, "ar_2");
+        assert_eq!(
+            c.observe(&obs(HookPhase::Post, 3_000)).unwrap().request_id,
+            "ar_1"
+        );
+        assert_eq!(
+            c.observe(&obs(HookPhase::Post, 3_100)).unwrap().request_id,
+            "ar_2"
+        );
         assert!(c.observe(&obs(HookPhase::Post, 3_200)).is_none());
     }
 
     #[test]
     fn observations_before_the_resolution_are_ignored_and_the_list_is_bounded() {
         let mut c = Correlator::new();
-        c.track("ar_1", "claude_code:s1", "Bash", "abc", 5_000, TrackedOutcome::Allowed);
+        c.track(
+            "ar_1",
+            "claude_code:s1",
+            "Bash",
+            "abc",
+            5_000,
+            TrackedOutcome::Allowed,
+        );
         assert!(c.observe(&obs(HookPhase::Post, 4_000)).is_none());
         for i in 0..400 {
-            c.track(&format!("ar_{i}"), "s", "t", "h", 5_000, TrackedOutcome::Allowed);
+            c.track(
+                &format!("ar_{i}"),
+                "s",
+                "t",
+                "h",
+                5_000,
+                TrackedOutcome::Allowed,
+            );
         }
         assert!(c.len() <= 256);
     }

@@ -267,7 +267,10 @@ mod tests {
         let b = Challenge::generate().unwrap();
         assert_ne!(a.raw(), b.raw());
         assert!(a.matches_b64(&a.to_b64()));
-        assert!(!a.matches_b64(&b.to_b64()), "a challenge of another connection is refused");
+        assert!(
+            !a.matches_b64(&b.to_b64()),
+            "a challenge of another connection is refused"
+        );
         assert!(!a.matches_b64(""));
         assert!(!a.matches_b64("%%%"));
         let mut twice = a.raw().to_vec();
@@ -286,23 +289,43 @@ mod tests {
             held.push(c.admit(ip(&format!("192.168.0.{}", i + 1))).unwrap());
         }
         assert_eq!(c.open_connections(), 16);
-        assert_eq!(c.admit(ip("192.168.1.1")).unwrap_err(), Rejection::ConnectionCap);
+        assert_eq!(
+            c.admit(ip("192.168.1.1")).unwrap_err(),
+            Rejection::ConnectionCap
+        );
         held.pop();
-        assert!(c.admit(ip("192.168.1.1")).is_ok(), "a freed slot can be reused");
+        assert!(
+            c.admit(ip("192.168.1.1")).is_ok(),
+            "a freed slot can be reused"
+        );
     }
 
     #[test]
     fn at_most_four_unauthenticated_connections_per_ip() {
         let (c, _) = control();
-        let mut held: Vec<Admission> = (0..4).map(|_| c.admit(ip("192.168.0.9")).unwrap()).collect();
-        assert_eq!(c.admit(ip("192.168.0.9")).unwrap_err(), Rejection::TooManyPreAuth);
-        assert!(c.admit(ip("192.168.0.10")).is_ok(), "other IPs are not affected");
+        let mut held: Vec<Admission> = (0..4)
+            .map(|_| c.admit(ip("192.168.0.9")).unwrap())
+            .collect();
+        assert_eq!(
+            c.admit(ip("192.168.0.9")).unwrap_err(),
+            Rejection::TooManyPreAuth
+        );
+        assert!(
+            c.admit(ip("192.168.0.10")).is_ok(),
+            "other IPs are not affected"
+        );
         held[0].authenticated();
-        assert!(c.admit(ip("192.168.0.9")).is_ok(), "an authenticated connection frees a pre-auth slot");
+        assert!(
+            c.admit(ip("192.168.0.9")).is_ok(),
+            "an authenticated connection frees a pre-auth slot"
+        );
         // authenticated() twice does not double release
         held[0].authenticated();
         let _extra = c.admit(ip("192.168.0.9"));
-        assert_eq!(c.admit(ip("192.168.0.9")).unwrap_err(), Rejection::TooManyPreAuth);
+        assert_eq!(
+            c.admit(ip("192.168.0.9")).unwrap_err(),
+            Rejection::TooManyPreAuth
+        );
     }
 
     #[test]
@@ -317,7 +340,10 @@ mod tests {
         assert!(c.record_failure(a), "the fifth blocks");
         assert!(c.is_blocked(a));
         assert_eq!(c.admit(a).unwrap_err(), Rejection::IpBlocked);
-        assert!(c.admit(ip("192.168.0.10")).is_ok(), "another IP is unaffected");
+        assert!(
+            c.admit(ip("192.168.0.10")).is_ok(),
+            "another IP is unaffected"
+        );
         clock.advance(59_000);
         assert_eq!(c.admit(a).unwrap_err(), Rejection::IpBlocked);
         clock.advance(2_000);

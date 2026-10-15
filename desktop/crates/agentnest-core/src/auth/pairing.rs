@@ -275,7 +275,10 @@ impl PairingManager {
 
     /// `true` if the PC user has accepted risk R1.
     pub fn risk_accepted(&self) -> bool {
-        matches!(self.store.setting_get(RISK_R1_SETTING), Ok(Some(serde_json::Value::Bool(true))))
+        matches!(
+            self.store.setting_get(RISK_R1_SETTING),
+            Ok(Some(serde_json::Value::Bool(true)))
+        )
     }
 
     /// Records the acceptance of risk R1 (`audit_log(risk_accepted)`), the precondition of every pairing.
@@ -402,7 +405,10 @@ impl PairingManager {
     pub fn awaiting_confirmation(&self) -> bool {
         matches!(
             &self.lock().active,
-            Some(Active { phase: Phase::AwaitingConfirm { .. }, .. })
+            Some(Active {
+                phase: Phase::AwaitingConfirm { .. },
+                ..
+            })
         )
     }
 
@@ -565,7 +571,10 @@ impl PairingManager {
         match &self.lock().active {
             Some(Active {
                 pairing_id,
-                phase: Phase::AwaitingConfirm { sas, device_name, .. },
+                phase:
+                    Phase::AwaitingConfirm {
+                        sas, device_name, ..
+                    },
                 ..
             }) => Some((pairing_id.clone(), sas.clone(), device_name.clone())),
             _ => None,
@@ -776,7 +785,11 @@ mod tests {
                 os_version: Some("16".into()),
                 app_version: Some("0.1.0".into()),
             },
-            device_pubkey_spki_b64: if spki.is_empty() { None } else { Some(b64_encode(spki)) },
+            device_pubkey_spki_b64: if spki.is_empty() {
+                None
+            } else {
+                Some(b64_encode(spki))
+            },
             proof_b64: Secret::new(b64_encode(&pair_proof(&secret, &bytes))),
             protocol: 1,
         }
@@ -788,14 +801,21 @@ mod tests {
         let clock = Arc::new(ManualClock::new(1_792_055_553_120));
         let audit = Audit::new(store.clone(), clock.clone());
         let mgr = PairingManager::new(store.clone(), clock, audit, EventBus::new(8));
-        assert!(matches!(mgr.start(&info()), Err(PairingError::RiskNotAccepted)));
+        assert!(matches!(
+            mgr.start(&info()),
+            Err(PairingError::RiskNotAccepted)
+        ));
         assert!(!mgr.risk_accepted());
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         rt.block_on(mgr.accept_risk()).unwrap();
         let started = mgr.start(&info()).unwrap();
         // the audit trail has risk_accepted
         let rows = store.list_audit_log(10).unwrap();
-        assert!(rows.iter().any(|r| r.action == "risk_accepted" && r.target.as_deref() == Some("R1")));
+        assert!(rows
+            .iter()
+            .any(|r| r.action == "risk_accepted" && r.target.as_deref() == Some("R1")));
         // DB: hash only, never the secret
         let secret = started.payload.pairing_secret.expose().to_owned();
         let raw = b64url_decode(&secret).unwrap();
@@ -820,7 +840,10 @@ mod tests {
         assert!(parsed.pc_id_matches_pin() || !parsed.pc_id_matches_pin()); // structure only; pin is a fixture value
         assert_eq!(started.pairing_id.len(), 2 + 16);
         assert_eq!(started.expires_at, format_ms(1_792_055_553_120 + 120_000));
-        assert!(!format!("{started:?}").contains(&secret), "the secret is redacted in Debug");
+        assert!(
+            !format!("{started:?}").contains(&secret),
+            "the secret is redacted in Debug"
+        );
     }
 
     #[test]
@@ -836,7 +859,11 @@ mod tests {
         let outcome: Option<String> = f
             .store
             .read(move |c| {
-                Ok(c.query_row("SELECT outcome FROM pairings WHERE pairing_id=?1", [a.pairing_id], |r| r.get(0))?)
+                Ok(c.query_row(
+                    "SELECT outcome FROM pairings WHERE pairing_id=?1",
+                    [a.pairing_id],
+                    |r| r.get(0),
+                )?)
             })
             .unwrap();
         assert_eq!(outcome.as_deref(), Some("expired"));
@@ -859,12 +886,18 @@ mod tests {
         assert_eq!(pending.sas, want);
         assert_eq!(pending.sas.len(), 6);
         assert_eq!(pending.device.name, "Galaxy S25");
-        assert_eq!(pending.device.pubkey_spki_der.as_deref(), Some(spki.as_slice()));
+        assert_eq!(
+            pending.device.pubkey_spki_der.as_deref(),
+            Some(spki.as_slice())
+        );
         assert!(f.mgr.awaiting_confirmation());
         // the desktop gets the SAS modal event
         let mut saw = false;
         while let Ok(ev) = rx_events.try_recv() {
-            if let DaemonEvent::Pairing(PairingUiEvent::ConfirmRequested { sas, device_name, .. }) = ev {
+            if let DaemonEvent::Pairing(PairingUiEvent::ConfirmRequested {
+                sas, device_name, ..
+            }) = ev
+            {
                 assert_eq!(sas, want);
                 assert_eq!(device_name, "Galaxy S25");
                 saw = true;
@@ -874,7 +907,12 @@ mod tests {
         // a second phone is told "busy", not "failed"
         let ch2 = Challenge::generate().unwrap();
         let frame2 = pair_frame(&started, &ch2, "Other", &[], None);
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame2, &ch2).unwrap_err(), PairFailure::Busy);
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame2, &ch2)
+                .unwrap_err(),
+            PairFailure::Busy
+        );
         drop(pending);
     }
 
@@ -908,9 +946,20 @@ mod tests {
         // the QR is single use: the same frame again is "failed"
         let ch2 = Challenge::generate().unwrap();
         let again = pair_frame(&started, &ch2, "Galaxy S25", &[7, 7, 7], None);
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &again, &ch2).unwrap_err(), PairFailure::Failed);
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &again, &ch2)
+                .unwrap_err(),
+            PairFailure::Failed
+        );
         // audit trail
-        let actions: Vec<String> = f.store.list_audit_log(20).unwrap().into_iter().map(|r| r.action).collect();
+        let actions: Vec<String> = f
+            .store
+            .list_audit_log(20)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.action)
+            .collect();
         assert!(actions.contains(&"pairing_confirmed".to_owned()));
         assert!(actions.contains(&"device_paired".to_owned()));
     }
@@ -926,13 +975,27 @@ mod tests {
         f.mgr.confirm(&started.pairing_id, false).unwrap();
         assert_eq!(rx.await.unwrap(), ConfirmDecision::Reject);
         f.mgr.abort(pending, "rejected").await;
-        let devices: i64 = f.store.read(|c| Ok(c.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))?)).unwrap();
+        let devices: i64 = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(devices, 0);
-        let outcome: String = f.store.read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?)).unwrap();
+        let outcome: String = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(outcome, "rejected");
         assert!(f.mgr.active().is_none(), "the QR is burned");
-        assert!(matches!(f.mgr.confirm(&started.pairing_id, true), Err(PairingError::NotPending)));
-        assert!(f.store.list_audit_log(10).unwrap().iter().any(|r| r.action == "pairing_rejected"));
+        assert!(matches!(
+            f.mgr.confirm(&started.pairing_id, true),
+            Err(PairingError::NotPending)
+        ));
+        assert!(f
+            .store
+            .list_audit_log(10)
+            .unwrap()
+            .iter()
+            .any(|r| r.action == "pairing_rejected"));
     }
 
     #[test]
@@ -944,7 +1007,10 @@ mod tests {
         let pending = f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap();
         drop(pending); // the phone disconnected
         assert!(f.mgr.active().is_none());
-        let outcome: String = f.store.read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?)).unwrap();
+        let outcome: String = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(outcome, "failed");
     }
 
@@ -957,7 +1023,9 @@ mod tests {
             let ch = Challenge::generate().unwrap();
             let frame = pair_frame(&started, &ch, "Intruder", &[], Some(&wrong_secret));
             assert_eq!(
-                f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(),
+                f.mgr
+                    .begin(&started.payload.pc_id, &frame, &ch)
+                    .unwrap_err(),
                 PairFailure::Failed,
                 "attempt {attempt}"
             );
@@ -967,15 +1035,26 @@ mod tests {
                 .unwrap();
             assert_eq!(fails, attempt);
             if attempt < 3 {
-                assert!(f.mgr.active().is_some(), "still open after {attempt} failures");
+                assert!(
+                    f.mgr.active().is_some(),
+                    "still open after {attempt} failures"
+                );
             }
         }
         assert!(f.mgr.active().is_none(), "burned after the third failure");
         // even the right secret fails now
         let ch = Challenge::generate().unwrap();
         let frame = pair_frame(&started, &ch, "Galaxy", &[], None);
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::Failed);
-        let outcome: String = f.store.read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::Failed
+        );
+        let outcome: String = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(outcome, "failed");
     }
 
@@ -988,7 +1067,10 @@ mod tests {
             let frame = pair_frame(&started, &ch, "X", &[], Some(&[1u8; 32]));
             assert!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).is_err());
         }
-        let outcome: Option<String> = f.store.read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?)).unwrap();
+        let outcome: Option<String> = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(outcome, None, "an open pairing has no outcome yet");
         let ch = Challenge::generate().unwrap();
         let frame = pair_frame(&started, &ch, "Galaxy", &[], None);
@@ -1004,25 +1086,51 @@ mod tests {
         let other = Challenge::generate().unwrap();
         let mut frame = pair_frame(&started, &ch, "Galaxy", &[], None);
         frame.challenge_b64 = other.to_b64();
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::Failed);
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::Failed
+        );
         // proof computed over another challenge
         let frame = pair_frame(&started, &other, "Galaxy", &[], None);
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::Failed);
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::Failed
+        );
         // unknown pairing id does not count against the active QR
         let mut frame = pair_frame(&started, &ch, "Galaxy", &[], None);
         frame.pairing_id = "p_0000000000000000".into();
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::Failed);
-        let fails: i64 = f.store.read(|c| Ok(c.query_row("SELECT fail_count FROM pairings", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::Failed
+        );
+        let fails: i64 = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT fail_count FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(fails, 2, "only attempts with the right pairing id count");
         // another PC id in the proof
         let frame = pair_frame(&started, &ch, "Galaxy", &[], None);
-        assert_eq!(f.mgr.begin("pc_ffffffffffffffff", &frame, &ch).unwrap_err(), PairFailure::Failed);
+        assert_eq!(
+            f.mgr.begin("pc_ffffffffffffffff", &frame, &ch).unwrap_err(),
+            PairFailure::Failed
+        );
         // expiry
         f.mgr.cancel(&started.pairing_id);
         let started = f.mgr.start(&info()).unwrap();
         let frame = pair_frame(&started, &ch, "Galaxy", &[], None);
         f.clock.advance(120_001);
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::Failed);
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::Failed
+        );
         assert!(f.mgr.active().is_none());
     }
 
@@ -1034,15 +1142,34 @@ mod tests {
         let long = "x".repeat(65);
         let mut frame = pair_frame(&started, &ch, "Galaxy", &[], None);
         frame.device.name = long;
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::BadMessage);
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::BadMessage
+        );
         let mut frame = pair_frame(&started, &ch, "Galaxy", &[], None);
         frame.proof_b64 = Secret::new("%%%");
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::BadMessage);
-        let fails: i64 = f.store.read(|c| Ok(c.query_row("SELECT fail_count FROM pairings", [], |r| r.get(0))?)).unwrap();
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::BadMessage
+        );
+        let fails: i64 = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT fail_count FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
         assert_eq!(fails, 0, "malformed frames do not burn the QR");
         let mut frame = pair_frame(&started, &ch, "Galaxy", &[], None);
         frame.proof_b64 = Secret::new(b64_encode(&[0u8; 5]));
-        assert_eq!(f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap_err(), PairFailure::Failed, "short proof fails");
+        assert_eq!(
+            f.mgr
+                .begin(&started.payload.pc_id, &frame, &ch)
+                .unwrap_err(),
+            PairFailure::Failed,
+            "short proof fails"
+        );
     }
 
     #[test]
@@ -1068,7 +1195,11 @@ mod tests {
         assert!(f.mgr.active().is_none());
         let mut ended = false;
         while let Ok(ev) = rx.try_recv() {
-            if let DaemonEvent::Pairing(PairingUiEvent::Ended { pairing_id, outcome }) = ev {
+            if let DaemonEvent::Pairing(PairingUiEvent::Ended {
+                pairing_id,
+                outcome,
+            }) = ev
+            {
                 assert_eq!(pairing_id, started.pairing_id);
                 assert_eq!(outcome, "expired");
                 ended = true;

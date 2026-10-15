@@ -120,7 +120,8 @@ impl InstallWarning {
     pub fn message_ko(&self, port: u16) -> String {
         match self {
             InstallWarning::StatusLineExists => {
-                "이미 statusLine 설정이 있어서 건드리지 않았어요. AI 제목·비용 수집은 꺼져 있어요.".to_owned()
+                "이미 statusLine 설정이 있어서 건드리지 않았어요. AI 제목·비용 수집은 꺼져 있어요."
+                    .to_owned()
             }
             InstallWarning::AllowedHttpHookUrlsMissing => format!(
                 "allowedHttpHookUrls 에 http://127.0.0.1:{port}/* 를 추가해야 HTTP 훅이 동작해요."
@@ -317,7 +318,9 @@ fn read_settings(path: &Path) -> Result<Option<Map<String, Value>>, InstallError
     }
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Object(m)) => Ok(Some(m)),
-        Ok(_) => Err(InstallError::UnexpectedStructure("top level is not an object")),
+        Ok(_) => Err(InstallError::UnexpectedStructure(
+            "top level is not an object",
+        )),
         Err(_) => Err(InstallError::NotPlainJson),
     }
 }
@@ -327,7 +330,9 @@ fn remove_ours(hooks: &mut Map<String, Value>) -> Result<usize, InstallError> {
     let mut removed = 0;
     let events: Vec<String> = hooks.keys().cloned().collect();
     for event in events {
-        let Some(groups) = hooks.get_mut(&event) else { continue };
+        let Some(groups) = hooks.get_mut(&event) else {
+            continue;
+        };
         let Value::Array(groups) = groups else {
             // an event entry of unexpected type is left alone
             continue;
@@ -375,7 +380,10 @@ fn backup(path: &Path, stamp: &str) -> Result<Option<PathBuf>, InstallError> {
 }
 
 /// Installs (or re-installs) the hooks into `settings_path`.
-pub fn install(settings_path: &Path, opts: &InstallOptions<'_>) -> Result<InstallReport, InstallError> {
+pub fn install(
+    settings_path: &Path,
+    opts: &InstallOptions<'_>,
+) -> Result<InstallReport, InstallError> {
     let existing = read_settings(settings_path)?;
     let mut root = existing.clone().unwrap_or_default();
     let mut warnings = Vec::new();
@@ -384,18 +392,26 @@ pub fn install(settings_path: &Path, opts: &InstallOptions<'_>) -> Result<Instal
         .entry("hooks".to_owned())
         .or_insert_with(|| Value::Object(Map::new()));
     let Value::Object(hooks) = hooks_value else {
-        return Err(InstallError::UnexpectedStructure("\"hooks\" is not an object"));
+        return Err(InstallError::UnexpectedStructure(
+            "\"hooks\" is not an object",
+        ));
     };
     for (event, v) in hooks.iter() {
         if !v.is_array() {
             let _ = event;
-            return Err(InstallError::UnexpectedStructure("a hook event entry is not an array"));
+            return Err(InstallError::UnexpectedStructure(
+                "a hook event entry is not an array",
+            ));
         }
     }
     remove_ours(hooks)?;
     for (event, groups) in desired_hooks(opts) {
-        let Value::Array(new_groups) = groups else { continue };
-        let slot = hooks.entry(event).or_insert_with(|| Value::Array(Vec::new()));
+        let Value::Array(new_groups) = groups else {
+            continue;
+        };
+        let slot = hooks
+            .entry(event)
+            .or_insert_with(|| Value::Array(Vec::new()));
         if let Value::Array(existing_groups) = slot {
             existing_groups.extend(new_groups);
         }
@@ -429,9 +445,10 @@ pub fn install(settings_path: &Path, opts: &InstallOptions<'_>) -> Result<Instal
         }
     }
 
-    let stamp = opts.backup_stamp.map(str::to_owned).unwrap_or_else(|| {
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
-    });
+    let stamp = opts
+        .backup_stamp
+        .map(str::to_owned)
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string());
     let backup_path = if existing.is_some() {
         backup(settings_path, &stamp)?
     } else {
@@ -462,9 +479,7 @@ pub fn uninstall(settings_path: &Path) -> Result<UninstallReport, InstallError> 
             root.remove("hooks");
         }
     }
-    let statusline_removed = root
-        .get("statusLine")
-        .is_some_and(is_agentnest_statusline);
+    let statusline_removed = root.get("statusLine").is_some_and(is_agentnest_statusline);
     if statusline_removed {
         root.remove("statusLine");
     }
@@ -482,17 +497,23 @@ pub fn uninstall(settings_path: &Path) -> Result<UninstallReport, InstallError> 
 
 /// Reads what AgentNest has installed (read only; used for the status page and the effective-TTL clamp).
 pub fn inspect(settings_path: &Path) -> Inspection {
-    let mut out = Inspection::default();
-    out.exists = settings_path.exists();
+    let mut out = Inspection {
+        exists: settings_path.exists(),
+        ..Inspection::default()
+    };
     let Ok(Some(root)) = read_settings(settings_path) else {
         return out;
     };
     out.parsed = true;
     if let Some(Value::Object(hooks)) = root.get("hooks") {
         for (event, groups) in hooks {
-            let Some(groups) = groups.as_array() else { continue };
+            let Some(groups) = groups.as_array() else {
+                continue;
+            };
             for group in groups {
-                let Some(inner) = group.get("hooks").and_then(Value::as_array) else { continue };
+                let Some(inner) = group.get("hooks").and_then(Value::as_array) else {
+                    continue;
+                };
                 for h in inner.iter().filter(|h| is_agentnest_hook(h)) {
                     if !out.installed_events.contains(event) {
                         out.installed_events.push(event.clone());
@@ -515,9 +536,7 @@ pub fn inspect(settings_path: &Path) -> Inspection {
         }
     }
     out.installed_events.sort();
-    out.statusline = root
-        .get("statusLine")
-        .is_some_and(is_agentnest_statusline);
+    out.statusline = root.get("statusLine").is_some_and(is_agentnest_statusline);
     out
 }
 
@@ -557,7 +576,10 @@ mod tests {
             assert_eq!(entry["type"], "http", "{event}");
             assert_eq!(entry["url"], "http://127.0.0.1:47831/v1/hooks/claude-code");
             assert_eq!(entry["headers"]["X-AgentNest-Token"], "an_hk_TESTTOKEN");
-            assert!(entry.get("onFailure").is_none(), "{event}: onFailure must be absent (I12)");
+            assert!(
+                entry.get("onFailure").is_none(),
+                "{event}: onFailure must be absent (I12)"
+            );
             let want = match event {
                 "PermissionRequest" => 150,
                 "SessionEnd" => 1,
@@ -565,7 +587,10 @@ mod tests {
             };
             assert_eq!(entry["timeout"], want, "{event}");
         }
-        assert_eq!(v["statusLine"], json!({"type": "command", "command": "agentnest-hook statusline"}));
+        assert_eq!(
+            v["statusLine"],
+            json!({"type": "command", "command": "agentnest-hook statusline"})
+        );
     }
 
     #[test]
@@ -586,7 +611,9 @@ mod tests {
         }
         // turning the opt-in off again removes it
         install(&path, &opts()).unwrap();
-        assert!(read(&path)["hooks"]["PermissionRequest"][0]["hooks"][0].get("onFailure").is_none());
+        assert!(read(&path)["hooks"]["PermissionRequest"][0]["hooks"][0]
+            .get("onFailure")
+            .is_none());
     }
 
     #[test]
@@ -595,8 +622,14 @@ mod tests {
         let path = dir.path().join("settings.json");
         let mut o = opts();
         o.approval_ttl_s = 90;
-        assert_eq!(install(&path, &o).unwrap().permission_request_timeout_s, 120);
-        assert_eq!(read(&path)["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"], 120);
+        assert_eq!(
+            install(&path, &o).unwrap().permission_request_timeout_s,
+            120
+        );
+        assert_eq!(
+            read(&path)["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"],
+            120
+        );
         let i = inspect(&path);
         assert_eq!(i.permission_request_timeout_s, Some(120));
         assert_eq!(i.port, Some(47831));
@@ -624,7 +657,10 @@ mod tests {
         });
         std::fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
         let report = install(&path, &opts()).unwrap();
-        assert!(report.backup.is_some(), "an existing file is backed up once");
+        assert!(
+            report.backup.is_some(),
+            "an existing file is backed up once"
+        );
         assert_eq!(report.warnings, vec![InstallWarning::StatusLineExists]);
         let backup = read(report.backup.as_ref().unwrap());
         assert_eq!(backup, original, "the backup is the untouched original");
@@ -632,14 +668,23 @@ mod tests {
         assert_eq!(v["model"], "opus");
         assert_eq!(v["permissions"], original["permissions"]);
         assert_eq!(v["env"], original["env"]);
-        assert_eq!(v["statusLine"], original["statusLine"], "somebody else's statusLine is kept");
-        assert_eq!(v["hooks"]["ConfigChange"], original["hooks"]["ConfigChange"]);
+        assert_eq!(
+            v["statusLine"], original["statusLine"],
+            "somebody else's statusLine is kept"
+        );
+        assert_eq!(
+            v["hooks"]["ConfigChange"],
+            original["hooks"]["ConfigChange"]
+        );
         // user hooks stay, ours are appended
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(pre.len(), 3);
         assert_eq!(pre[0], original["hooks"]["PreToolUse"][0]);
         assert_eq!(pre[1], original["hooks"]["PreToolUse"][1]);
-        assert_eq!(pre[2]["hooks"][0]["url"], "http://127.0.0.1:47831/v1/hooks/claude-code");
+        assert_eq!(
+            pre[2]["hooks"][0]["url"],
+            "http://127.0.0.1:47831/v1/hooks/claude-code"
+        );
         assert_eq!(v["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
         assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 2);
         // idempotent: a second install changes nothing but the (new) backup
@@ -651,7 +696,10 @@ mod tests {
         install(&path, &o).unwrap();
         let v2 = read(&path);
         assert_eq!(v2["hooks"]["PreToolUse"].as_array().unwrap().len(), 3);
-        assert_eq!(v2["hooks"]["PreToolUse"][2]["hooks"][0]["url"], "http://127.0.0.1:47833/v1/hooks/claude-code");
+        assert_eq!(
+            v2["hooks"]["PreToolUse"][2]["hooks"][0]["url"],
+            "http://127.0.0.1:47833/v1/hooks/claude-code"
+        );
     }
 
     #[test]
@@ -670,7 +718,11 @@ mod tests {
         let report = uninstall(&path).unwrap();
         assert_eq!(report.removed, 16);
         assert!(report.statusline_removed);
-        assert_eq!(read(&path), original, "exactly the original content is back");
+        assert_eq!(
+            read(&path),
+            original,
+            "exactly the original content is back"
+        );
         // uninstall twice / without a file is harmless
         assert_eq!(uninstall(&path).unwrap().removed, 0);
         assert_eq!(uninstall(&dir.path().join("none.json")).unwrap().removed, 0);
@@ -681,7 +733,10 @@ mod tests {
         ]}]}});
         std::fs::write(&path, mixed.to_string()).unwrap();
         assert_eq!(uninstall(&path).unwrap().removed, 1);
-        assert_eq!(read(&path), json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "keep-me"}]}]}}));
+        assert_eq!(
+            read(&path),
+            json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "keep-me"}]}]}})
+        );
     }
 
     #[test]
@@ -692,8 +747,14 @@ mod tests {
         let mut o = opts();
         o.hook_cli = "C:\\Program Files\\AgentNest\\agentnest-hook.exe";
         let report = install(&path, &o).unwrap();
-        assert!(report.warnings.is_empty(), "our own statusLine is not a conflict");
-        assert!(read(&path)["statusLine"]["command"].as_str().unwrap().contains("Program Files"));
+        assert!(
+            report.warnings.is_empty(),
+            "our own statusLine is not a conflict"
+        );
+        assert!(read(&path)["statusLine"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("Program Files"));
         assert!(uninstall(&path).unwrap().statusline_removed);
         assert!(read(&path).get("statusLine").is_none());
     }
@@ -708,16 +769,32 @@ mod tests {
             "not json at all",
         ] {
             std::fs::write(&path, bad).unwrap();
-            assert!(matches!(install(&path, &opts()), Err(InstallError::NotPlainJson)), "{bad}");
-            assert_eq!(std::fs::read_to_string(&path).unwrap(), bad, "the file is unchanged");
+            assert!(
+                matches!(install(&path, &opts()), Err(InstallError::NotPlainJson)),
+                "{bad}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                bad,
+                "the file is unchanged"
+            );
             assert!(matches!(uninstall(&path), Err(InstallError::NotPlainJson)));
         }
         std::fs::write(&path, "[1,2]").unwrap();
-        assert!(matches!(install(&path, &opts()), Err(InstallError::UnexpectedStructure(_))));
+        assert!(matches!(
+            install(&path, &opts()),
+            Err(InstallError::UnexpectedStructure(_))
+        ));
         std::fs::write(&path, r#"{"hooks": []}"#).unwrap();
-        assert!(matches!(install(&path, &opts()), Err(InstallError::UnexpectedStructure(_))));
+        assert!(matches!(
+            install(&path, &opts()),
+            Err(InstallError::UnexpectedStructure(_))
+        ));
         std::fs::write(&path, r#"{"hooks": {"Stop": {"not": "an array"}}}"#).unwrap();
-        assert!(matches!(install(&path, &opts()), Err(InstallError::UnexpectedStructure(_))));
+        assert!(matches!(
+            install(&path, &opts()),
+            Err(InstallError::UnexpectedStructure(_))
+        ));
         // an empty file is an empty object
         std::fs::write(&path, "  \n").unwrap();
         install(&path, &opts()).unwrap();
@@ -735,10 +812,16 @@ mod tests {
         let v = read(&path);
         let entry = &v["hooks"]["PermissionRequest"][0]["hooks"][0];
         assert_eq!(entry["type"], "command");
-        assert_eq!(entry["command"], "C:\\Program Files\\AgentNest\\agentnest-hook.exe");
+        assert_eq!(
+            entry["command"],
+            "C:\\Program Files\\AgentNest\\agentnest-hook.exe"
+        );
         assert_eq!(entry["args"], json!(["claude-code"]));
         assert_eq!(entry["timeout"], 150);
-        assert!(entry.get("headers").is_none(), "no token in command mode: the CLI reads daemon.json");
+        assert!(
+            entry.get("headers").is_none(),
+            "no token in command mode: the CLI reads daemon.json"
+        );
         assert!(v.get("statusLine").is_none());
         assert!(is_agentnest_hook(entry));
         assert_eq!(uninstall(&path).unwrap().removed, 16);
@@ -751,8 +834,12 @@ mod tests {
 
     #[test]
     fn only_loopback_collector_urls_count_as_agentnest() {
-        assert!(is_agentnest_hook(&json!({"type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code"})));
-        assert!(is_agentnest_hook(&json!({"type": "http", "url": "http://127.0.0.1:9/v1/hooks/claude-code"})));
+        assert!(is_agentnest_hook(
+            &json!({"type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code"})
+        ));
+        assert!(is_agentnest_hook(
+            &json!({"type": "http", "url": "http://127.0.0.1:9/v1/hooks/claude-code"})
+        ));
         for url in [
             "http://127.0.0.1:47831/v1/hooks/codex",
             "http://evil.example:47831/v1/hooks/claude-code",
@@ -761,9 +848,14 @@ mod tests {
             "https://127.0.0.1:47831/v1/hooks/claude-code",
             "http://127.0.0.1:47831/v1/hooks/claude-code/extra",
         ] {
-            assert!(!is_agentnest_hook(&json!({"type": "http", "url": url})), "{url}");
+            assert!(
+                !is_agentnest_hook(&json!({"type": "http", "url": url})),
+                "{url}"
+            );
         }
-        assert!(!is_agentnest_hook(&json!({"type": "command", "command": "agentnest-hook", "args": ["codex"]})));
+        assert!(!is_agentnest_hook(
+            &json!({"type": "command", "command": "agentnest-hook", "args": ["codex"]})
+        ));
         assert!(!is_agentnest_hook(&json!({"type": "prompt"})));
     }
 
@@ -771,24 +863,49 @@ mod tests {
     fn allowed_http_hook_urls_policy_is_reported_not_edited() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"{"allowedHttpHookUrls": ["https://example.com/*"]}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"allowedHttpHookUrls": ["https://example.com/*"]}"#,
+        )
+        .unwrap();
         let r = install(&path, &opts()).unwrap();
         assert_eq!(r.warnings, vec![InstallWarning::AllowedHttpHookUrlsMissing]);
-        assert_eq!(read(&path)["allowedHttpHookUrls"], json!(["https://example.com/*"]));
-        std::fs::write(&path, r#"{"allowedHttpHookUrls": ["http://127.0.0.1:47831/*"]}"#).unwrap();
+        assert_eq!(
+            read(&path)["allowedHttpHookUrls"],
+            json!(["https://example.com/*"])
+        );
+        std::fs::write(
+            &path,
+            r#"{"allowedHttpHookUrls": ["http://127.0.0.1:47831/*"]}"#,
+        )
+        .unwrap();
         assert!(install(&path, &opts()).unwrap().warnings.is_empty());
-        assert!(InstallWarning::AllowedHttpHookUrlsMissing.message_ko(47831).contains("47831"));
+        assert!(InstallWarning::AllowedHttpHookUrlsMissing
+            .message_ko(47831)
+            .contains("47831"));
     }
 
     #[test]
     fn effective_ttl_is_bounded_by_the_installed_timeout() {
         assert_eq!(effective_ttl_s(120, Some(150)), 120);
-        assert_eq!(effective_ttl_s(180, Some(150)), 120, "TTL raised without reinstalling is clamped");
+        assert_eq!(
+            effective_ttl_s(180, Some(150)),
+            120,
+            "TTL raised without reinstalling is clamped"
+        );
         assert_eq!(effective_ttl_s(60, Some(150)), 60);
         assert_eq!(effective_ttl_s(180, Some(210)), 180);
-        assert_eq!(effective_ttl_s(180, None), 120, "no readable hook: the default install is assumed");
+        assert_eq!(
+            effective_ttl_s(180, None),
+            120,
+            "no readable hook: the default install is assumed"
+        );
         assert_eq!(effective_ttl_s(90, None), 90);
-        assert_eq!(effective_ttl_s(120, Some(20)), MIN_EFFECTIVE_TTL_S, "never zero");
+        assert_eq!(
+            effective_ttl_s(120, Some(20)),
+            MIN_EFFECTIVE_TTL_S,
+            "never zero"
+        );
     }
 
     #[test]

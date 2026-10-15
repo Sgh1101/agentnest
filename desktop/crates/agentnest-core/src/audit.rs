@@ -128,7 +128,9 @@ impl Audit {
         let result = tokio::task::spawn_blocking(move || store.insert_audit_log(row)).await;
         match result {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::warn!(action = %action_name, error = %e, "audit_log write failed"),
+            Ok(Err(e)) => {
+                tracing::warn!(action = %action_name, error = %e, "audit_log write failed")
+            }
             Err(e) => tracing::warn!(action = %action_name, error = %e, "audit_log task failed"),
         }
     }
@@ -156,7 +158,9 @@ impl Audit {
             Ok(Err(e)) => {
                 tracing::warn!(action = %action_name, error = %e, "approval_audit write failed")
             }
-            Err(e) => tracing::warn!(action = %action_name, error = %e, "approval_audit task failed"),
+            Err(e) => {
+                tracing::warn!(action = %action_name, error = %e, "approval_audit task failed")
+            }
         }
     }
 
@@ -186,7 +190,9 @@ mod tests {
                 ACTOR_DESKTOP_USER,
                 actions::DEVICE_REVOKED,
                 Some("dev_1".into()),
-                Some(json!({"reason": "user_desktop", "note": "token=abcdef0123456789secretvalue"})),
+                Some(
+                    json!({"reason": "user_desktop", "note": "token=abcdef0123456789secretvalue"}),
+                ),
             )
             .await;
         let rows = audit.recent(10).await;

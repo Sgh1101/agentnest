@@ -11,7 +11,9 @@
 //! Expiry, revocation, disconnect and restart send **nothing** (the app-server has no timeout of its own; the TUI prompt
 //! handles it): `abandon` is a no-op.
 
-use agentnest_adapter_api::{AbandonReason, ApprovalReply, ApprovalResponder, ReplyKind, ResponderError};
+use agentnest_adapter_api::{
+    AbandonReason, ApprovalReply, ApprovalResponder, ReplyKind, ResponderError,
+};
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -20,8 +22,12 @@ use tokio::sync::mpsc;
 pub fn rpc_decision(reply: ReplyKind<'_>) -> &'static str {
     match reply {
         ReplyKind::Allow => "accept",
-        ReplyKind::Deny { interrupt: false, .. } => "decline",
-        ReplyKind::Deny { interrupt: true, .. } => "cancel",
+        ReplyKind::Deny {
+            interrupt: false, ..
+        } => "decline",
+        ReplyKind::Deny {
+            interrupt: true, ..
+        } => "cancel",
     }
 }
 
@@ -72,15 +78,33 @@ mod tests {
     #[test]
     fn the_three_decisions_map_to_three_plain_strings() {
         assert_eq!(rpc_decision(ReplyKind::Allow), "accept");
-        assert_eq!(rpc_decision(ReplyKind::Deny { message: "m", interrupt: false }), "decline");
-        assert_eq!(rpc_decision(ReplyKind::Deny { message: "m", interrupt: true }), "cancel");
+        assert_eq!(
+            rpc_decision(ReplyKind::Deny {
+                message: "m",
+                interrupt: false
+            }),
+            "decline"
+        );
+        assert_eq!(
+            rpc_decision(ReplyKind::Deny {
+                message: "m",
+                interrupt: true
+            }),
+            "cancel"
+        );
         let r = rpc_response(&json!(17), ReplyKind::Allow);
         assert_eq!(r, json!({"id": 17, "result": {"decision": "accept"}}));
         // no scope-expanding spelling can come out of the mapping
         for kind in [
             ReplyKind::Allow,
-            ReplyKind::Deny { message: "x", interrupt: false },
-            ReplyKind::Deny { message: "x", interrupt: true },
+            ReplyKind::Deny {
+                message: "x",
+                interrupt: false,
+            },
+            ReplyKind::Deny {
+                message: "x",
+                interrupt: true,
+            },
         ] {
             let d = rpc_decision(kind);
             assert!(["accept", "decline", "cancel"].contains(&d));
@@ -98,12 +122,19 @@ mod tests {
         let line = rx.recv().await.unwrap();
         let v: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v, json!({"id": 5, "result": {"decision": "cancel"}}));
-        Box::new(CodexRpcResponder::new(json!(6), tx)).abandon(AbandonReason::Expired).await;
-        assert!(rx.try_recv().is_err(), "an abandoned request is never answered");
+        Box::new(CodexRpcResponder::new(json!(6), tx))
+            .abandon(AbandonReason::Expired)
+            .await;
+        assert!(
+            rx.try_recv().is_err(),
+            "an abandoned request is never answered"
+        );
         let (tx, rx) = mpsc::unbounded_channel();
         drop(rx);
         assert!(matches!(
-            Box::new(CodexRpcResponder::new(json!(7), tx)).respond(ApprovalReply::deny("m".into(), false)).await,
+            Box::new(CodexRpcResponder::new(json!(7), tx))
+                .respond(ApprovalReply::deny("m".into(), false))
+                .await,
             Err(ResponderError::PeerClosed)
         ));
     }

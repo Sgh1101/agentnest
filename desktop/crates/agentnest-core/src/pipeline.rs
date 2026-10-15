@@ -109,7 +109,12 @@ fn session_record(entry: &SessionEntry, state: &SessionState) -> SessionRecord {
 
 impl Pipeline {
     /// A pipeline writing to `store` and publishing through `registry` and `bus`.
-    pub fn new(store: Store, clock: Arc<dyn Clock>, registry: Arc<Registry>, bus: EventBus) -> Self {
+    pub fn new(
+        store: Store,
+        clock: Arc<dyn Clock>,
+        registry: Arc<Registry>,
+        bus: EventBus,
+    ) -> Self {
         Self {
             store,
             clock,
@@ -145,7 +150,11 @@ impl Pipeline {
     /// Stores and publishes an event, runs it through the session reducer and publishes the resulting `session_state`.
     ///
     /// `dedupe_key` must only be a key derived from a `tool_use_id` (the unique index; see `normalize::dedupe`).
-    pub async fn ingest_event(&self, event: AgentEvent, dedupe_key: Option<String>) -> IngestOutcome {
+    pub async fn ingest_event(
+        &self,
+        event: AgentEvent,
+        dedupe_key: Option<String>,
+    ) -> IngestOutcome {
         let mut st = self.state.lock().await;
         let now_ms = self.clock.now_ms();
         let now = format_ms(now_ms);
@@ -170,17 +179,20 @@ impl Pipeline {
 
         let key = stored.session_key.clone();
         let paused = st.paused;
-        let entry = st.sessions.entry(key.clone()).or_insert_with(|| SessionEntry {
-            reducer: SessionReducer::new(key.clone(), stored.agent_kind, now_ms),
-            native_session_id: key
-                .split_once(':')
-                .map(|(_, id)| id.to_owned())
-                .unwrap_or_else(|| key.clone()),
-            source_channel: stored.source.channel.as_str().to_owned(),
-            project: None,
-            ended_at: None,
-            end_reason: None,
-        });
+        let entry = st
+            .sessions
+            .entry(key.clone())
+            .or_insert_with(|| SessionEntry {
+                reducer: SessionReducer::new(key.clone(), stored.agent_kind, now_ms),
+                native_session_id: key
+                    .split_once(':')
+                    .map(|(_, id)| id.to_owned())
+                    .unwrap_or_else(|| key.clone()),
+                source_channel: stored.source.channel.as_str().to_owned(),
+                project: None,
+                ended_at: None,
+                end_reason: None,
+            });
         if let Some(p) = &stored.project {
             entry.reducer.set_project(p.clone());
             entry.project = Some(p.clone());
@@ -208,10 +220,7 @@ impl Pipeline {
     async fn publish_session_state(&self, entry: &SessionEntry, now_ms: i64, now: &str) {
         let state = entry.reducer.session_state(now_ms);
         let record = session_record(entry, &state);
-        let project = entry
-            .project
-            .as_ref()
-            .and_then(|p| project_record(p, now));
+        let project = entry.project.as_ref().and_then(|p| project_record(p, now));
         let msg = match serde_json::to_value(&state) {
             Ok(payload) => NewStreamMessage {
                 msg_type: "session_state".to_owned(),
@@ -248,23 +257,31 @@ impl Pipeline {
     }
 
     /// Applies a metadata patch (statusline, Codex thread name, ...) to a session.
-    pub async fn apply_meta(&self, session_key: &str, agent_kind: AgentKind, patch: &SessionMetaPatch) {
+    pub async fn apply_meta(
+        &self,
+        session_key: &str,
+        agent_kind: AgentKind,
+        patch: &SessionMetaPatch,
+    ) {
         let mut st = self.state.lock().await;
         let now_ms = self.clock.now_ms();
         let now = format_ms(now_ms);
         let paused = st.paused;
         let key = session_key.to_owned();
-        let entry = st.sessions.entry(key.clone()).or_insert_with(|| SessionEntry {
-            reducer: SessionReducer::new(key.clone(), agent_kind, now_ms),
-            native_session_id: key
-                .split_once(':')
-                .map(|(_, id)| id.to_owned())
-                .unwrap_or_else(|| key.clone()),
-            source_channel: "claude_code.statusline".to_owned(),
-            project: None,
-            ended_at: None,
-            end_reason: None,
-        });
+        let entry = st
+            .sessions
+            .entry(key.clone())
+            .or_insert_with(|| SessionEntry {
+                reducer: SessionReducer::new(key.clone(), agent_kind, now_ms),
+                native_session_id: key
+                    .split_once(':')
+                    .map(|(_, id)| id.to_owned())
+                    .unwrap_or_else(|| key.clone()),
+                source_channel: "claude_code.statusline".to_owned(),
+                project: None,
+                ended_at: None,
+                end_reason: None,
+            });
         let update = entry.reducer.apply_meta(patch, now_ms);
         if paused {
             entry
@@ -292,7 +309,12 @@ impl Pipeline {
         };
         match self.db(move |s| s.stream_append(msg)).await {
             Ok(seq) => {
-                self.broadcast(seq, "approval_request", payload, Some(card.expires_at.clone()));
+                self.broadcast(
+                    seq,
+                    "approval_request",
+                    payload,
+                    Some(card.expires_at.clone()),
+                );
                 Some(seq)
             }
             Err(e) => {
@@ -303,7 +325,10 @@ impl Pipeline {
     }
 
     /// Publishes an `approval_resolved` message (also used to re-send with an updated `observed_result`).
-    pub async fn publish_approval_resolved(&self, resolved: &ApprovalResolvedPayload) -> Option<i64> {
+    pub async fn publish_approval_resolved(
+        &self,
+        resolved: &ApprovalResolvedPayload,
+    ) -> Option<i64> {
         let _st = self.state.lock().await;
         let payload = serde_json::to_value(resolved).ok()?;
         let msg = NewStreamMessage {
@@ -345,7 +370,8 @@ impl Pipeline {
             updated_at: now.clone(),
         };
         if let Some(prev) = st.adapters.get(kind.as_str()) {
-            if prev.status == entry.status && prev.mode == entry.mode && prev.detail == entry.detail {
+            if prev.status == entry.status && prev.mode == entry.mode && prev.detail == entry.detail
+            {
                 return;
             }
         }
@@ -403,7 +429,9 @@ impl Pipeline {
         let now = format_ms(now_ms);
         let keys: Vec<String> = st.sessions.keys().cloned().collect();
         for key in keys {
-            let Some(entry) = st.sessions.get_mut(&key) else { continue };
+            let Some(entry) = st.sessions.get_mut(&key) else {
+                continue;
+            };
             let current = entry.reducer.session_state(now_ms);
             let target = if paused {
                 RemoteApproval::Paused
@@ -434,7 +462,9 @@ impl Pipeline {
         let keys: Vec<String> = st.sessions.keys().cloned().collect();
         let mut remove = Vec::new();
         for key in keys {
-            let Some(entry) = st.sessions.get_mut(&key) else { continue };
+            let Some(entry) = st.sessions.get_mut(&key) else {
+                continue;
+            };
             let update = entry.reducer.tick(now_ms);
             if update.changed {
                 if let Some(entry) = st.sessions.get(&key) {
@@ -472,7 +502,10 @@ impl Pipeline {
             (states, known)
         };
         let cutoff = format_ms(self.clock.now_ms() - ENDED_REMOVE_AFTER_MS);
-        let stored = self.db(move |s| s.list_active_sessions(&cutoff)).await.unwrap_or_default();
+        let stored = self
+            .db(move |s| s.list_active_sessions(&cutoff))
+            .await
+            .unwrap_or_default();
         for rec in stored {
             if known.contains(&rec.session_key) {
                 continue;
@@ -529,7 +562,11 @@ impl Pipeline {
             .collect();
         let focus = resolve_focus(&sessions, LinkState::Connected, now_ms);
         let key = focus.focus_session_key?;
-        let state = sessions.iter().find(|s| s.session_key == key)?.state.clone();
+        let state = sessions
+            .iter()
+            .find(|s| s.session_key == key)?
+            .state
+            .clone();
         Some((key, state))
     }
 

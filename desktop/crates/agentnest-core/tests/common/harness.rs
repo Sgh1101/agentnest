@@ -350,7 +350,9 @@ impl Harness {
     }
 
     /// Message types broadcast so far through a subscription taken with `registry.subscribe()`.
-    pub fn drain(rx: &mut tokio::sync::broadcast::Receiver<Arc<agentnest_core::link::registry::Published>>) -> Vec<(i64, String, Value)> {
+    pub fn drain(
+        rx: &mut tokio::sync::broadcast::Receiver<Arc<agentnest_core::link::registry::Published>>,
+    ) -> Vec<(i64, String, Value)> {
         let mut out = Vec::new();
         while let Ok(p) = rx.try_recv() {
             out.push((p.seq, p.msg_type.clone(), p.payload.clone()));
@@ -421,8 +423,13 @@ impl HttpHarness {
 
     /// POST with the valid token (blocking call on the blocking pool).
     pub async fn post(&self, path: &str, body: Value) -> (u16, String) {
-        self.request("POST", path, &[("X-AgentNest-Token", HOOK_TOKEN)], Some(body.to_string().into_bytes()))
-            .await
+        self.request(
+            "POST",
+            path,
+            &[("X-AgentNest-Token", HOOK_TOKEN)],
+            Some(body.to_string().into_bytes()),
+        )
+        .await
     }
 
     pub async fn request(
@@ -433,8 +440,10 @@ impl HttpHarness {
         body: Option<Vec<u8>>,
     ) -> (u16, String) {
         let url = self.url(path);
-        let headers: Vec<(String, String)> =
-            headers.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+        let headers: Vec<(String, String)> = headers
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
         tokio::task::spawn_blocking(move || http_call(method, &url, &headers, body))
             .await
             .unwrap()

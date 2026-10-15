@@ -60,7 +60,9 @@ impl HttpServer {
 
 /// Binds `127.0.0.1:port` (and `[::1]` on the same port) without starting the server. `port == 0` picks a free port.
 /// Returns the IPv4 listener and the optional IPv6 one.
-pub fn bind_loopback(port: u16) -> io::Result<(std::net::TcpListener, Option<std::net::TcpListener>)> {
+pub fn bind_loopback(
+    port: u16,
+) -> io::Result<(std::net::TcpListener, Option<std::net::TcpListener>)> {
     let v4 = std::net::TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))?;
     v4.set_nonblocking(true)?;
     let actual = v4.local_addr()?.port();

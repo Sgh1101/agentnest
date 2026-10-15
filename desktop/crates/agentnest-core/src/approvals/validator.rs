@@ -283,7 +283,9 @@ pub fn validate(
                     .as_ref()
                     .is_some_and(|e| e.completed && e.method.strength() >= required);
                 if !done {
-                    return Err(Rejection::of(DecisionResultReason::ExtraConfirmationRequired));
+                    return Err(Rejection::of(
+                        DecisionResultReason::ExtraConfirmationRequired,
+                    ));
                 }
             }
         }
@@ -291,7 +293,9 @@ pub fn validate(
         && card.extra_confirmation != ExtraConfirmation::None
         && !input.confirm_ack
     {
-        return Err(Rejection::of(DecisionResultReason::ExtraConfirmationRequired));
+        return Err(Rejection::of(
+            DecisionResultReason::ExtraConfirmationRequired,
+        ));
     }
     // 9. remote approval paused: blocks the remote channel only; the desktop is unaffected
     if phone && env.paused {
@@ -403,7 +407,11 @@ mod tests {
         let mut e = env();
         e.device_active = false;
         assert_eq!(
-            reason(validate(&e, &RequestStatus::Pending(c), &phone(Decision::Allow))),
+            reason(validate(
+                &e,
+                &RequestStatus::Pending(c),
+                &phone(Decision::Allow)
+            )),
             DecisionResultReason::DeviceRevoked
         );
     }
@@ -411,7 +419,11 @@ mod tests {
     #[test]
     fn step2_unknown_request() {
         assert_eq!(
-            reason(validate(&env(), &RequestStatus::Unknown, &phone(Decision::Allow))),
+            reason(validate(
+                &env(),
+                &RequestStatus::Unknown,
+                &phone(Decision::Allow)
+            )),
             DecisionResultReason::UnknownRequest
         );
     }
@@ -419,7 +431,11 @@ mod tests {
     #[test]
     fn step3_not_pending() {
         assert_eq!(
-            reason(validate(&env(), &RequestStatus::NotPending, &phone(Decision::Allow))),
+            reason(validate(
+                &env(),
+                &RequestStatus::NotPending,
+                &phone(Decision::Allow)
+            )),
             DecisionResultReason::AlreadyResolved
         );
     }
@@ -478,7 +494,12 @@ mod tests {
         // exactly at expires_at is expired (now < expires_at is required)
         let mut e = env();
         e.now_ms = EXPIRES;
-        let r = validate(&e, &RequestStatus::Pending(c.clone()), &phone(Decision::Allow)).unwrap_err();
+        let r = validate(
+            &e,
+            &RequestStatus::Pending(c.clone()),
+            &phone(Decision::Allow),
+        )
+        .unwrap_err();
         assert_eq!(r.reason, DecisionResultReason::Expired);
         assert!(r.expire_request);
         e.now_ms = EXPIRES - 1;
@@ -510,7 +531,12 @@ mod tests {
             validate(&env(), &RequestStatus::Pending(c.clone()), &d).unwrap();
         }
         // the desktop has no decided_at window: only the expiry applies
-        validate(&env(), &RequestStatus::Pending(c), &desktop(Decision::Allow, true)).unwrap();
+        validate(
+            &env(),
+            &RequestStatus::Pending(c),
+            &desktop(Decision::Allow, true),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -518,13 +544,21 @@ mod tests {
         let allowed = [Decision::Allow, Decision::Deny];
         let c = card(&allowed, &AUTH_DEFAULT, ExtraConfirmation::None);
         assert_eq!(
-            reason(validate(&env(), &RequestStatus::Pending(c), &phone(Decision::DenyAndStop))),
+            reason(validate(
+                &env(),
+                &RequestStatus::Pending(c),
+                &phone(Decision::DenyAndStop)
+            )),
             DecisionResultReason::NotAllowed
         );
         let only_deny = [Decision::Deny];
         let c = card(&only_deny, &AUTH_DEFAULT, ExtraConfirmation::None);
         assert_eq!(
-            reason(validate(&env(), &RequestStatus::Pending(c), &phone(Decision::Allow))),
+            reason(validate(
+                &env(),
+                &RequestStatus::Pending(c),
+                &phone(Decision::Allow)
+            )),
             DecisionResultReason::NotAllowed
         );
     }
@@ -539,47 +573,81 @@ mod tests {
         };
         assert_eq!(run(&|d| d.auth = None), DecisionResultReason::AuthRequired);
         assert_eq!(
-            run(&|d| d.auth = Some(DecisionAuth { method: AuthMethod::None, authenticated_at: Some(ts(NOW)) })),
+            run(&|d| d.auth = Some(DecisionAuth {
+                method: AuthMethod::None,
+                authenticated_at: Some(ts(NOW))
+            })),
             DecisionResultReason::AuthRequired
         );
         assert_eq!(
-            run(&|d| d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: None })),
+            run(&|d| d.auth = Some(DecisionAuth {
+                method: AuthMethod::Biometric,
+                authenticated_at: None
+            })),
             DecisionResultReason::AuthRequired
         );
         assert_eq!(
-            run(&|d| d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some("x".into()) })),
+            run(&|d| d.auth = Some(DecisionAuth {
+                method: AuthMethod::Biometric,
+                authenticated_at: Some("x".into())
+            })),
             DecisionResultReason::AuthRequired
         );
         // device credential is as good as biometrics
-        assert!(run_ok(&c, |d| d.auth = Some(DecisionAuth { method: AuthMethod::DeviceCredential, authenticated_at: Some(ts(NOW - 100)) })));
+        assert!(run_ok(&c, |d| d.auth = Some(DecisionAuth {
+            method: AuthMethod::DeviceCredential,
+            authenticated_at: Some(ts(NOW - 100))
+        })));
         // authentication from before the request existed (reuse): CLOCK_SKEW
         assert_eq!(
-            run(&|d| d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some(ts(CREATED - 5_001)) })),
+            run(&|d| d.auth = Some(DecisionAuth {
+                method: AuthMethod::Biometric,
+                authenticated_at: Some(ts(CREATED - 5_001))
+            })),
             DecisionResultReason::ClockSkew
         );
         // 5 s before the request is tolerated
-        assert!(run_ok(&c, |d| d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some(ts(CREATED - 5_000)) })));
+        assert!(run_ok(&c, |d| d.auth = Some(DecisionAuth {
+            method: AuthMethod::Biometric,
+            authenticated_at: Some(ts(CREATED - 5_000))
+        })));
         // authentication in the future relative to decided_at
         assert_eq!(
-            run(&|d| d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some(ts(NOW - 500 + 5_001)) })),
+            run(&|d| d.auth = Some(DecisionAuth {
+                method: AuthMethod::Biometric,
+                authenticated_at: Some(ts(NOW - 500 + 5_001))
+            })),
             DecisionResultReason::ClockSkew
         );
         // older than 60 s at decision time: re-authenticate. (decided_at = NOW-500; created = NOW-20s so a 61 s old
         // authentication is also before created-5s -> use a longer-lived request)
-        let long = CardView { created_ms: NOW - 200_000, expires_ms: NOW + 100_000, ..c.clone() };
+        let long = CardView {
+            created_ms: NOW - 200_000,
+            expires_ms: NOW + 100_000,
+            ..c.clone()
+        };
         let mut d = phone(Decision::Allow);
         d.decided_at = Some(ts(NOW - 500));
-        d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some(ts(NOW - 500 - 60_001)) });
+        d.auth = Some(DecisionAuth {
+            method: AuthMethod::Biometric,
+            authenticated_at: Some(ts(NOW - 500 - 60_001)),
+        });
         assert_eq!(
             reason(validate(&env(), &RequestStatus::Pending(long.clone()), &d)),
             DecisionResultReason::AuthRequired
         );
-        d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some(ts(NOW - 500 - 60_000)) });
+        d.auth = Some(DecisionAuth {
+            method: AuthMethod::Biometric,
+            authenticated_at: Some(ts(NOW - 500 - 60_000)),
+        });
         validate(&env(), &RequestStatus::Pending(long), &d).unwrap();
         // deny_and_stop needs authentication too
         let mut d = phone(Decision::DenyAndStop);
         d.auth = None;
-        assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::AuthRequired);
+        assert_eq!(
+            reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::AuthRequired
+        );
         // a plain deny does not (default policy)
         let mut d = phone(Decision::Deny);
         d.auth = None;
@@ -598,45 +666,84 @@ mod tests {
         let c = card(&ALL, &auth_all, ExtraConfirmation::HoldAndReconfirm);
         let mut d = phone(Decision::Deny);
         d.auth = None;
-        assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::AuthRequired);
+        assert_eq!(
+            reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::AuthRequired
+        );
         // with authentication a deny passes on a critical card without any hold
         let d = phone(Decision::Deny);
         assert!(d.extra_confirmation.is_none());
         validate(&env(), &RequestStatus::Pending(c.clone()), &d).unwrap();
         // stale authentication fails a deny under the policy too
-        let long = CardView { created_ms: NOW - 200_000, expires_ms: NOW + 100_000, ..c };
+        let long = CardView {
+            created_ms: NOW - 200_000,
+            expires_ms: NOW + 100_000,
+            ..c
+        };
         let mut d = phone(Decision::Deny);
-        d.auth = Some(DecisionAuth { method: AuthMethod::Biometric, authenticated_at: Some(ts(NOW - 500 - 61_000)) });
-        assert_eq!(reason(validate(&env(), &RequestStatus::Pending(long), &d)), DecisionResultReason::AuthRequired);
+        d.auth = Some(DecisionAuth {
+            method: AuthMethod::Biometric,
+            authenticated_at: Some(ts(NOW - 500 - 61_000)),
+        });
+        assert_eq!(
+            reason(validate(&env(), &RequestStatus::Pending(long), &d)),
+            DecisionResultReason::AuthRequired
+        );
     }
 
     #[test]
     fn step8_extra_confirmation_is_required_for_allow_type_decisions_only() {
         for (extra, ok_method, weak_method) in [
             (ExtraConfirmation::Hold, ExtraConfirmationMethod::Hold, None),
-            (ExtraConfirmation::HoldAndReconfirm, ExtraConfirmationMethod::HoldAndReconfirm, Some(ExtraConfirmationMethod::Hold)),
+            (
+                ExtraConfirmation::HoldAndReconfirm,
+                ExtraConfirmationMethod::HoldAndReconfirm,
+                Some(ExtraConfirmationMethod::Hold),
+            ),
         ] {
             let c = card(&ALL, &AUTH_DEFAULT, extra.clone());
             for decision in [Decision::Allow, Decision::DenyAndStop] {
                 // missing
                 let d = phone(decision);
-                assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::ExtraConfirmationRequired, "{decision:?}");
+                assert_eq!(
+                    reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)),
+                    DecisionResultReason::ExtraConfirmationRequired,
+                    "{decision:?}"
+                );
                 // not completed
                 let mut d = phone(decision);
-                d.extra_confirmation = Some(ExtraConfirmationProof { method: ok_method, completed: false });
-                assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::ExtraConfirmationRequired);
+                d.extra_confirmation = Some(ExtraConfirmationProof {
+                    method: ok_method,
+                    completed: false,
+                });
+                assert_eq!(
+                    reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)),
+                    DecisionResultReason::ExtraConfirmationRequired
+                );
                 // weaker than required
                 if let Some(weak) = weak_method {
                     let mut d = phone(decision);
-                    d.extra_confirmation = Some(ExtraConfirmationProof { method: weak, completed: true });
-                    assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::ExtraConfirmationRequired);
+                    d.extra_confirmation = Some(ExtraConfirmationProof {
+                        method: weak,
+                        completed: true,
+                    });
+                    assert_eq!(
+                        reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)),
+                        DecisionResultReason::ExtraConfirmationRequired
+                    );
                 }
                 // sufficient (also stronger than required)
                 let mut d = phone(decision);
-                d.extra_confirmation = Some(ExtraConfirmationProof { method: ok_method, completed: true });
+                d.extra_confirmation = Some(ExtraConfirmationProof {
+                    method: ok_method,
+                    completed: true,
+                });
                 validate(&env(), &RequestStatus::Pending(c.clone()), &d).unwrap();
                 let mut d = phone(decision);
-                d.extra_confirmation = Some(ExtraConfirmationProof { method: ExtraConfirmationMethod::HoldAndReconfirm, completed: true });
+                d.extra_confirmation = Some(ExtraConfirmationProof {
+                    method: ExtraConfirmationMethod::HoldAndReconfirm,
+                    completed: true,
+                });
                 validate(&env(), &RequestStatus::Pending(c.clone()), &d).unwrap();
             }
             // a plain deny never needs it, whatever the risk
@@ -644,10 +751,20 @@ mod tests {
             validate(&env(), &RequestStatus::Pending(c), &d).unwrap();
         }
         // an unknown (future) extra-confirmation requirement counts as the strongest
-        let c = card(&ALL, &AUTH_DEFAULT, ExtraConfirmation::Unknown("quadruple".into()));
+        let c = card(
+            &ALL,
+            &AUTH_DEFAULT,
+            ExtraConfirmation::Unknown("quadruple".into()),
+        );
         let mut d = phone(Decision::Allow);
-        d.extra_confirmation = Some(ExtraConfirmationProof { method: ExtraConfirmationMethod::Hold, completed: true });
-        assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c), &d)), DecisionResultReason::ExtraConfirmationRequired);
+        d.extra_confirmation = Some(ExtraConfirmationProof {
+            method: ExtraConfirmationMethod::Hold,
+            completed: true,
+        });
+        assert_eq!(
+            reason(validate(&env(), &RequestStatus::Pending(c), &d)),
+            DecisionResultReason::ExtraConfirmationRequired
+        );
     }
 
     #[test]
@@ -656,10 +773,16 @@ mod tests {
         let c = card(&ALL, &[], ExtraConfirmation::None);
         let mut d = phone(Decision::Allow);
         d.auth = None;
-        assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::AuthRequired);
+        assert_eq!(
+            reason(validate(&env(), &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::AuthRequired
+        );
         let mut d = phone(Decision::DenyAndStop);
         d.auth = None;
-        assert_eq!(reason(validate(&env(), &RequestStatus::Pending(c), &d)), DecisionResultReason::AuthRequired);
+        assert_eq!(
+            reason(validate(&env(), &RequestStatus::Pending(c), &d)),
+            DecisionResultReason::AuthRequired
+        );
     }
 
     #[test]
@@ -667,10 +790,29 @@ mod tests {
         let c = card(&ALL, &AUTH_DEFAULT, ExtraConfirmation::None);
         let mut e = env();
         e.paused = true;
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &phone(Decision::Allow))), DecisionResultReason::Paused);
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &phone(Decision::Deny))), DecisionResultReason::Paused);
+        assert_eq!(
+            reason(validate(
+                &e,
+                &RequestStatus::Pending(c.clone()),
+                &phone(Decision::Allow)
+            )),
+            DecisionResultReason::Paused
+        );
+        assert_eq!(
+            reason(validate(
+                &e,
+                &RequestStatus::Pending(c.clone()),
+                &phone(Decision::Deny)
+            )),
+            DecisionResultReason::Paused
+        );
         // desktop decisions still apply while remote approval is paused (6.2.1 step 9 not applicable)
-        validate(&e, &RequestStatus::Pending(c), &desktop(Decision::Allow, true)).unwrap();
+        validate(
+            &e,
+            &RequestStatus::Pending(c),
+            &desktop(Decision::Allow, true),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -678,31 +820,71 @@ mod tests {
         // a decision that violates every step reports step 1; peel the failures off from the top
         let allowed = [Decision::Deny];
         let c = card(&allowed, &AUTH_DEFAULT, ExtraConfirmation::HoldAndReconfirm);
-        let mut e = ValidationEnv { now_ms: EXPIRES + 1, device_active: false, paused: true };
+        let mut e = ValidationEnv {
+            now_ms: EXPIRES + 1,
+            device_active: false,
+            paused: true,
+        };
         let mut d = phone(Decision::Allow);
         d.session_key = Some("x".into());
         d.tool_input_sha256 = "0".repeat(64);
         d.decided_at = None;
         d.auth = None;
-        assert_eq!(reason(validate(&e, &RequestStatus::Unknown, &d)), DecisionResultReason::DeviceRevoked);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Unknown, &d)),
+            DecisionResultReason::DeviceRevoked
+        );
         e.device_active = true;
-        assert_eq!(reason(validate(&e, &RequestStatus::Unknown, &d)), DecisionResultReason::UnknownRequest);
-        assert_eq!(reason(validate(&e, &RequestStatus::NotPending, &d)), DecisionResultReason::AlreadyResolved);
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::BindingMismatch);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Unknown, &d)),
+            DecisionResultReason::UnknownRequest
+        );
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::NotPending, &d)),
+            DecisionResultReason::AlreadyResolved
+        );
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::BindingMismatch
+        );
         d.session_key = Some("claude_code:s1".into());
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::InputHashMismatch);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::InputHashMismatch
+        );
         d.tool_input_sha256 = HASH.into();
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::Expired);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::Expired
+        );
         e.now_ms = NOW;
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::ClockSkew);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::ClockSkew
+        );
         d.decided_at = Some(ts(NOW));
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::NotAllowed);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::NotAllowed
+        );
         let all = card(&ALL, &AUTH_DEFAULT, ExtraConfirmation::HoldAndReconfirm);
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(all.clone()), &d)), DecisionResultReason::AuthRequired);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(all.clone()), &d)),
+            DecisionResultReason::AuthRequired
+        );
         d.auth = phone(Decision::Allow).auth;
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(all.clone()), &d)), DecisionResultReason::ExtraConfirmationRequired);
-        d.extra_confirmation = Some(ExtraConfirmationProof { method: ExtraConfirmationMethod::HoldAndReconfirm, completed: true });
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(all.clone()), &d)), DecisionResultReason::Paused);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(all.clone()), &d)),
+            DecisionResultReason::ExtraConfirmationRequired
+        );
+        d.extra_confirmation = Some(ExtraConfirmationProof {
+            method: ExtraConfirmationMethod::HoldAndReconfirm,
+            completed: true,
+        });
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(all.clone()), &d)),
+            DecisionResultReason::Paused
+        );
         e.paused = false;
         validate(&e, &RequestStatus::Pending(all), &d).unwrap();
     }
@@ -714,32 +896,83 @@ mod tests {
         let c = card(&ALL, &AUTH_DEFAULT, ExtraConfirmation::Hold);
         let e = env();
         // 2
-        assert_eq!(reason(validate(&e, &RequestStatus::Unknown, &desktop(Decision::Allow, true))), DecisionResultReason::UnknownRequest);
+        assert_eq!(
+            reason(validate(
+                &e,
+                &RequestStatus::Unknown,
+                &desktop(Decision::Allow, true)
+            )),
+            DecisionResultReason::UnknownRequest
+        );
         // 3
-        assert_eq!(reason(validate(&e, &RequestStatus::NotPending, &desktop(Decision::Allow, true))), DecisionResultReason::AlreadyResolved);
+        assert_eq!(
+            reason(validate(
+                &e,
+                &RequestStatus::NotPending,
+                &desktop(Decision::Allow, true)
+            )),
+            DecisionResultReason::AlreadyResolved
+        );
         // 5: the hash of the card the user saw must equal the stored one
         let mut d = desktop(Decision::Allow, true);
         d.tool_input_sha256 = "0".repeat(64);
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)), DecisionResultReason::InputHashMismatch);
+        assert_eq!(
+            reason(validate(&e, &RequestStatus::Pending(c.clone()), &d)),
+            DecisionResultReason::InputHashMismatch
+        );
         // 6: only the server clock
         let mut late = e;
         late.now_ms = EXPIRES;
-        let r = validate(&late, &RequestStatus::Pending(c.clone()), &desktop(Decision::Allow, true)).unwrap_err();
+        let r = validate(
+            &late,
+            &RequestStatus::Pending(c.clone()),
+            &desktop(Decision::Allow, true),
+        )
+        .unwrap_err();
         assert_eq!(r.reason, DecisionResultReason::Expired);
         assert!(r.expire_request);
         // 7
         let only_deny = [Decision::Deny];
         let c7 = card(&only_deny, &AUTH_DEFAULT, ExtraConfirmation::None);
-        assert_eq!(reason(validate(&e, &RequestStatus::Pending(c7), &desktop(Decision::Allow, true))), DecisionResultReason::NotAllowed);
+        assert_eq!(
+            reason(validate(
+                &e,
+                &RequestStatus::Pending(c7),
+                &desktop(Decision::Allow, true)
+            )),
+            DecisionResultReason::NotAllowed
+        );
         // 8: confirm_ack is required for allow-type decisions on high / critical, not for deny
         for decision in [Decision::Allow, Decision::DenyAndStop] {
-            assert_eq!(reason(validate(&e, &RequestStatus::Pending(c.clone()), &desktop(decision, false))), DecisionResultReason::ExtraConfirmationRequired);
-            validate(&e, &RequestStatus::Pending(c.clone()), &desktop(decision, true)).unwrap();
+            assert_eq!(
+                reason(validate(
+                    &e,
+                    &RequestStatus::Pending(c.clone()),
+                    &desktop(decision, false)
+                )),
+                DecisionResultReason::ExtraConfirmationRequired
+            );
+            validate(
+                &e,
+                &RequestStatus::Pending(c.clone()),
+                &desktop(decision, true),
+            )
+            .unwrap();
         }
-        validate(&e, &RequestStatus::Pending(c), &desktop(Decision::Deny, false)).unwrap();
+        validate(
+            &e,
+            &RequestStatus::Pending(c),
+            &desktop(Decision::Deny, false),
+        )
+        .unwrap();
         // low / medium need no confirmation
         let low = card(&ALL, &AUTH_DEFAULT, ExtraConfirmation::None);
-        validate(&e, &RequestStatus::Pending(low), &desktop(Decision::Allow, false)).unwrap();
+        validate(
+            &e,
+            &RequestStatus::Pending(low),
+            &desktop(Decision::Allow, false),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -754,7 +987,9 @@ mod tests {
 
     #[test]
     fn sources_name_themselves_for_the_audit_tables() {
-        let p = DecisionSource::Phone { device_id: "dev_a".into() };
+        let p = DecisionSource::Phone {
+            device_id: "dev_a".into(),
+        };
         assert_eq!(p.actor(), "device:dev_a");
         assert_eq!(p.audit_actor(), "phone:dev_a");
         assert_eq!(p.resolved_by(), "phone");

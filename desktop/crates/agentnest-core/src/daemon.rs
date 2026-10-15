@@ -141,7 +141,9 @@ pub struct DaemonOptions {
 
 impl std::fmt::Debug for DaemonOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DaemonOptions").field("paths", &self.paths).finish_non_exhaustive()
+        f.debug_struct("DaemonOptions")
+            .field("paths", &self.paths)
+            .finish_non_exhaustive()
     }
 }
 
@@ -561,7 +563,9 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn generate_hook_token() -> Result<HookToken, DaemonError> {
     let mut raw = [0u8; 32];
-    SystemRandom::new().fill(&mut raw).map_err(|_| DaemonError::Rng)?;
+    SystemRandom::new()
+        .fill(&mut raw)
+        .map_err(|_| DaemonError::Rng)?;
     Ok(HookToken::new(format!("an_hk_{}", b64url_encode(&raw))))
 }
 
@@ -575,7 +579,8 @@ struct DaemonJson {
 fn read_daemon_json_token(path: &std::path::Path) -> Option<HookToken> {
     let text = std::fs::read_to_string(path).ok()?;
     let v: DaemonJson = serde_json::from_str(&text).ok()?;
-    (v.hook_token.starts_with("an_hk_") && v.hook_token.len() >= 20).then(|| HookToken::new(v.hook_token))
+    (v.hook_token.starts_with("an_hk_") && v.hook_token.len() >= 20)
+        .then(|| HookToken::new(v.hook_token))
 }
 
 fn bind_with_fallback<T>(
@@ -652,7 +657,9 @@ impl Inner {
             .ttl_override_ms
             .unwrap_or(i64::from(ttl_s) * 1000);
         self.broker_settings.set_ttl_ms(ttl_ms);
-        self.link_policy.effective_ttl_s.store(ttl_s, Ordering::Relaxed);
+        self.link_policy
+            .effective_ttl_s
+            .store(ttl_s, Ordering::Relaxed);
     }
 
     fn apply_policy(&self, cfg: &AppConfig) {
@@ -668,12 +675,14 @@ impl Inner {
         self.http_settings
             .force_ask_on_critical
             .store(cfg.risk.force_ask_on_critical, Ordering::Relaxed);
-        self.http_settings
-            .codex_hold
-            .store(cfg!(feature = "codex-hooks-approval") && cfg.codex.mode == CodexMode::Hooks, Ordering::Relaxed);
-        self.link_policy
-            .critical_local_only
-            .store(cfg.approval.critical_remote == CriticalRemote::LocalOnly, Ordering::Relaxed);
+        self.http_settings.codex_hold.store(
+            cfg!(feature = "codex-hooks-approval") && cfg.codex.mode == CodexMode::Hooks,
+            Ordering::Relaxed,
+        );
+        self.link_policy.critical_local_only.store(
+            cfg.approval.critical_remote == CriticalRemote::LocalOnly,
+            Ordering::Relaxed,
+        );
         self.link_policy
             .deny_requires_auth
             .store(cfg.approval.deny_requires_auth, Ordering::Relaxed);
@@ -709,8 +718,11 @@ impl Inner {
         let id = lock(&self.identity).clone();
         let token = lock(&self.hook_token).clone();
         let now = format_ms(self.clock.now_ms());
-        let rotated = matches!(change, Some(IdentityChange::CertReissued | IdentityChange::Regenerated))
-            .then(|| now.clone());
+        let rotated = matches!(
+            change,
+            Some(IdentityChange::CertReissued | IdentityChange::Regenerated)
+        )
+        .then(|| now.clone());
         let name = pc_display_name(&self.options);
         let (pc_id, cert_pem) = (id.pc_id(), id.cert_pem().to_owned());
         let pin = id.spki_pin();
@@ -736,16 +748,6 @@ impl Inner {
         }
     }
 
-    fn pc_info(&self) -> PcInfo {
-        let id = lock(&self.identity);
-        PcInfo {
-            pc_id: id.pc_id(),
-            name: pc_display_name(&self.options),
-            hosts: self.hosts(),
-            port: *lock(&self.wss_port),
-        }
-    }
-
     // -------------------------------------------------------------------------------------------------------------
     // link lifecycle
     // -------------------------------------------------------------------------------------------------------------
@@ -760,18 +762,22 @@ impl Inner {
     async fn start_link(&self, cfg: &AppConfig) -> Result<(), DaemonError> {
         let addr = self.link_bind_addr(cfg);
         let preferred = self.options.link_port;
-        let listener = bind_with_fallback(preferred, LINK_PORT_FALLBACKS, "link", |p| link::bind_link(addr, p))?;
+        let listener = bind_with_fallback(preferred, LINK_PORT_FALLBACKS, "link", |p| {
+            link::bind_link(addr, p)
+        })?;
         let port = listener.local_addr()?.port();
         *lock(&self.wss_port) = port;
         self.daemon_info.wss_port.store(port, Ordering::Relaxed);
         {
-            let mut pc = lock(&self.link_ctx.pc);
+            let mut pc = self.link_ctx.pc.write().unwrap_or_else(|e| e.into_inner());
             pc.port = port;
             pc.hosts = self.hosts();
         }
         let id = lock(&self.identity).clone();
         let server = LinkServer::start(self.link_ctx.clone(), &id, listener)?;
-        self.bus.emit(DaemonEvent::Link(LinkUiEvent::Listening { addr: server.addr.to_string() }));
+        self.bus.emit(DaemonEvent::Link(LinkUiEvent::Listening {
+            addr: server.addr.to_string(),
+        }));
         *self.link_server.lock().await = Some(server);
         if let Err(e) = self.write_daemon_json() {
             tracing::warn!(error = %e, "could not write daemon.json");
@@ -779,7 +785,13 @@ impl Inner {
         Ok(())
     }
 
-    async fn stop_link(&self, reason: ByeReason, reconnect: bool, message_ko: &str, close_code: u16) {
+    async fn stop_link(
+        &self,
+        reason: ByeReason,
+        reconnect: bool,
+        message_ko: &str,
+        close_code: u16,
+    ) {
         let server = self.link_server.lock().await.take();
         if let Some(server) = server {
             server.stop(reason, reconnect, message_ko, close_code).await;
@@ -792,24 +804,36 @@ impl Inner {
             return Ok(());
         }
         cfg.link.enabled = enabled;
-        cfg.save(&self.options.paths.config).map_err(|_| CommandError::Internal)?;
+        cfg.save(&self.options.paths.config)
+            .map_err(|_| CommandError::Internal)?;
         *lock(&self.config) = cfg.clone();
         if enabled {
             self.start_link(&cfg).await.map_err(|e| {
                 tracing::error!(error = %e, "could not start the link listener");
                 CommandError::Internal
             })?;
-            self.audit.log(ACTOR_DESKTOP_USER, actions::LINK_ENABLED, None, None).await;
+            self.audit
+                .log(ACTOR_DESKTOP_USER, actions::LINK_ENABLED, None, None)
+                .await;
         } else {
             // pending approvals end as handed_off_local (resolved by the desktop), the pairing mode ends, the phones are told
             self.broker.link_disabled().await;
             if let Some((id, _)) = self.pairing.active() {
                 self.pairing.cancel(&id);
             }
-            self.stop_link(ByeReason::Shutdown, false, "PC에서 휴대폰 연결을 껐어요", 1000).await;
-            self.audit.log(ACTOR_DESKTOP_USER, actions::LINK_DISABLED, None, None).await;
+            self.stop_link(
+                ByeReason::Shutdown,
+                false,
+                "PC에서 휴대폰 연결을 껐어요",
+                1000,
+            )
+            .await;
+            self.audit
+                .log(ACTOR_DESKTOP_USER, actions::LINK_DISABLED, None, None)
+                .await;
         }
-        self.bus.emit(DaemonEvent::Link(LinkUiEvent::Enabled { enabled }));
+        self.bus
+            .emit(DaemonEvent::Link(LinkUiEvent::Enabled { enabled }));
         Ok(())
     }
 
@@ -820,7 +844,11 @@ impl Inner {
     async fn check_addresses(&self) {
         let lan = self.lan_addrs();
         let current = lock(&self.identity).clone();
-        let changed = match self.identity_store.refresh(&current, &lan, DateTime::<Utc>::from_timestamp_millis(self.clock.now_ms()).unwrap_or_else(Utc::now)) {
+        let changed = match self.identity_store.refresh(
+            &current,
+            &lan,
+            DateTime::<Utc>::from_timestamp_millis(self.clock.now_ms()).unwrap_or_else(Utc::now),
+        ) {
             Ok(Some(fresh)) => Some(fresh),
             Ok(None) => None,
             Err(e) => {
@@ -829,7 +857,13 @@ impl Inner {
             }
         };
         let hosts = self.hosts();
-        let hosts_changed = lock(&self.link_ctx.pc).hosts != hosts;
+        let hosts_changed = self
+            .link_ctx
+            .pc
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .hosts
+            != hosts;
         if let Some(fresh) = changed {
             // same key: the pin is unchanged, phones need no re-pairing
             *lock(&self.identity) = fresh.clone();
@@ -838,19 +872,30 @@ impl Inner {
                     tracing::warn!(error = %e, "could not load the new certificate");
                 }
             }
-            self.store_identity_row(Some(IdentityChange::CertReissued)).await;
-            self.audit.log(ACTOR_SYSTEM, actions::CERT_ROTATED, None, None).await;
+            self.store_identity_row(Some(IdentityChange::CertReissued))
+                .await;
+            self.audit
+                .log(ACTOR_SYSTEM, actions::CERT_ROTATED, None, None)
+                .await;
         }
         if hosts_changed {
             self.link_ctx.set_hosts(hosts.clone());
-            self.bus.emit(DaemonEvent::Link(LinkUiEvent::HostsChanged { addresses: hosts }));
+            self.bus.emit(DaemonEvent::Link(LinkUiEvent::HostsChanged {
+                addresses: hosts,
+            }));
             // the primary interface changed and the listener follows it (no fixed bind address configured)
             let cfg = self.config();
             if cfg.link.enabled && cfg.link.bind_addr.is_none() {
                 let want = self.link_bind_addr(&cfg);
                 let have = self.link_server.lock().await.as_ref().map(|s| s.addr.ip());
                 if have.is_some() && have != Some(want) {
-                    self.stop_link(ByeReason::Restart, true, "PC 주소가 바뀌어 다시 연결해요", 1012).await;
+                    self.stop_link(
+                        ByeReason::Restart,
+                        true,
+                        "PC 주소가 바뀌어 다시 연결해요",
+                        1012,
+                    )
+                    .await;
                     if let Err(e) = self.start_link(&cfg).await {
                         tracing::error!(error = %e, "could not rebind the link listener");
                     }
@@ -861,7 +906,9 @@ impl Inner {
 
     async fn run_retention(&self) {
         let now = self.clock.now_ms();
-        let r = self.db(move |s| s.run_retention(now, &RetentionConfig::default())).await;
+        let r = self
+            .db(move |s| s.run_retention(now, &RetentionConfig::default()))
+            .await;
         if let Err(e) = r {
             tracing::warn!(error = %e, "retention failed");
         }
@@ -902,7 +949,10 @@ impl Daemon {
     }
 
     /// Starts the daemon with explicit options.
-    pub fn start_with(config: AppConfig, options: DaemonOptions) -> Result<DaemonHandle, DaemonError> {
+    pub fn start_with(
+        config: AppConfig,
+        options: DaemonOptions,
+    ) -> Result<DaemonHandle, DaemonError> {
         config.validate()?;
         install_crypto_provider();
         options.paths.ensure_dirs()?;
@@ -932,7 +982,10 @@ impl Daemon {
     }
 
     /// [`Daemon::start_with`] for callers inside an async context (runs it on the blocking pool).
-    pub async fn start_async(config: AppConfig, options: DaemonOptions) -> Result<DaemonHandle, DaemonError> {
+    pub async fn start_async(
+        config: AppConfig,
+        options: DaemonOptions,
+    ) -> Result<DaemonHandle, DaemonError> {
         tokio::task::spawn_blocking(move || Self::start_with(config, options))
             .await
             .map_err(|e| DaemonError::Io(std::io::Error::other(e.to_string())))?
@@ -957,9 +1010,13 @@ impl Daemon {
         let events = bus.subscribe();
 
         // identity and hook token
-        let lan = options.lan_addrs.clone().unwrap_or_else(identity::lan_addresses);
+        let lan = options
+            .lan_addrs
+            .clone()
+            .unwrap_or_else(identity::lan_addresses);
         let identity_store = IdentityStore::new(options.paths.identity_dir.clone());
-        let now_dt = DateTime::<Utc>::from_timestamp_millis(clock.now_ms()).unwrap_or_else(Utc::now);
+        let now_dt =
+            DateTime::<Utc>::from_timestamp_millis(clock.now_ms()).unwrap_or_else(Utc::now);
         let (identity, change) = identity_store.load_or_create(&lan, now_dt)?;
         let hook_token = match read_daemon_json_token(&options.paths.daemon_json) {
             Some(t) => t,
@@ -973,7 +1030,12 @@ impl Daemon {
             Arc::new(crate::normalize::UuidV7Gen),
             Arc::new(crate::normalize::ProjectResolver::new()),
         );
-        let pipeline = Arc::new(Pipeline::new(store.clone(), clock.clone(), registry.clone(), bus.clone()));
+        let pipeline = Arc::new(Pipeline::new(
+            store.clone(),
+            clock.clone(),
+            registry.clone(),
+            bus.clone(),
+        ));
         let audit = Audit::new(store.clone(), clock.clone());
         let devices = DeviceRegistry::new(store.clone(), clock.clone());
         let pairing = PairingManager::new(store.clone(), clock.clone(), audit.clone(), bus.clone());
@@ -993,13 +1055,18 @@ impl Daemon {
         // security.md 6.3: a restarted daemon cannot answer the old hook connections
         let expired = broker.recover_on_startup().await;
         if expired > 0 {
-            tracing::info!(expired, "expired approvals left pending by the previous process");
+            tracing::info!(
+                expired,
+                "expired approvals left pending by the previous process"
+            );
         }
 
         let http_settings = Arc::new(HttpSettings::new(config.risk.force_ask_on_critical, false));
         let link_policy = Arc::new(LinkPolicy::new(false, false, 120));
         let daemon_info = Arc::new(DaemonInfo::new(0, 0));
-        let guard = Arc::new(GuardState { tokens: HookTokenVerifier::new(&hook_token) });
+        let guard = Arc::new(GuardState {
+            tokens: HookTokenVerifier::new(&hook_token),
+        });
         let http_ctx = HttpContext::new(
             pipeline.clone(),
             broker.clone(),
@@ -1032,7 +1099,12 @@ impl Daemon {
         });
 
         // the loopback collector
-        let (v4, v6) = bind_with_fallback(options.hook_port, HOOK_PORT_FALLBACKS, "hook", http::bind_loopback)?;
+        let (v4, v6) = bind_with_fallback(
+            options.hook_port,
+            HOOK_PORT_FALLBACKS,
+            "hook",
+            http::bind_loopback,
+        )?;
         let hook_port = v4.local_addr()?.port();
         daemon_info.hook_port.store(hook_port, Ordering::Relaxed);
         let router = http::router(http_ctx, guard.clone());
@@ -1075,7 +1147,10 @@ impl Daemon {
         if let Err(e) = inner.write_daemon_json() {
             tracing::warn!(error = %e, "could not write daemon.json");
         }
-        inner.audit.log(ACTOR_SYSTEM, actions::DAEMON_STARTED, None, None).await;
+        inner
+            .audit
+            .log(ACTOR_SYSTEM, actions::DAEMON_STARTED, None, None)
+            .await;
         inner.init_adapter_status(&config).await;
         inner.spawn_timers();
         inner.run_retention().await;
@@ -1120,7 +1195,12 @@ impl Inner {
         match cfg.codex.mode {
             CodexMode::Off => {
                 self.pipeline
-                    .set_adapter_status(AgentKind::Codex, AdapterStatusKind::NotConfigured, AdapterMode::None, Some("codex disabled".to_owned()))
+                    .set_adapter_status(
+                        AgentKind::Codex,
+                        AdapterStatusKind::NotConfigured,
+                        AdapterMode::None,
+                        Some("codex disabled".to_owned()),
+                    )
                     .await;
             }
             _ => {
@@ -1151,7 +1231,7 @@ impl Inner {
                         me.broker.tick().await;
                         n += 1;
                         // session timers and pairing housekeeping about once a second
-                        if n % (1000 / me.options.tick_ms.max(10)).max(1) == 0 {
+                        if n.is_multiple_of((1000 / me.options.tick_ms.max(10)).max(1)) {
                             me.pipeline.tick().await;
                             me.pairing.tick();
                         }
@@ -1164,7 +1244,8 @@ impl Inner {
         let me = self.clone();
         let mut stop = self.shutdown_tx.subscribe();
         tasks.push(tokio::spawn(async move {
-            let mut iv = tokio::time::interval(Duration::from_millis(me.options.addr_poll_ms.max(50)));
+            let mut iv =
+                tokio::time::interval(Duration::from_millis(me.options.addr_poll_ms.max(50)));
             iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             iv.tick().await;
             loop {
@@ -1178,7 +1259,8 @@ impl Inner {
         let me = self.clone();
         let mut stop = self.shutdown_tx.subscribe();
         tasks.push(tokio::spawn(async move {
-            let mut iv = tokio::time::interval(Duration::from_millis(me.options.ttl_check_ms.max(50)));
+            let mut iv =
+                tokio::time::interval(Duration::from_millis(me.options.ttl_check_ms.max(50)));
             iv.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             iv.tick().await;
             loop {
@@ -1211,7 +1293,12 @@ impl Inner {
             .settings_path()
             .map(|p| claude_install::inspect(&p))
             .unwrap_or_default();
-        let wss_addr = self.link_server.lock().await.as_ref().map(|s| s.addr.to_string());
+        let wss_addr = self
+            .link_server
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.addr.to_string());
         let risk = self.pairing.risk_accepted();
         DaemonStatus {
             running: true,
@@ -1248,7 +1335,13 @@ impl Inner {
         }
     }
 
-    fn hooks_report(&self, installed: bool, path: String, warnings: Vec<String>, timeout: Option<u32>) -> HooksReport {
+    fn hooks_report(
+        &self,
+        installed: bool,
+        path: String,
+        warnings: Vec<String>,
+        timeout: Option<u32>,
+    ) -> HooksReport {
         HooksReport {
             installed,
             path,
@@ -1257,14 +1350,23 @@ impl Inner {
         }
     }
 
-    async fn hooks_install(&self, agent: HookAgent, mode: HooksMode) -> Result<HooksReport, CommandError> {
+    async fn hooks_install(
+        &self,
+        agent: HookAgent,
+        mode: HooksMode,
+    ) -> Result<HooksReport, CommandError> {
         match agent {
             HookAgent::Codex => {
-                let steps = crate::adapters::codex::install::manual_steps_ko().into_iter().map(str::to_owned).collect();
+                let steps = crate::adapters::codex::install::manual_steps_ko()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
                 Ok(self.hooks_report(false, "~/.codex/hooks.json".to_owned(), steps, None))
             }
             HookAgent::ClaudeCode => {
-                let path = self.settings_path().ok_or(CommandError::Invalid("no home directory".to_owned()))?;
+                let path = self
+                    .settings_path()
+                    .ok_or(CommandError::Invalid("no home directory".to_owned()))?;
                 let cfg = self.config();
                 let token = lock(&self.hook_token).clone();
                 let hook_cli = self.options.hook_cli.clone();
@@ -1295,27 +1397,46 @@ impl Inner {
                     CommandError::Invalid(e.to_string())
                 })?;
                 self.audit
-                    .log(ACTOR_DESKTOP_USER, actions::HOOKS_INSTALLED, Some("claude_code".to_owned()), None)
+                    .log(
+                        ACTOR_DESKTOP_USER,
+                        actions::HOOKS_INSTALLED,
+                        Some("claude_code".to_owned()),
+                        None,
+                    )
                     .await;
                 self.apply_ttl(&cfg);
                 let warnings = report.warnings.iter().map(|w| w.message_ko(port)).collect();
-                Ok(self.hooks_report(true, report.path.display().to_string(), warnings, Some(report.permission_request_timeout_s)))
+                Ok(self.hooks_report(
+                    true,
+                    report.path.display().to_string(),
+                    warnings,
+                    Some(report.permission_request_timeout_s),
+                ))
             }
         }
     }
 
     async fn hooks_uninstall(&self, agent: HookAgent) -> Result<HooksReport, CommandError> {
         match agent {
-            HookAgent::Codex => Ok(self.hooks_report(false, "~/.codex/hooks.json".to_owned(), vec![], None)),
+            HookAgent::Codex => {
+                Ok(self.hooks_report(false, "~/.codex/hooks.json".to_owned(), vec![], None))
+            }
             HookAgent::ClaudeCode => {
-                let path = self.settings_path().ok_or(CommandError::Invalid("no home directory".to_owned()))?;
+                let path = self
+                    .settings_path()
+                    .ok_or(CommandError::Invalid("no home directory".to_owned()))?;
                 let p2 = path.clone();
                 let report = tokio::task::spawn_blocking(move || claude_install::uninstall(&p2))
                     .await
                     .map_err(|_| CommandError::Internal)?
                     .map_err(|e| CommandError::Invalid(e.to_string()))?;
                 self.audit
-                    .log(ACTOR_DESKTOP_USER, actions::HOOKS_REMOVED, Some("claude_code".to_owned()), None)
+                    .log(
+                        ACTOR_DESKTOP_USER,
+                        actions::HOOKS_REMOVED,
+                        Some("claude_code".to_owned()),
+                        None,
+                    )
                     .await;
                 self.apply_ttl(&self.config());
                 Ok(self.hooks_report(false, report.path.display().to_string(), vec![], None))
@@ -1328,11 +1449,16 @@ impl Inner {
             HookAgent::Codex => Ok(self.hooks_report(
                 false,
                 "~/.codex/hooks.json".to_owned(),
-                crate::adapters::codex::install::manual_steps_ko().into_iter().map(str::to_owned).collect(),
+                crate::adapters::codex::install::manual_steps_ko()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
                 None,
             )),
             HookAgent::ClaudeCode => {
-                let path = self.settings_path().ok_or(CommandError::Invalid("no home directory".to_owned()))?;
+                let path = self
+                    .settings_path()
+                    .ok_or(CommandError::Invalid("no home directory".to_owned()))?;
                 let i = claude_install::inspect(&path);
                 let mut warnings = Vec::new();
                 let cfg = self.config();
@@ -1344,15 +1470,22 @@ impl Inner {
                         ));
                     }
                 }
-                Ok(self.hooks_report(i.fully_installed(), path.display().to_string(), warnings, i.permission_request_timeout_s))
+                Ok(self.hooks_report(
+                    i.fully_installed(),
+                    path.display().to_string(),
+                    warnings,
+                    i.permission_request_timeout_s,
+                ))
             }
         }
     }
 
     async fn settings_set(&self, new: AppConfig) -> Result<SettingsApplied, CommandError> {
-        new.validate().map_err(|e| CommandError::Invalid(e.to_string()))?;
+        new.validate()
+            .map_err(|e| CommandError::Invalid(e.to_string()))?;
         let old = self.config();
-        new.save(&self.options.paths.config).map_err(|e| CommandError::Invalid(e.to_string()))?;
+        new.save(&self.options.paths.config)
+            .map_err(|e| CommandError::Invalid(e.to_string()))?;
         *lock(&self.config) = new.clone();
         self.apply_policy(&new);
         let mut applied = SettingsApplied::default();
@@ -1363,7 +1496,9 @@ impl Inner {
             applied.restart_required.push("codex.mode".to_owned());
         }
         if new.pairing.confirm_mode != old.pairing.confirm_mode {
-            applied.restart_required.push("pairing.confirm_mode".to_owned());
+            applied
+                .restart_required
+                .push("pairing.confirm_mode".to_owned());
         }
         if new.link.enabled != old.link.enabled {
             // the stored value is already new; make the listener follow it
@@ -1375,7 +1510,11 @@ impl Inner {
         Ok(applied)
     }
 
-    async fn revoke_device(&self, device_id: String, name_typed: String) -> Result<(), CommandError> {
+    async fn revoke_device(
+        &self,
+        device_id: String,
+        name_typed: String,
+    ) -> Result<(), CommandError> {
         let devices = self.devices.clone();
         let id = device_id.clone();
         let rec = tokio::task::spawn_blocking(move || devices.get(&id))
@@ -1400,21 +1539,32 @@ impl Inner {
         self.registry.kick_revoked(&device_id);
         self.broker.device_revoked().await;
         self.audit
-            .log(ACTOR_DESKTOP_USER, actions::DEVICE_REVOKED, Some(device_id.clone()), Some(serde_json::json!({"reason": "user_desktop"})))
+            .log(
+                ACTOR_DESKTOP_USER,
+                actions::DEVICE_REVOKED,
+                Some(device_id.clone()),
+                Some(serde_json::json!({"reason": "user_desktop"})),
+            )
             .await;
-        self.bus.emit(DaemonEvent::Device(DeviceUiEvent::Revoked { device_id }));
+        self.bus
+            .emit(DaemonEvent::Device(DeviceUiEvent::Revoked { device_id }));
         Ok(())
     }
 
     async fn regenerate_identity(&self) -> Result<(), CommandError> {
         let lan = self.lan_addrs();
-        let now = DateTime::<Utc>::from_timestamp_millis(self.clock.now_ms()).unwrap_or_else(Utc::now);
+        let now =
+            DateTime::<Utc>::from_timestamp_millis(self.clock.now_ms()).unwrap_or_else(Utc::now);
         let fresh = self.identity_store.regenerate(&lan, now).map_err(|e| {
             tracing::error!(error = %e, "could not regenerate the identity");
             CommandError::Internal
         })?;
         *lock(&self.identity) = fresh.clone();
-        lock(&self.link_ctx.pc).pc_id = fresh.pc_id();
+        self.link_ctx
+            .pc
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .pc_id = fresh.pc_id();
         // every phone must pair again: revoke them all
         let list = self.devices.list().map_err(|_| CommandError::Internal)?;
         for d in list.into_iter().filter(|d| d.revoked_at.is_none()) {
@@ -1425,8 +1575,16 @@ impl Inner {
         if let Some(server) = self.link_server.lock().await.as_ref() {
             let _ = server.reload_identity(&fresh);
         }
-        self.store_identity_row(Some(IdentityChange::Regenerated)).await;
-        self.audit.log(ACTOR_DESKTOP_USER, actions::IDENTITY_REGENERATED, None, None).await;
+        self.store_identity_row(Some(IdentityChange::Regenerated))
+            .await;
+        self.audit
+            .log(
+                ACTOR_DESKTOP_USER,
+                actions::IDENTITY_REGENERATED,
+                None,
+                None,
+            )
+            .await;
         Ok(())
     }
 
@@ -1434,9 +1592,12 @@ impl Inner {
         let fresh = generate_hook_token().map_err(|_| CommandError::Internal)?;
         self.guard.tokens.rotate(&fresh);
         *lock(&self.hook_token) = fresh;
-        self.write_daemon_json().map_err(|_| CommandError::Internal)?;
+        self.write_daemon_json()
+            .map_err(|_| CommandError::Internal)?;
         self.store_identity_row(None).await;
-        self.audit.log(ACTOR_DESKTOP_USER, actions::HOOK_TOKEN_ROTATED, None, None).await;
+        self.audit
+            .log(ACTOR_DESKTOP_USER, actions::HOOK_TOKEN_ROTATED, None, None)
+            .await;
         Ok(())
     }
 
@@ -1444,7 +1605,8 @@ impl Inner {
         let _ = self.shutdown_tx.send(true);
         // no hook may hang: pending approvals go to the local prompt (empty replies)
         self.broker.shutdown().await;
-        self.stop_link(ByeReason::Shutdown, true, "PC 앱이 종료돼요", 1012).await;
+        self.stop_link(ByeReason::Shutdown, true, "PC 앱이 종료돼요", 1012)
+            .await;
         let server = lock(&self.http_server).take();
         if let Some(server) = server {
             server.shutdown(Duration::from_secs(2)).await;
@@ -1488,7 +1650,9 @@ impl Inner {
                     };
                     let started = self.pairing.start(&info).map_err(CommandError::from);
                     if started.is_ok() {
-                        self.audit.log(ACTOR_DESKTOP_USER, actions::PAIRING_STARTED, None, None).await;
+                        self.audit
+                            .log(ACTOR_DESKTOP_USER, actions::PAIRING_STARTED, None, None)
+                            .await;
                     }
                     started
                 };
@@ -1501,8 +1665,16 @@ impl Inner {
                     Err(CommandError::NotFound("pairing"))
                 });
             }
-            DaemonCommand::PairingConfirm { pairing_id, approve, reply } => {
-                let _ = reply.send(self.pairing.confirm(&pairing_id, approve).map_err(CommandError::from));
+            DaemonCommand::PairingConfirm {
+                pairing_id,
+                approve,
+                reply,
+            } => {
+                let _ = reply.send(
+                    self.pairing
+                        .confirm(&pairing_id, approve)
+                        .map_err(CommandError::from),
+                );
             }
             DaemonCommand::DevicesList { reply } => {
                 let devices = self.devices.clone();
@@ -1514,13 +1686,21 @@ impl Inner {
                     .ok_or(CommandError::Internal);
                 let _ = reply.send(r);
             }
-            DaemonCommand::DeviceRevoke { device_id, name_typed, reply } => {
+            DaemonCommand::DeviceRevoke {
+                device_id,
+                name_typed,
+                reply,
+            } => {
                 let _ = reply.send(self.revoke_device(device_id, name_typed).await);
             }
             DaemonCommand::SessionsList { reply } => {
                 let _ = reply.send(Ok(self.pipeline.snapshot_sessions(64).await));
             }
-            DaemonCommand::EventsRecent { session_key, limit, reply } => {
+            DaemonCommand::EventsRecent {
+                session_key,
+                limit,
+                reply,
+            } => {
                 let r = self
                     .db(move |s| {
                         s.events_page(&crate::store::EventsQuery {
@@ -1546,10 +1726,23 @@ impl Inner {
                     Err(CommandError::NotFound("approval"))
                 });
             }
-            DaemonCommand::ApprovalDecideLocal { request_id, decision, tool_input_sha256, confirm_ack, reason, reply } => {
+            DaemonCommand::ApprovalDecideLocal {
+                request_id,
+                decision,
+                tool_input_sha256,
+                confirm_ack,
+                reason,
+                reply,
+            } => {
                 let out = self
                     .broker
-                    .decide_local(&request_id, decision, &tool_input_sha256, confirm_ack, reason)
+                    .decide_local(
+                        &request_id,
+                        decision,
+                        &tool_input_sha256,
+                        confirm_ack,
+                        reason,
+                    )
                     .await;
                 let _ = reply.send(Ok(out));
             }
@@ -1558,7 +1751,11 @@ impl Inner {
                 self.audit
                     .log(
                         ACTOR_DESKTOP_USER,
-                        if paused { actions::REMOTE_APPROVAL_PAUSED } else { actions::REMOTE_APPROVAL_RESUMED },
+                        if paused {
+                            actions::REMOTE_APPROVAL_PAUSED
+                        } else {
+                            actions::REMOTE_APPROVAL_RESUMED
+                        },
                         None,
                         None,
                     )
@@ -1663,40 +1860,66 @@ impl DaemonHandle {
 
     /// `risk_accept("R1")`.
     pub async fn risk_accept(&self) -> Result<(), CommandError> {
-        self.request(|reply| DaemonCommand::RiskAccept { risk_id: "R1".to_owned(), reply }).await
+        self.request(|reply| DaemonCommand::RiskAccept {
+            risk_id: "R1".to_owned(),
+            reply,
+        })
+        .await
     }
 
     /// `pairing_start`.
     pub async fn pairing_start(&self) -> Result<PairingStarted, CommandError> {
-        self.request(|reply| DaemonCommand::PairingStart { reply }).await
+        self.request(|reply| DaemonCommand::PairingStart { reply })
+            .await
     }
 
     /// `pairing_confirm`.
-    pub async fn pairing_confirm(&self, pairing_id: &str, approve: bool) -> Result<(), CommandError> {
+    pub async fn pairing_confirm(
+        &self,
+        pairing_id: &str,
+        approve: bool,
+    ) -> Result<(), CommandError> {
         let pairing_id = pairing_id.to_owned();
-        self.request(|reply| DaemonCommand::PairingConfirm { pairing_id, approve, reply }).await
+        self.request(|reply| DaemonCommand::PairingConfirm {
+            pairing_id,
+            approve,
+            reply,
+        })
+        .await
     }
 
     /// `devices_list`.
     pub async fn devices_list(&self) -> Result<Vec<DeviceSummary>, CommandError> {
-        self.request(|reply| DaemonCommand::DevicesList { reply }).await
+        self.request(|reply| DaemonCommand::DevicesList { reply })
+            .await
     }
 
     /// `device_revoke`.
-    pub async fn device_revoke(&self, device_id: &str, name_typed: &str) -> Result<(), CommandError> {
+    pub async fn device_revoke(
+        &self,
+        device_id: &str,
+        name_typed: &str,
+    ) -> Result<(), CommandError> {
         let (device_id, name_typed) = (device_id.to_owned(), name_typed.to_owned());
-        self.request(|reply| DaemonCommand::DeviceRevoke { device_id, name_typed, reply }).await
+        self.request(|reply| DaemonCommand::DeviceRevoke {
+            device_id,
+            name_typed,
+            reply,
+        })
+        .await
     }
 
     /// `approvals_pending`.
     pub async fn approvals_pending(&self) -> Result<Vec<PendingOverview>, CommandError> {
-        self.request(|reply| DaemonCommand::ApprovalsPending { reply }).await
+        self.request(|reply| DaemonCommand::ApprovalsPending { reply })
+            .await
     }
 
     /// `approval_handoff_local`.
     pub async fn approval_handoff_local(&self, request_id: &str) -> Result<(), CommandError> {
         let request_id = request_id.to_owned();
-        self.request(|reply| DaemonCommand::ApprovalHandoffLocal { request_id, reply }).await
+        self.request(|reply| DaemonCommand::ApprovalHandoffLocal { request_id, reply })
+            .await
     }
 
     /// `approval_decide_local`.
@@ -1722,43 +1945,64 @@ impl DaemonHandle {
 
     /// `remote_approval_pause` / `_resume`.
     pub async fn remote_approval_pause(&self, paused: bool) -> Result<(), CommandError> {
-        self.request(|reply| DaemonCommand::RemoteApprovalPause { paused, reply }).await
+        self.request(|reply| DaemonCommand::RemoteApprovalPause { paused, reply })
+            .await
     }
 
     /// `link_set_enabled`.
     pub async fn link_set_enabled(&self, enabled: bool) -> Result<(), CommandError> {
-        self.request(|reply| DaemonCommand::LinkSetEnabled { enabled, reply }).await
+        self.request(|reply| DaemonCommand::LinkSetEnabled { enabled, reply })
+            .await
     }
 
     /// `hooks_install` for Claude Code.
     pub async fn hooks_install(&self, mode: HooksMode) -> Result<HooksReport, CommandError> {
-        self.request(|reply| DaemonCommand::HooksInstall { agent: HookAgent::ClaudeCode, mode, reply }).await
+        self.request(|reply| DaemonCommand::HooksInstall {
+            agent: HookAgent::ClaudeCode,
+            mode,
+            reply,
+        })
+        .await
     }
 
     /// `hooks_uninstall` for Claude Code.
     pub async fn hooks_uninstall(&self) -> Result<HooksReport, CommandError> {
-        self.request(|reply| DaemonCommand::HooksUninstall { agent: HookAgent::ClaudeCode, reply }).await
+        self.request(|reply| DaemonCommand::HooksUninstall {
+            agent: HookAgent::ClaudeCode,
+            reply,
+        })
+        .await
     }
 
     /// `settings_get`.
     pub async fn settings_get(&self) -> Result<AppConfig, CommandError> {
-        self.request(|reply| DaemonCommand::SettingsGet { reply }).await
+        self.request(|reply| DaemonCommand::SettingsGet { reply })
+            .await
     }
 
     /// `settings_set`.
     pub async fn settings_set(&self, config: AppConfig) -> Result<SettingsApplied, CommandError> {
-        self.request(|reply| DaemonCommand::SettingsSet { config: Box::new(config), reply }).await
+        self.request(|reply| DaemonCommand::SettingsSet {
+            config: Box::new(config),
+            reply,
+        })
+        .await
     }
 
     /// Graceful shutdown (async).
     pub async fn shutdown(&self) -> Result<(), CommandError> {
-        self.request(|reply| DaemonCommand::Shutdown { reply }).await
+        self.request(|reply| DaemonCommand::Shutdown { reply })
+            .await
     }
 
     /// Graceful shutdown for synchronous callers (the Tauri `ExitRequested` handler): waits for it to finish.
     pub fn shutdown_blocking(&self) {
         let (tx, rx) = oneshot::channel();
-        if self.cmds.blocking_send(DaemonCommand::Shutdown { reply: tx }).is_ok() {
+        if self
+            .cmds
+            .blocking_send(DaemonCommand::Shutdown { reply: tx })
+            .is_ok()
+        {
             let _ = rx.blocking_recv();
         }
     }

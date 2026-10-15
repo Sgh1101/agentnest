@@ -249,16 +249,12 @@ impl IdentityStore {
         self.dir.join("cert-meta.json")
     }
 
-    fn write_cert_files(
-        &self,
-        cert_pem: &str,
-        meta: &CertMeta,
-    ) -> Result<(), IdentityError> {
+    fn write_cert_files(&self, cert_pem: &str, meta: &CertMeta) -> Result<(), IdentityError> {
         std::fs::create_dir_all(&self.dir)?;
         // The certificate is public, but it is written through the same helper to keep one write path.
         keywrap::write_user_only(&self.cert_path(), cert_pem.as_bytes(), self.perms.as_ref())?;
-        let json = serde_json::to_vec_pretty(meta)
-            .map_err(|e| IdentityError::Corrupt(e.to_string()))?;
+        let json =
+            serde_json::to_vec_pretty(meta).map_err(|e| IdentityError::Corrupt(e.to_string()))?;
         keywrap::write_user_only(&self.meta_path(), &json, self.perms.as_ref())?;
         Ok(())
     }
@@ -529,7 +525,9 @@ mod tests {
         assert_eq!(b64.len(), 44);
         use base64::Engine;
         assert_eq!(
-            base64::engine::general_purpose::STANDARD.decode(b64).unwrap(),
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap(),
             sha256(id.spki_der()).to_vec()
         );
         assert!(id.pc_id().starts_with("pc_"));
@@ -547,7 +545,9 @@ mod tests {
         let store = IdentityStore::new(dir.path().join("identity"));
         let sans = ips(&["192.168.0.10"]);
         let (a, _) = store.load_or_create(&sans, now()).unwrap();
-        let (b, change) = store.load_or_create(&sans, now() + Duration::days(1)).unwrap();
+        let (b, change) = store
+            .load_or_create(&sans, now() + Duration::days(1))
+            .unwrap();
         assert_eq!(change, IdentityChange::Loaded);
         assert_eq!(a.spki_pin(), b.spki_pin());
         assert_eq!(a.cert_der(), b.cert_der());
@@ -557,7 +557,9 @@ mod tests {
     fn an_address_change_reissues_the_certificate_with_the_same_key() {
         let dir = tempfile::tempdir().unwrap();
         let store = IdentityStore::new(dir.path().join("identity"));
-        let (a, _) = store.load_or_create(&ips(&["192.168.0.10"]), now()).unwrap();
+        let (a, _) = store
+            .load_or_create(&ips(&["192.168.0.10"]), now())
+            .unwrap();
         // via load_or_create (restart on another network)
         let (b, change) = store
             .load_or_create(&ips(&["192.168.0.10", "172.16.1.5"]), now())
@@ -573,7 +575,10 @@ mod tests {
             .expect("sans changed");
         assert_eq!(c.spki_pin(), a.spki_pin());
         assert_eq!(c.sans(), ["10.0.0.7"]);
-        assert!(store.refresh(&c, &ips(&["10.0.0.7"]), now()).unwrap().is_none());
+        assert!(store
+            .refresh(&c, &ips(&["10.0.0.7"]), now())
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -586,7 +591,9 @@ mod tests {
         let b = store.refresh(&a, &sans, later).unwrap().expect("renew");
         assert_eq!(a.spki_pin(), b.spki_pin());
         assert!(b.not_after() > a.not_after());
-        let (c, change) = store.load_or_create(&sans, later + Duration::days(1)).unwrap();
+        let (c, change) = store
+            .load_or_create(&sans, later + Duration::days(1))
+            .unwrap();
         assert_eq!(change, IdentityChange::Loaded, "the renewed cert is fresh");
         assert_eq!(c.spki_pin(), a.spki_pin());
         // 31 days before expiry is not yet renewed
@@ -655,7 +662,9 @@ mod tests {
     fn the_private_key_text_never_reaches_debug_output() {
         let dir = tempfile::tempdir().unwrap();
         let store = IdentityStore::new(dir.path().join("identity"));
-        let (a, _) = store.load_or_create(&ips(&["192.168.0.10"]), now()).unwrap();
+        let (a, _) = store
+            .load_or_create(&ips(&["192.168.0.10"]), now())
+            .unwrap();
         let shown = format!("{a:?}");
         assert!(!shown.contains("PRIVATE"));
         assert!(!shown.contains("BEGIN"));

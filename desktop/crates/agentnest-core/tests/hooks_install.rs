@@ -40,7 +40,10 @@ fn the_opt_in_variant_differs_only_by_on_failure_block_on_permission_request() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
     install(&path, &opts(true)).unwrap();
-    assert_eq!(read_json(&path), golden("golden_fresh_http_daemon_down_deny.json"));
+    assert_eq!(
+        read_json(&path),
+        golden("golden_fresh_http_daemon_down_deny.json")
+    );
 }
 
 #[test]
@@ -59,7 +62,12 @@ fn no_installed_hook_has_on_failure_by_default_or_continue_only() {
     }
     // and nothing in the golden carries a scope-expanding key
     let text = g.to_string();
-    for forbidden in ["updatedInput", "updatedPermissions", "allow_for_session", "disableAllHooks"] {
+    for forbidden in [
+        "updatedInput",
+        "updatedPermissions",
+        "allow_for_session",
+        "disableAllHooks",
+    ] {
         assert!(!text.contains(forbidden), "{forbidden}");
     }
 }

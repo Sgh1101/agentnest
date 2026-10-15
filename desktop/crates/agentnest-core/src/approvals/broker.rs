@@ -32,22 +32,22 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use agentnest_adapter_api::{
-    AbandonReason, AgentCloseReason, ApprovalDraft, ApprovalReply, ApprovalResponder, ApplyProof,
+    AbandonReason, AgentCloseReason, ApplyProof, ApprovalDraft, ApprovalReply, ApprovalResponder,
     NativeBinding,
 };
 use agentnest_protocol::canonical::tool_input_sha256;
 use agentnest_protocol::qr::b64_encode;
 use agentnest_protocol::{
     AgentKind, ApprovalOutcome, ApprovalRequest, ApprovalResolvedPayload, Decision,
-    DecisionResultReason, Delivery, EventKind, LocalPrompt, ObservedResult,
-    ProjectRef, RemoteApproval, ResolvedBy, Risk, RiskLevel, Secret, SourceChannel,
+    DecisionResultReason, Delivery, EventKind, LocalPrompt, ObservedResult, ProjectRef,
+    RemoteApproval, ResolvedBy, Risk, RiskLevel, Secret, SourceChannel,
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::approvals::card::{
-    build_details, deny_message, decision_result_message_ko, purpose, resolved_message_ko,
+    build_details, decision_result_message_ko, deny_message, purpose, resolved_message_ko,
     risk_level_str,
 };
 use crate::approvals::correlator::{Correlator, HookPhase, Observation, TrackedOutcome};
@@ -532,15 +532,16 @@ impl Broker {
             responder.abandon(AbandonReason::InternalError).await;
             return OpenOutcome::Failed;
         };
-        let summary = crate::summarize::ko::summarize_tool(&crate::summarize::ko::ToolObservation {
-            agent_kind: draft.agent_kind,
-            tool_name: &draft.tool_name,
-            tool_input: &draft.tool_input,
-            cwd: draft.cwd.as_deref(),
-            command_class: None,
-            file_exists: None,
-            permission_request: true,
-        });
+        let summary =
+            crate::summarize::ko::summarize_tool(&crate::summarize::ko::ToolObservation {
+                agent_kind: draft.agent_kind,
+                tool_name: &draft.tool_name,
+                tool_input: &draft.tool_input,
+                cwd: draft.cwd.as_deref(),
+                command_class: None,
+                file_exists: None,
+                permission_request: true,
+            });
         let details = build_details(&draft);
         let ttl_ms = self.deps.settings.ttl_ms();
         let request_id = format!("ar_{}", uuid::Uuid::now_v7());
@@ -592,7 +593,8 @@ impl Broker {
             permission_mode: draft.permission_mode.clone(),
             local_prompt: LocalPrompt::Unverified,
         };
-        let binding_json = serde_json::to_string(&draft.binding.ids).unwrap_or_else(|_| "{}".into());
+        let binding_json =
+            serde_json::to_string(&draft.binding.ids).unwrap_or_else(|_| "{}".into());
         let new = NewApproval {
             request_id: request_id.clone(),
             nonce: nonce.to_vec(),
@@ -628,7 +630,10 @@ impl Broker {
                 return OpenOutcome::Failed;
             }
         };
-        if let crate::store::InsertApproval::Merged { request_id: existing } = inserted {
+        if let crate::store::InsertApproval::Merged {
+            request_id: existing,
+        } = inserted
+        {
             // A duplicate hook of the same call: it shares the existing card, but only while that card is still open.
             if route != Route::Remote || !st.pending.contains_key(&existing) {
                 drop(st);
@@ -644,7 +649,9 @@ impl Broker {
                     responder,
                 });
             }
-            return OpenOutcome::Merged { request_id: existing };
+            return OpenOutcome::Merged {
+                request_id: existing,
+            };
         }
 
         tracing::info!(
@@ -723,7 +730,10 @@ impl Broker {
             };
         }
         // the card goes to every online phone through the stream
-        self.deps.pipeline.publish_approval_request(&entry.card).await;
+        self.deps
+            .pipeline
+            .publish_approval_request(&entry.card)
+            .await;
         st.pending.insert(request_id.clone(), entry);
         OpenOutcome::Opened { request_id }
     }
@@ -849,35 +859,40 @@ impl Broker {
         let Some(mut entry) = st.pending.remove(request_id) else {
             return false;
         };
-        let (status, outcome, resolved_by_db, resolved_by, abandon, audit_actor, audit_action) = match how {
-            Closure::Expired => (
-                CloseStatus::Expired,
-                ApprovalOutcome::Expired,
-                "timeout",
-                ResolvedBy::Timeout,
-                AbandonReason::Expired,
-                "daemon",
-                "expired",
-            ),
-            Closure::HandOff { by_desktop, reason } => (
-                CloseStatus::HandedOffLocal,
-                ApprovalOutcome::HandedOffLocal,
-                if by_desktop { "desktop" } else { "system" },
-                if by_desktop { ResolvedBy::Desktop } else { ResolvedBy::System },
-                reason,
-                if by_desktop { "desktop" } else { "daemon" },
-                "handed_off",
-            ),
-            Closure::Superseded => (
-                CloseStatus::Superseded,
-                ApprovalOutcome::Superseded,
-                "agent",
-                ResolvedBy::Agent,
-                AbandonReason::Superseded,
-                "agent",
-                "superseded",
-            ),
-        };
+        let (status, outcome, resolved_by_db, resolved_by, abandon, audit_actor, audit_action) =
+            match how {
+                Closure::Expired => (
+                    CloseStatus::Expired,
+                    ApprovalOutcome::Expired,
+                    "timeout",
+                    ResolvedBy::Timeout,
+                    AbandonReason::Expired,
+                    "daemon",
+                    "expired",
+                ),
+                Closure::HandOff { by_desktop, reason } => (
+                    CloseStatus::HandedOffLocal,
+                    ApprovalOutcome::HandedOffLocal,
+                    if by_desktop { "desktop" } else { "system" },
+                    if by_desktop {
+                        ResolvedBy::Desktop
+                    } else {
+                        ResolvedBy::System
+                    },
+                    reason,
+                    if by_desktop { "desktop" } else { "daemon" },
+                    "handed_off",
+                ),
+                Closure::Superseded => (
+                    CloseStatus::Superseded,
+                    ApprovalOutcome::Superseded,
+                    "agent",
+                    ResolvedBy::Agent,
+                    AbandonReason::Superseded,
+                    "agent",
+                    "superseded",
+                ),
+            };
         let now = format_ms(self.now_ms());
         let rid = request_id.to_owned();
         let result = self
@@ -900,8 +915,16 @@ impl Broker {
         for h in std::mem::take(&mut entry.handles) {
             h.responder.abandon(abandon).await;
         }
-        self.publish_resolved(st, &entry, outcome, resolved_by, None, Delivery::NotDelivered, true)
-            .await;
+        self.publish_resolved(
+            st,
+            &entry,
+            outcome,
+            resolved_by,
+            None,
+            Delivery::NotDelivered,
+            true,
+        )
+        .await;
         true
     }
 
@@ -953,7 +976,9 @@ impl Broker {
         }
         let Some((id, idx)) = found else { return };
         let empty = {
-            let Some(entry) = st.pending.get_mut(&id) else { return };
+            let Some(entry) = st.pending.get_mut(&id) else {
+                return;
+            };
             let h = entry.handles.remove(idx);
             h.responder.abandon(AbandonReason::Superseded).await;
             entry.handles.is_empty()
@@ -1019,20 +1044,23 @@ impl Broker {
     pub async fn device_revoked(&self) {
         let mut st = self.state.lock().await;
         if self.deps.registry.online_count() == 0 && !st.pending.is_empty() {
-            self.handoff_all(&mut st, false, AbandonReason::DeviceRevoked).await;
+            self.handoff_all(&mut st, false, AbandonReason::DeviceRevoked)
+                .await;
         }
     }
 
     /// `link.enabled=false`: every pending request ends as `handed_off_local` (resolved by the desktop).
     pub async fn link_disabled(&self) -> usize {
         let mut st = self.state.lock().await;
-        self.handoff_all(&mut st, true, AbandonReason::LinkDisabled).await
+        self.handoff_all(&mut st, true, AbandonReason::LinkDisabled)
+            .await
     }
 
     /// Daemon shutdown: every pending request is handed to the local prompt (empty replies) so no hook hangs.
     pub async fn shutdown(&self) -> usize {
         let mut st = self.state.lock().await;
-        self.handoff_all(&mut st, false, AbandonReason::DaemonShutdown).await
+        self.handoff_all(&mut st, false, AbandonReason::DaemonShutdown)
+            .await
     }
 
     /// Pauses or resumes remote approval. While paused new requests go straight to the local prompt and phone decisions
@@ -1080,11 +1108,16 @@ impl Broker {
     /// The card was written to the socket of `device_id` (first time per device is audited as `sent_to_phone`).
     pub async fn mark_sent(&self, request_id: &str, device_id: &str) {
         let mut st = self.state.lock().await;
-        let Some(entry) = st.pending.get_mut(request_id) else { return };
+        let Some(entry) = st.pending.get_mut(request_id) else {
+            return;
+        };
         let first = !entry.delivery.contains_key(device_id);
         if first {
-            entry.delivery.entry(device_id.to_owned()).or_default().sent_at =
-                Some(format_ms(self.now_ms()));
+            entry
+                .delivery
+                .entry(device_id.to_owned())
+                .or_default()
+                .sent_at = Some(format_ms(self.now_ms()));
             if let Some(entry) = st.pending.get(request_id) {
                 self.persist_delivery(entry).await;
             }
@@ -1104,7 +1137,9 @@ impl Broker {
     pub async fn mark_acked(&self, request_ids: &[String], device_id: &str) {
         let mut st = self.state.lock().await;
         for id in request_ids {
-            let Some(entry) = st.pending.get_mut(id) else { continue };
+            let Some(entry) = st.pending.get_mut(id) else {
+                continue;
+            };
             let t = entry.delivery.entry(device_id.to_owned()).or_default();
             if t.acked_at.is_some() {
                 continue;
@@ -1128,7 +1163,9 @@ impl Broker {
     /// The phone showed the card (`approval_seen`).
     pub async fn mark_seen(&self, request_id: &str, device_id: &str) {
         let mut st = self.state.lock().await;
-        let Some(entry) = st.pending.get_mut(request_id) else { return };
+        let Some(entry) = st.pending.get_mut(request_id) else {
+            return;
+        };
         let t = entry.delivery.entry(device_id.to_owned()).or_default();
         if t.seen_at.is_some() {
             return;
@@ -1309,7 +1346,10 @@ impl Broker {
             decision: input.decision.as_str().to_owned(),
             decided_at: input.decided_at.clone().unwrap_or_else(|| now.clone()),
             received_at: now.clone(),
-            auth_method: input.auth.as_ref().map(|a| auth_method_str(a.method).to_owned()),
+            auth_method: input
+                .auth
+                .as_ref()
+                .map(|a| auth_method_str(a.method).to_owned()),
             extra_confirmation: input
                 .extra_confirmation
                 .as_ref()
@@ -1349,7 +1389,8 @@ impl Broker {
             tracing::warn!(error = %e, "could not record a refused decision");
         }
         if rejection.expire_request {
-            self.close_entry(st, &input.request_id, Closure::Expired).await;
+            self.close_entry(st, &input.request_id, Closure::Expired)
+                .await;
         }
         let agent = st
             .pending
@@ -1500,7 +1541,10 @@ impl Broker {
             actor: input.source.actor(),
             decision: input.decision.as_str().to_owned(),
             decided_at: input.decided_at.clone().unwrap_or_else(|| now.clone()),
-            auth_method: input.auth.as_ref().map(|a| auth_method_str(a.method).to_owned()),
+            auth_method: input
+                .auth
+                .as_ref()
+                .map(|a| auth_method_str(a.method).to_owned()),
             extra_confirmation: input
                 .extra_confirmation
                 .as_ref()
@@ -1516,17 +1560,25 @@ impl Broker {
                 .to_string(),
             ),
         };
-        match self.db(move |s| s.resolve_approval_conditional(resolve)).await {
+        match self
+            .db(move |s| s.resolve_approval_conditional(resolve))
+            .await
+        {
             Ok(ResolveOutcome::Applied) => {}
             Ok(ResolveOutcome::NotApplied(why)) => {
                 let reason = match why {
-                    crate::store::NotApplied::UnknownRequest => DecisionResultReason::UnknownRequest,
-                    crate::store::NotApplied::AlreadyResolved => DecisionResultReason::AlreadyResolved,
+                    crate::store::NotApplied::UnknownRequest => {
+                        DecisionResultReason::UnknownRequest
+                    }
+                    crate::store::NotApplied::AlreadyResolved => {
+                        DecisionResultReason::AlreadyResolved
+                    }
                     crate::store::NotApplied::Expired => DecisionResultReason::Expired,
                 };
                 // the attempt is already recorded by the store transaction
                 if reason == DecisionResultReason::Expired {
-                    self.close_entry(&mut st, &input.request_id, Closure::Expired).await;
+                    self.close_entry(&mut st, &input.request_id, Closure::Expired)
+                        .await;
                 }
                 let agent = AgentKind::Other;
                 return DecisionOutcome {
@@ -1636,7 +1688,9 @@ impl Broker {
 #[derive(Clone, Copy)]
 enum Closure {
     Expired,
-    HandOff { by_desktop: bool, reason: AbandonReason },
+    HandOff {
+        by_desktop: bool,
+        reason: AbandonReason,
+    },
     Superseded,
 }
-

@@ -99,6 +99,7 @@ impl std::fmt::Debug for IssuedDevice {
 
 /// Result of [`DeviceRegistry::authenticate`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum AuthOutcome {
     /// The device and token are valid and the device is not revoked.
     Ok(DeviceRecord),
@@ -116,7 +117,9 @@ pub fn token_hash(raw_token: &[u8]) -> [u8; 32] {
 /// Generates a token: `(base64url text for the phone, hash for the database)`.
 pub fn generate_token() -> Result<(DeviceToken, [u8; 32]), DeviceError> {
     let mut raw = [0u8; SECRET_LEN];
-    SystemRandom::new().fill(&mut raw).map_err(|_| DeviceError::Rng)?;
+    SystemRandom::new()
+        .fill(&mut raw)
+        .map_err(|_| DeviceError::Rng)?;
     let text = b64url_encode(&raw);
     let hash = token_hash(&raw);
     raw.fill(0);
@@ -126,11 +129,14 @@ pub fn generate_token() -> Result<(DeviceToken, [u8; 32]), DeviceError> {
 /// `dev_` + 16 random bytes as lowercase hex.
 pub fn generate_device_id() -> Result<String, DeviceError> {
     let mut raw = [0u8; 16];
-    SystemRandom::new().fill(&mut raw).map_err(|_| DeviceError::Rng)?;
+    SystemRandom::new()
+        .fill(&mut raw)
+        .map_err(|_| DeviceError::Rng)?;
     Ok(format!("dev_{}", hex::encode(raw)))
 }
 
-const DEVICE_COLUMNS: &str = "device_id, name, platform, model, os_version, app_version, paired_at, last_seen_at, \
+const DEVICE_COLUMNS: &str =
+    "device_id, name, platform, model, os_version, app_version, paired_at, last_seen_at, \
 last_ip_masked, last_acked_seq, revoked_at, revoked_reason";
 
 fn device_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceRecord> {
@@ -290,7 +296,11 @@ impl DeviceRegistry {
 
     /// Records `last_seen_at` and the masked source address.
     pub fn touch_seen(&self, device_id: &str, ip_masked: Option<&str>) -> Result<(), DeviceError> {
-        let (id, ip, now) = (device_id.to_owned(), ip_masked.map(str::to_owned), self.now());
+        let (id, ip, now) = (
+            device_id.to_owned(),
+            ip_masked.map(str::to_owned),
+            self.now(),
+        );
         self.store.run(move |c| {
             c.execute(
                 "UPDATE devices SET last_seen_at=?1, last_ip_masked=COALESCE(?2, last_ip_masked) WHERE device_id=?3",
@@ -366,10 +376,7 @@ impl DeviceRegistry {
     pub async fn run<T: Send + 'static>(
         &self,
         f: impl FnOnce(&DeviceRegistry) -> T + Send + 'static,
-    ) -> T
-    where
-        T: Send + 'static,
-    {
+    ) -> T {
         let me = self.clone();
         match tokio::task::spawn_blocking(move || f(&me)).await {
             Ok(v) => v,
@@ -387,7 +394,11 @@ mod tests {
     fn registry() -> (DeviceRegistry, Arc<ManualClock>, Store) {
         let store = Store::open_in_memory().unwrap();
         let clock = Arc::new(ManualClock::new(1_792_055_553_120));
-        (DeviceRegistry::new(store.clone(), clock.clone()), clock, store)
+        (
+            DeviceRegistry::new(store.clone(), clock.clone()),
+            clock,
+            store,
+        )
     }
 
     fn phone(name: &str) -> NewDevice {
@@ -425,7 +436,7 @@ mod tests {
         assert_eq!(hash, token_hash(&raw).to_vec());
         assert_ne!(hash, raw, "the raw token is not stored");
         assert!(!all_text.contains(&token_text));
-        assert_eq!(format!("{issued:?}").contains(&token_text), false);
+        assert!(!format!("{issued:?}").contains(&token_text));
     }
 
     #[test]
@@ -442,14 +453,22 @@ mod tests {
         bad.pop();
         bad.push(if good.ends_with('A') { 'B' } else { 'A' });
         for t in [bad.as_str(), "", "!!!", "AAAA", &good[..10]] {
-            assert_eq!(reg.authenticate(&issued.device_id, t).unwrap(), AuthOutcome::Failed, "{t}");
+            assert_eq!(
+                reg.authenticate(&issued.device_id, t).unwrap(),
+                AuthOutcome::Failed,
+                "{t}"
+            );
         }
         // unknown device with a well formed token
-        assert_eq!(reg.authenticate("dev_unknown", &good).unwrap(), AuthOutcome::Failed);
+        assert_eq!(
+            reg.authenticate("dev_unknown", &good).unwrap(),
+            AuthOutcome::Failed
+        );
         // a token of another device does not work for this one
         let other = reg.register(phone("Pixel")).unwrap();
         assert_eq!(
-            reg.authenticate(&issued.device_id, other.token.expose()).unwrap(),
+            reg.authenticate(&issued.device_id, other.token.expose())
+                .unwrap(),
             AuthOutcome::Failed
         );
     }
@@ -462,9 +481,15 @@ mod tests {
         assert!(reg.is_active(&issued.device_id));
         assert!(reg.revoke(&issued.device_id, "user_desktop").unwrap());
         assert!(!reg.is_active(&issued.device_id));
-        assert_eq!(reg.authenticate(&issued.device_id, &tok).unwrap(), AuthOutcome::Revoked);
+        assert_eq!(
+            reg.authenticate(&issued.device_id, &tok).unwrap(),
+            AuthOutcome::Revoked
+        );
         // revoked devices only reveal "revoked" to the holder of a valid token
-        assert_eq!(reg.authenticate(&issued.device_id, "AAAA").unwrap(), AuthOutcome::Failed);
+        assert_eq!(
+            reg.authenticate(&issued.device_id, "AAAA").unwrap(),
+            AuthOutcome::Failed
+        );
         // second revoke is a no-op, the reason is kept
         assert!(!reg.revoke(&issued.device_id, "user_phone").unwrap());
         let rec = reg.get(&issued.device_id).unwrap().unwrap();
@@ -498,7 +523,10 @@ mod tests {
         let mut new = phone("Galaxy");
         new.pubkey_spki_der = Some(vec![1, 2, 3, 4]);
         let first = reg.register(new.clone()).unwrap();
-        assert!(matches!(reg.register(new.clone()), Err(DeviceError::DuplicateKey)));
+        assert!(matches!(
+            reg.register(new.clone()),
+            Err(DeviceError::DuplicateKey)
+        ));
         reg.revoke(&first.device_id, "user_desktop").unwrap();
         let second = reg.register(new).unwrap();
         assert_ne!(first.device_id, second.device_id);
@@ -516,7 +544,14 @@ mod tests {
         assert_eq!(revoked, vec![a.device_id.clone()]);
         assert!(!reg.is_active(&a.device_id));
         assert!(reg.is_active(&b.device_id));
-        assert_eq!(reg.get(&a.device_id).unwrap().unwrap().revoked_reason.as_deref(), Some("inactive_90d"));
+        assert_eq!(
+            reg.get(&a.device_id)
+                .unwrap()
+                .unwrap()
+                .revoked_reason
+                .as_deref(),
+            Some("inactive_90d")
+        );
     }
 
     #[test]

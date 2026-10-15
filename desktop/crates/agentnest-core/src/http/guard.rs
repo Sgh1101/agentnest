@@ -139,10 +139,21 @@ mod tests {
 
     #[test]
     fn host_header_must_be_a_loopback_literal() {
-        for ok in ["127.0.0.1:47831", "127.0.0.1", "[::1]:47831", "localhost:47831"] {
+        for ok in [
+            "127.0.0.1:47831",
+            "127.0.0.1",
+            "[::1]:47831",
+            "localhost:47831",
+        ] {
             assert!(is_loopback_host(ok), "{ok}");
         }
-        for bad in ["evil.example:47831", "192.168.0.10:47831", "127.0.0.1.evil.com", "[::2]:1", "[::1"] {
+        for bad in [
+            "evil.example:47831",
+            "192.168.0.10:47831",
+            "127.0.0.1.evil.com",
+            "[::2]:1",
+            "[::1",
+        ] {
             assert!(!is_loopback_host(bad), "{bad}");
         }
     }

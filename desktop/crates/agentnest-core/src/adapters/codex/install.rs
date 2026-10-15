@@ -78,8 +78,12 @@ pub fn install_draft(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let text = serde_json::to_string_pretty(&hooks_json_draft(hook_cli, hook_cli_windows, approval_ttl_s))
-        .map_err(std::io::Error::other)?;
+    let text = serde_json::to_string_pretty(&hooks_json_draft(
+        hook_cli,
+        hook_cli_windows,
+        approval_ttl_s,
+    ))
+    .map_err(std::io::Error::other)?;
     std::fs::write(path, text)
 }
 
@@ -106,7 +110,16 @@ mod tests {
         let v = hooks_json_draft("agentnest-hook", "agentnest-hook.exe", 120);
         let hooks = v["hooks"].as_object().unwrap();
         assert_eq!(hooks.len(), 8);
-        for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"] {
+        for event in [
+            "SessionStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PermissionRequest",
+            "PostToolUse",
+            "Stop",
+            "Interrupt",
+            "SessionEnd",
+        ] {
             let h = &hooks[event][0]["hooks"][0];
             assert_eq!(hooks[event][0]["matcher"], "");
             assert_eq!(h["type"], "command");
@@ -118,7 +131,13 @@ mod tests {
         assert_eq!(hooks["Interrupt"][0]["hooks"][0]["timeout"], 2);
         // there is no http hook type for Codex and no onFailure / interrupt anywhere
         let text = v.to_string();
-        for forbidden in ["\"http\"", "onFailure", "interrupt\":", "updatedInput", "updatedPermissions"] {
+        for forbidden in [
+            "\"http\"",
+            "onFailure",
+            "interrupt\":",
+            "updatedInput",
+            "updatedPermissions",
+        ] {
             assert!(!text.contains(forbidden), "{forbidden}");
         }
     }
