@@ -1,0 +1,52 @@
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Editors ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# --- Rust ---
+desktop/target/
+**/target/
+**/*.rs.bk
+
+# --- Node ---
+node_modules/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+
+# --- Tauri ---
+desktop/apps/desktop/src-tauri/gen/
+desktop/apps/desktop/src-tauri/target/
+
+# --- Android / Gradle ---
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.kotlin/
+*.apk
+*.aab
+*.keystore
+*.jks
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Secrets / local runtime data (never commit) ---
+*.pem
+*.key
+*.p12
+.env
+.env.*
+!.env.example
+**/agentnest.db
+**/agentnest.db-*
+
+# --- Logs ---
+*.log
+logs/
