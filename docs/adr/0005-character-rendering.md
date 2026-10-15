@@ -11,7 +11,7 @@ PRD §4는 8개 상태 표현, 가벼운 애니메이션, 애니메이션/소리
 
 1. **상태 파생은 PC에서 한 번**(`state::SessionReducer`, 전이표 `protocol/fixtures/state_transitions.json`), 폰은 `session_state`를 받아 **mood 집계만** 한다(`MoodResolver`, `protocol/fixtures/mood_priority.json`). 같은 픽스처를 Rust(`state::focus`, 트레이)와 Kotlin이 공유한다.
 2. `AgentState` 10종(`idle, working, writing_code, reviewing, testing, awaiting_approval, awaiting_input, error, completed, disconnected`) → mood 9종(`blink_slow, typing(강/약), magnifier, tools, raise_hand(!/?), flustered, celebrate, sleepy, worried`). 알 수 없는 상태는 `working`.
-3. **우선순위**: 링크 끊김 > 승인 대기 > 입력 대기 > 오류 > 테스트 > 코드 작성 > 리뷰 > 작업 > 완료(4초) > 대기. 동률은 최근 이벤트 세션이 대표. **히스테리시스**: 최소 유지 1.5초(상향은 즉시), `celebrate` 4초, `flustered` 30초 sticky, `reviewing`은 `file_read` 연속 2회부터.
+3. **우선순위**: 링크 끊김 > 승인 대기 > 입력 대기 > 오류 > 테스트 > 코드 작성 > 리뷰 > 작업 > 완료(4초) > 대기. 동률은 최근 이벤트 세션이 대표. **히스테리시스**: 최소 유지 1.5초(상향은 즉시), `celebrate` 4초, `reviewing`은 `file_read` 연속 2회부터. `flustered`의 지속시간은 폰이 따로 정하지 않고 PC가 파생한 `AgentState.error`(일시 5초 / `test_failed` 30초 / `turn_failed`는 다음 프롬프트까지, `protocol.md` §5.4)를 그대로 따른다.
 4. **렌더링은 Compose `Canvas`**(경로/원/선만, 비트맵·텍스트·Lottie 없음), mood 변경 300 ms `tween`, 프레임당 draw ≤ 40, 백그라운드 중단, 저전력 30 fps. 애니메이션 off/시스템 감속 시 정지 프레임 + 상태 chip + headline + contentDescription(3중 표현). 소리는 `SoundPool` 2종, 기본 승인만 on.
 5. 홈은 3층 고정(콩이+headline / 행동 카드 / 세션 카드)이며 모든 문자열은 PC가 한국어로 만들어 보낸다. 콜드 스타트는 DataStore 스냅샷 캐시로 즉시 렌더.
 6. 내비게이션은 Phase 1에서 수동 스택(sealed class + BackHandler)으로 `nav` 패키지에 격리(Navigation 3 미검증).

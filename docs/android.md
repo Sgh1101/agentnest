@@ -36,19 +36,19 @@
 android/core/src/main/kotlin/dev/agentnest/core/
 ├── protocol/   Envelope, Message(sealed, classDiscriminator="type"), AgentEvent, SessionState, ApprovalRequest, Decision, ApprovalResolved, QrPayload, Codec(Json 설정)
 ├── crypto/     Canonical(pair 바이트열), HmacSha256(javax.crypto.Mac), Sas, Sha256
-├── link/       LinkState(sealed), LinkStateMachine, BackoffPolicy, SeqTracker(ack/resync), WsTransport(interface), OkHttpWsTransport, ClockSkew
+├── link/       LinkState(sealed), LinkStateMachine, BackoffPolicy, SeqTracker(ack/resync), HostBook(welcome/hosts_update/수동 입력 주소 보관·순회), EventsPager(events_request 페이징), WsTransport(interface), OkHttpWsTransport, ClockSkew
 ├── tls/        SpkiPinTrustManager, PinnedClientFactory
-├── nest/       NestState, NestReducer(순수), MoodResolver(히스테리시스 포함), KongiMood, FocusSelector
+├── nest/       NestState, NestReducer(순수), MoodResolver(히스테리시스 포함), KongiMood, FocusSelector, ApprovalHistory(최근 50건 승인 기록 리듀서)
 ├── approval/   DecisionValidator(사전검사: 만료 마진·allowed_decisions·auth/extra 요구), DecisionBuilder
 └── text/       RelativeTime("3분 전"), Fallbacks
 
 android/app/src/main/kotlin/dev/agentnest/app/
 ├── AgentNestApp.kt           Application: 알림 채널 생성, 수동 DI, NestRepository 단일 인스턴스
 ├── MainActivity.kt           FragmentActivity 상속(BiometricPrompt 요구 [검증]) + setContent
-├── nav/AppNav.kt             NavKey(sealed): Home, Agents, SessionDetail(key), Approvals, ApprovalDetail(id), Projects, Activity, Settings, Pairing, Devices, NotificationPrefs, CharacterPrefs; BackHandler
+├── nav/AppNav.kt             NavKey(sealed): Home, Agents, SessionDetail(key), Approvals, ApprovalDetail(id), ApprovalHistory, Projects, Activity, Settings, Pairing, ManualHost, Devices, NotificationPrefs, CharacterPrefs; BackHandler
 ├── ui/home/                  HomeScreen(3층), KongiHeader, ActionCard, SessionCardList
 ├── ui/agents/                AgentsScreen, SessionDetailScreen(타임라인)
-├── ui/approvals/             ApprovalsScreen, ApprovalDetailScreen, HoldToConfirmButton, ExtraConfirmSheet
+├── ui/approvals/             ApprovalsScreen, ApprovalDetailScreen, ApprovalHistoryScreen, HoldToConfirmButton, ExtraConfirmSheet
 ├── ui/projects/              ProjectsScreen(Phase 1: 세션에서 유추한 프로젝트 목록만)
 ├── ui/activity/              ActivityScreen(필터: 오류/완료/승인/파일/명령)
 ├── ui/settings/              SettingsScreen, PairingScreen, DevicesScreen, NotificationPrefsScreen, CharacterPrefsScreen
@@ -58,7 +58,7 @@ android/app/src/main/kotlin/dev/agentnest/app/
 ├── auth/BiometricGate.kt
 ├── vault/                    TokenVault(Keystore AES-GCM), DeviceKey(Keystore EC P-256 — Phase 1은 공개키 등록만), PairingStore(DataStore)
 ├── qr/                       QrScanner(interface), GmsQrScanner (zxing 폴백은 별도 모듈 가능)
-└── data/                     NestRepository(StateFlow<NestState>), SnapshotCache(DataStore, 콜드스타트)
+└── data/                     NestRepository(StateFlow<NestState>), SnapshotCache(DataStore, 콜드스타트), EventCache(최근 200건), ApprovalHistoryStore(DataStore, 최근 50건)
 ```
 
 아키텍처: `LinkService`가 소켓을 소유하고 수신 메시지를 `NestRepository`로 보내며, `NestReducer.reduce(state, message)`(순수 함수)가 `StateFlow<NestState>`를 갱신한다. Activity는 바인드 없이 Repository를 구독한다. ViewModel은 화면별 파생만.
@@ -87,9 +87,9 @@ android/app/src/main/kotlin/dev/agentnest/app/
 ```
 
 - 콜드 스타트: `SnapshotCache`의 마지막 상태를 즉시 렌더 + "마지막 확인 3분 전". 빈 화면·스피너만 있는 상태 금지.
-- `snapshot` ≤ 64 KiB, `NestReducer` 1건 적용 ≤ 5 ms(메인 스레드; JVM 테스트로 측정).
+- `snapshot` ≤ 192 KiB(`welcome.limits.snapshot_max_bytes`; 절단 순서·`pending_approval_ids_complete`·후속 `approval_request`는 `protocol.md` §4.6), `NestReducer` 1건 적용 ≤ 5 ms(메인 스레드; JVM 테스트로 측정). 스냅샷에서 본문 없이 ID만 있는 승인 카드는 "불러오는 중"(버튼 비활성)으로 두고 후속 프레임을 기다린다.
 - 모든 문자열은 PC가 한국어로 만든다. 폰은 상대 시간 포맷만 한다.
-- ActionCard의 "거부"는 기본 인증 없음(설정 `deny_requires_auth`), "보기"는 상세로. 종료 세션은 5분간 흐리게 후 숨김. Pull-to-refresh = `snapshot_request`.
+- ActionCard의 "거부"는 기본 인증 없음(**PC 정책** `welcome.policy.deny_requires_auth`가 true면 요구 — 폰에는 이를 바꾸는 토글이 없다), "보기"는 상세로. 카드 아래 "승인 기록 ›" 링크로 `ApprovalHistory`(§2.3)에 갈 수 있다. 1층의 "최근 오류 및 테스트 결과"는 `session_state.last_test`와 `recent_errors`에서 온다. 종료 세션은 5분간 흐리게 후 숨김. Pull-to-refresh = `snapshot_request`.
 
 ### 2.2 승인 상세
 
@@ -98,13 +98,14 @@ android/app/src/main/kotlin/dev/agentnest/app/
 │ ← 승인 요청                 ⏱ 1:32 남음 │  카운트다운(서버 시계 skew 보정)
 │ Claude Code · agentnest · feat/proto    │
 │ ■ 명령을 실행하려고 해요                 │  title
-│ 목적: node_modules 폴더를 지우고 다시 설치│  purpose
 │ ┌ 실행될 명령 ─────────────────── 펼치기┐│  details.command 고정폭, 가로 스크롤, 전체 보기
 │ │ rm -rf node_modules && pnpm install  ││
 │ └──────────────────────────────────────┘│
 │ 위치: …\apps\desktop                     │  cwd_hint
 │ 영향: desktop/apps/desktop/node_modules  │  file_paths
 │ ⚠ 위험 높음 — 폴더를 통째로 지우는 명령   │  risk.reasons_ko
+│ 에이전트가 한 말 (검증 안 됨)            │  purpose — 작은 글씨·흐린 색, 명령/위험 블록 아래
+│  “node_modules 폴더를 지우고 다시 설치”   │
 │ [ 거부 ]            [ ■ 길게 눌러 허용 ] │
 │                  ⋯ 거부하고 멈추기        │  더보기 메뉴(실수 방지)
 └────────────────────────────────────────┘
@@ -113,11 +114,13 @@ android/app/src/main/kotlin/dev/agentnest/app/
 | 위험 | 허용 흐름 |
 | --- | --- |
 | `low`/`medium` | 탭 → `BiometricPrompt` → 전송 |
-| `high` | 길게 누르기 1.5초(진행 링) → `BiometricPrompt(setConfirmationRequired(true))` → 전송 |
-| `critical` | 길게 누르기 → `ExtraConfirmSheet`(명령 전체 재표시 + 체크박스 "내용을 확인했어요") → `BiometricPrompt(confirmationRequired)` → 전송 |
-| `deny` | 기본 인증 없음(설정으로 요구 가능) |
+| `high` | 길게 누르기 1.5초(진행 링) → `BiometricPrompt` → 전송 |
+| `critical` | 길게 누르기 → `ExtraConfirmSheet`(명령 전체 재표시 + 체크박스 "내용을 확인했어요") → `BiometricPrompt` → 전송 |
+| `deny` | 기본 인증 없음(PC 정책 `deny_requires_auth`가 true일 때만 요구) |
 | `deny_and_stop` | **allow와 동일 게이트**(턴을 중단시키므로) |
 
+- **추가 확인의 실제 게이트는 길게 누르기와 재확인 시트다.** `setConfirmationRequired`는 얼굴·홍채 같은 *수동* 생체에서 확인 탭을 요구할지에 대한 **시스템 힌트**일 뿐(시스템이 무시할 수 있고 지문 기기에는 영향이 없음 — 갤럭시 S 시리즈처럼 지문 인증 기기에서는 사실상 무의미) 보안 통제로 취급하지 않는다. [검증: developer.android.com `BiometricPrompt.PromptInfo.Builder#setConfirmationRequired` 2026-10-15 열람] 서버는 `extra_confirmation.completed`(클라이언트가 길게 누르기·시트를 거쳤다는 주장)를 검사하되 이것도 폰의 주장임을 안다(`security.md` §6.4).
+- `purpose`는 에이전트가 쓴 텍스트라 **"에이전트가 한 말 (검증 안 됨)"** 으로 라벨링하고 실제 명령·영향 경로·위험 등급보다 시각적으로 아래·작게 둔다(영문 의미: *Agent says (unverified)*). 헤드업 알림 본문·생체 프롬프트·`headline`에도 쓰지 않는다(허용 판단의 근거로 삼지 않게). `allowed_decisions`에 없는 결정의 버튼은 만들지 않는다 — Codex hooks 출처(`origin=codex.hook.cli`) 카드는 "거부 + 멈추기" 메뉴 대신 "거부만 가능 (Codex hooks는 작업을 멈출 수 없어요)"를 표시한다.
 - 생체 프롬프트: 제목 "승인 확인", 부제 = `title`, 설명 = `details.command` 80자.
 - 전송 후 "PC에 전달 중…" → `decision_result{APPLIED}` → "허용했어요 · Claude에 전달했어요" → `approval_resolved{observed_result}` 갱신 시 "Claude가 실행했어요". 5초 내 `decision_result` 없으면 "확인 중…" 유지(**재전송 안 함**).
 - 만료/해결된 카드: 버튼 제거 + "시간이 지나 PC에서 직접 처리하도록 넘겼어요" / 결과 배지. `expires_at − skew − 5s` 이후엔 버튼 비활성.
@@ -127,13 +130,14 @@ android/app/src/main/kotlin/dev/agentnest/app/
 
 | 화면 | 내용 |
 | --- | --- |
-| AI(Agents) | Claude Code / Codex 섹션. 세션별 프로젝트·headline·최근 파일 5·명령 3·시작/마지막 시각·`permission_mode`/`remote_approval` 배지. Codex: 리뷰 상태(P0/P1 개수) |
-| 세션 상세 | 타임라인(headline + 시각, 펼치면 detail), 상단 고정 "지금" 카드 |
+| AI(Agents) | Claude Code / Codex 섹션. 세션별 프로젝트·headline·`recent_files`(5)·`recent_commands`(3)·`started_at`/`last_event_at`/`turn.completed_at`·`permission_mode`/`remote_approval` 배지(`unknown`은 `unavailable`과 같게). Codex: `meta.review{p0,p1,state}` — `state=unavailable`이면 숫자 대신 "리뷰 정보 없음 (hooks 모드)"(PC가 준 `adapter_status.detail`)를 표시. `last_test` 칩 |
+| 세션 상세 | 타임라인(headline + 시각, 펼치면 detail), 상단 고정 "지금" 카드. 스크롤이 로컬 캐시 끝에 닿으면 `events_request{session_key, before_seq, limit:50}`로 더 불러온다(`events_history` capability가 없으면 캐시된 최근 이벤트만) |
+| 승인 기록 | `ApprovalHistory`(홈 "승인 기록 ›"·활동 필터 "승인"에서 진입): **최근 50건** `approval_resolved`를 폰 DataStore에 캐시해 목록으로 보여준다(`title`·위험 등급·`outcome`·`resolved_by`·시각·`observed_result`·`message_ko`; 카드가 있을 때 저장한 값이며 **명령 원문은 저장하지 않는다**). PRD §3.D·§9 "승인/거절의 실제 처리 결과 확인"을 화면으로 충족. `observed_result`가 나중에 갱신되면(같은 `request_id` 재전송) 항목도 갱신. 알 수 없는 `outcome`은 "처리됨" |
 | 프로젝트 | Phase 1: 세션에서 유추한 카드(이름·경로 힌트·브랜치·연결 에이전트·마지막 활동). PR/테스트는 Phase 2 자리 |
-| 활동 | 전체 타임라인, 필터 chip, 날짜 구분선 |
-| 설정 | PC 연결(페어링/연결 해제/기기 정보), 알림(채널별 토글·조용한 시간), 콩이(애니메이션/소리/저전력), 보안(거부에도 인증), 배터리 안내(삼성 "절전 예외 앱" + 배터리 최적화 설정 딥링크 — 자동 요청 안 함), 정보 |
-| 페어링 | 안내 → QR 스캔 → "192.168.0.10 시도 중…" → **SAS 6자리 표시 + "PC에서 승인을 눌러 주세요"** → `pair_result` → `POST_NOTIFICATIONS` 요청 → 홈 |
-| 기기 | 이 기기 정보, 연결 해제(`unpair`) |
+| 활동 | 전체 타임라인, 필터 chip(오류/완료/승인/파일/명령), 날짜 구분선. 로컬 캐시(최근 200건) + `events_request` 페이징(`before_seq` 배타). 오프라인이면 캐시만 보이고 "더 불러오기" 비활성 |
+| 설정 | PC 연결(페어링/연결 해제/기기 정보), 알림(채널별 토글·조용한 시간), 콩이(애니메이션/소리/저전력), 보안(**PC 정책 읽기 전용 표시** — 거부 인증 요구 여부; 폰에서 바꿀 수 없음), 배터리 안내(삼성 "절전 예외 앱" + 배터리 최적화 설정 딥링크 — 자동 요청 안 함), 정보 |
+| 페어링 | 안내 → QR 스캔 → "192.168.0.10 시도 중…" → **폰이 로컬 계산한 SAS 6자리 표시**(`pair_pending.sas`와 비교, 불일치 시 `unpair{pairing_id}`로 중단) **+ "PC에서 승인을 눌러 주세요"** → `pair_result` → `POST_NOTIFICATIONS` 요청 → 홈 |
+| 기기 | 이 기기 정보, 연결 해제(`unpair`), **'IP 직접 입력'**(`ManualHost`: 핀·`hello` 인증은 그대로, 재페어링 없이 주소만 추가), 저장된 PC 주소 목록 |
 | 온보딩 | 알림 권한 설명, 삼성 절전 예외 안내, 기기 잠금 미설정 시 경고("원격 승인에는 기기 잠금이 필요해요") |
 
 ---
@@ -158,15 +162,17 @@ sealed interface LinkState {
     data class Connected(val pc: PcInfo, val since: Instant, val rttMs: Int?) : LinkState
     data class Reconnecting(val attempt: Int, val nextAt: Instant, val lastError: LinkError) : LinkState
     object Offline : LinkState                                      // ConnectivityManager: 네트워크 없음
-    data class PcUnreachable(val since: Instant) : LinkState        // 연속 5회 실패
+    data class PcUnreachable(val since: Instant) : LinkState        // 연속 5회 실패 → 화면에 'IP 직접 입력'·'QR 다시 스캔(주소만 갱신)' 제공
+    data class NeedsRepair(val reason: RepairReason) : LinkState    // E_AUTH_FAILED 3회 연속 / Revoked 확인 후 / PC 신원 변경 확인 → '다시 페어링' 필수
     data class Revoked(val code: String) : LinkState                // E_DEVICE_REVOKED / 4003 → 재페어링 필요, 자동 재시도 금지
-    data class Suspended(val until: Instant) : LinkState            // 핀 불일치 3회 → 1시간 + security 알림 "PC 신원이 바뀌었어요"
+    data class Suspended(val until: Instant) : LinkState            // 핀 불일치 3회 → 1시간 + security 알림 "PC 신원이 바뀌었어요". 1시간 전에도 사용자가 **'다시 페어링'**으로 빠져나갈 수 있다(아래)
     object Incompatible : LinkState                                 // 4010 → 업데이트 안내
 }
 ```
 
 - 백오프: 1, 2, 4, 8, 16, 32, 60, 60… 초 ±20% 지터. `registerDefaultNetworkCallback.onAvailable`·앱 포그라운드 전환·사용자 "재연결"에서 즉시 리셋.
-- 호스트 순회: QR `hosts[]` 라운드로빈(각 3초 connect timeout), 성공 호스트를 선두로 저장.
+- 호스트 순회(`HostBook`): 시도 순서 = **`welcome.hosts`/`hosts_update`로 저장한 최신 주소 → 수동 입력 주소 → QR `hosts[]`**(각 3초 connect timeout), 성공 호스트를 선두로 저장. 저장 대상은 사설 대역 주소만(10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7), 최대 8개(`protocol.md` §4.5). 단일 NIC DHCP 변경처럼 기존 주소가 사라진 경우 `hosts_update`가 오지 못하므로 `PcUnreachable` 화면에서 **'IP 직접 입력'**(또는 PC '기기 추가' QR을 다시 스캔하되 `pc_id`·`spki_pin`이 저장값과 같으면 주소만 갱신)로 복구한다.
+- **`NeedsRepair`와 '다시 페어링'**: `E_AUTH_FAILED`가 연속 3회면(`protocol.md` §9.1) `NeedsRepair(AuthFailed)`로 전이해 자동 재시도를 멈추고 "다시 페어링" 버튼을 보인다. `Revoked`(4003)·`Suspended`(핀 불일치)에서도 같은 버튼을 보인다. 버튼은 확인 대화상자("PC 화면의 QR을 직접 스캔해야 해요. 모르는 사람이 준 QR은 쓰지 마세요") 뒤에 **로컬 토큰·핀·`pc_id`·Keystore 항목을 삭제하고 `Suspended`/`Revoked` 상태를 해제**한 뒤 `Pairing` 화면으로 보낸다. PC 신원 재생성(`security.md` §10)처럼 합법적으로 핀이 바뀐 경우 1시간을 기다리지 않고 이 경로로 복구한다.
 - OkHttp `pingInterval(25s)`; 70초 수신 없음 → 끊고 재연결(pong 미수신 시 `onFailure` 여부는 [미검증] → 앱 레벨 규칙이 보증).
 - 연결마다 `hello{last_seq}` → `welcome.resync` 처리. `snapshot`은 로컬 상태 **교체**.
 - 시계 보정: `welcome.server_time`/`challenge.server_time`과 폰 시계 차 `skew_ms` 저장. `DecisionValidator`는 `expires_at − skew − 5s`, `decided_at`은 폰 시계 + skew.
@@ -192,13 +198,15 @@ sealed interface LinkState {
 | 상황 | 요구 |
 | --- | --- |
 | `allow` low/medium | `BiometricPrompt(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)`, negative 버튼 없음 [검증] |
-| `allow` high | 길게 누르기 → `setConfirmationRequired(true)` |
-| `allow` critical | 길게 누르기 → `ExtraConfirmSheet` → `confirmationRequired` |
+| `allow` high | 길게 누르기(1.5초) → `BiometricPrompt` |
+| `allow` critical | 길게 누르기 → `ExtraConfirmSheet` → `BiometricPrompt` |
 | `deny_and_stop` | allow와 동일 |
-| `deny` | 기본 없음(설정으로 요구) |
+| `deny` | 기본 없음(PC 정책 `deny_requires_auth`가 true면 요구) |
 | API 26~29 | `STRONG|DEVICE_CREDENTIAL` 미지원 [검증] → `KeyguardManager.isDeviceSecure()` 확인 후 `BIOMETRIC_WEAK or DEVICE_CREDENTIAL`(라이브러리 지원 [미검증] → Phase 0 P7) |
 | 등록 인증 없음 | 허용 버튼 비활성 + "기기 잠금을 먼저 설정해 주세요"(`ACTION_BIOMETRIC_ENROLL` API 30+) |
 | 인증 결과 유효 | **60초 내 동일 request_id 1회**만 사용, 토큰화하지 않음 |
+
+`setConfirmationRequired`는 어떤 행에서도 보안 요구로 쓰지 않는다(기본값 그대로, 위 §2.2). 인증 결과의 `authenticated_at`은 PC가 `created_at − 5s ≤ authenticated_at ≤ decided_at + 5s`, `decided_at − authenticated_at ≤ 60s`로 검사한다(`security.md` §6.2 8단계).
 
 `auth.method`는 `authenticationType`으로 `biometric`/`device_credential` 기록. Phase 1에서는 PC가 이 값을 폰의 주장으로 받는다(`security.md` §6.4).
 
@@ -213,7 +221,7 @@ sealed interface LinkState {
 | 채널 id | 중요도 | 내용 | 소리/진동 | 취소 |
 | --- | --- | --- | --- | --- |
 | `approvals` | HIGH(헤드업) | 제목 "승인 필요 · Claude Code", 본문 = `title` + 위험 등급 + 남은 시간. **명령 전문 없음**(잠금 화면). **인라인 허용/거부 액션 없음**(탭 → ApprovalDetail). `setTimeoutAfter(expires_at − now)` | on(설정) | `approval_resolved`, 만료, 앱에서 열람 |
-| `alerts` | DEFAULT | 오류(`turn_failed`, `agent_error`, `test_failed`), Codex P0/P1 리뷰 | 진동 | 세션당 60초 1건 |
+| `alerts` | DEFAULT | 오류(`turn_failed`, `agent_error`, `test_failed`), Codex P0/P1 리뷰(**리뷰 소스가 활성일 때만** — hooks 기본 모드에서는 발생하지 않음, `codex.md` §8) | 진동 | 세션당 60초 1건 |
 | `completions` | LOW | `turn_completed`(30초 이상 턴만) | 없음 | 조용한 시간 무음 |
 | `link` | MIN | FGS 상시: "연결됨 · DESKTOP-HOME" / "다시 연결 중 (3회, 8초 후)" / "오프라인". 액션: 다시 연결, 일시정지 | 없음 | 서비스 종료 |
 | `security` | HIGH | 기기 폐기됨, 핀 불일치(MITM 의심), 페어링 실패 반복 | 진동 | — |
@@ -240,8 +248,8 @@ sealed interface LinkState {
 | --- | --- |
 | `protocol` | `protocol/examples/**` 라운드트립(디코드 → 재인코딩 비교), `invalid/` 거부, 알 수 없는 enum → `UNKNOWN`(state→`working`, risk→`high`) |
 | `crypto` | `protocol/vectors/pair.json` canonical 바이트열·HMAC·SAS 일치 |
-| `nest` | `state_transitions.json`, `mood_priority.json`(히스테리시스 포함, 가상 시계), 리듀서 5 ms 예산 |
-| `link` | 백오프·지터, 4003→`Revoked`, 핀 불일치 3회→`Suspended`, 4009, `SeqTracker` 재동기화, 70초 무수신 |
+| `nest` | `state_transitions.json`, `mood_priority.json`(히스테리시스 포함, 가상 시계), 리듀서 5 ms 예산, 스냅샷 `pending_approval_ids_complete` 교체 규칙(ID만 있는 카드는 유지·"불러오는 중", 목록에 없는 카드만 정리), 승인 기록 50건 한도·`observed_result` 갱신·명령 원문 비저장, 타임라인 전용 kind(`approval_requested` 등)가 상태를 바꾸지 않음 |
+| `link` | 백오프·지터, 4003→`Revoked`, 핀 불일치 3회→`Suspended`, `E_AUTH_FAILED` 3회→`NeedsRepair`, '다시 페어링'이 Suspended/Revoked/NeedsRepair를 해제하고 저장 상태를 지움, 4009, `SeqTracker` 재동기화, 70초 무수신, `HostBook` 순서(welcome > 수동 > QR)·사설 대역 필터·최대 8개, `hosts_update` 반영, 로컬 SAS 계산·불일치 시 중단, `EventsPager`(`before_seq` 배타·`has_more`·`detail_omitted`) |
 | `approval` | `DecisionValidator`(만료 마진·skew·allowed_decisions·auth 요구), 오프라인 시 비활성 |
 | `tls` | 핀닝 4케이스 |
 

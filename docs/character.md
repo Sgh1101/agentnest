@@ -32,7 +32,7 @@
  1. link != Connected            → sleepy(Offline) / worried(Reconnecting, PcUnreachable, Suspended)
  2. any session awaiting_approval → raise_hand(!)        — 배지에 개수
  3. any session awaiting_input   → raise_hand(?)
- 4. any session error            → flustered             — 30초 sticky
+ 4. any session error            → flustered             — 지속시간은 `AgentState.error`를 그대로 따른다(PC 리듀서가 결정, `protocol.md` §5.4: tool/command 실패 5초, test_failed 30초, turn_failed/agent_error는 다음 프롬프트까지)
  5. any session testing          → tools
  6. any session writing_code     → typing
  7. any session reviewing        → magnifier
@@ -51,7 +51,7 @@
 | mood 최소 유지 | **1,500 ms**(도구 이벤트가 초당 여러 번 와도 깜빡이지 않음) |
 | 상향 전환 | 더 높은 우선순위(링크·승인·입력·오류)는 **즉시**(유지 시간 무시) |
 | `celebrate` | 4,000 ms 후 자동 `blink_slow`. 축하 중 새 작업 시작 → 즉시 전환 |
-| `flustered` | 30초 sticky. 같은 세션의 `test_passed`/`turn_completed`/`prompt_submitted`면 즉시 해제 |
+| `flustered` | **폰 측 별도 타이머 없음.** `AgentState.error`인 동안 표시하고 `error`가 해제되면(PC가 `session_state`로 전달) 해제한다. 지속시간·해제 입력은 `protocol.md` §5.4의 단일 출처(일시 5초 / `test_failed` 30초 + `test_passed`·`turn_completed`·`prompt_submitted` 해제 / `turn_failed`·`agent_error`는 다음 프롬프트까지). 최소 유지 1,500 ms 히스테리시스만 폰에서 적용 |
 | `reviewing` 진입 | `file_read` 연속 2회 이상(PC 리듀서가 결정; 폰은 상태만 받음) |
 | 링크 복귀 | `Connected` 전환 시 세션 상태 기반 mood로 즉시 복귀(스냅샷 교체 후) |
 
@@ -109,6 +109,6 @@
 
 ## 5. 테스트
 
-- `MoodResolver`: `mood_priority.json` 전수(세션 상태 집합 × 링크 상태 → 기대 mood·대표 세션), 히스테리시스(1.5초 유지, 4초 celebrate, 30초 flustered, 상향 즉시) — 가상 시계.
+- `MoodResolver`: `mood_priority.json` 전수(세션 상태 집합 × 링크 상태 → 기대 mood·대표 세션), 히스테리시스(1.5초 유지, 4초 celebrate, 상향 즉시) — 가상 시계. `flustered`는 `AgentState.error` 입력의 존재 여부만 따르는지(5초 일시 오류는 5초, sticky는 해제될 때까지) 검증.
 - `KongiSpec`: mood별 파라미터 스냅샷(JVM, Compose 미사용).
 - 실기(Phase 0 P5): 승인 요청 → 손 들기 ≤ 2초, 축하 → 대기 복귀 4초, 애니메이션 off 시 정지 프레임 + 설명문.

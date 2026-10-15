@@ -9,7 +9,7 @@
 | [`prd.md`](prd.md) | 제품 요구사항(기준 문서). 우선순위 P0 > P1 > P2 > P3 |
 | [`architecture.md`](architecture.md) | 시스템 개요, 핵심 결정 10가지, 모노레포 레이아웃, 컴포넌트 책임, 데이터 흐름, 빌드박스 제약·CI 매트릭스, 핀 고정 버전, Phase 범위 |
 | [`protocol.md`](protocol.md) | 와이어 프로토콜 v1: 봉투, 메시지별 JSON·필드 표, `AgentEvent`/`SessionState`/`ApprovalRequest`, `AgentState` 전이표·캐릭터 매핑, 한국어 요약 템플릿, 하트비트·ack·재동기화, 오류·종료 코드, 전방 호환 규칙 |
-| [`security.md`](security.md) | 위협 모델(A1~A5), 불변식 I1~I12(→ 테스트·Codex P0 추적), TLS/SPKI 핀, 페어링(HMAC+SAS+PC 확인), 토큰 수명주기, 승인 바인딩·9단계 검증·재생 방지, **fail-closed 표**, 레댁션 3-싱크, 금지 설정 필드, 폐기 절차 |
+| [`security.md`](security.md) | 위협 모델(A1~A5), 불변식 I1~I12(→ 테스트·Codex P0 추적), TLS/SPKI 핀, **Windows 방화벽·주소 변경·링크 비활성(§3)**, 페어링(HMAC+SAS(폰 로컬 계산)+PC 확인), 수용된 위험(R1), 토큰 수명주기, 승인 바인딩·9단계 검증·재생 방지, **fail-closed 표**, 레댁션 3-싱크, 금지 설정 필드, 폐기 절차 |
 | [`integrations/claude-code.md`](integrations/claude-code.md) | HTTP 훅 settings.json, 훅 바이너리 계약, 수집 API, 정규화 표, 원격 승인 시퀀스·타임아웃, 위험 분류 규칙(코드 상수), Phase 0 A-시리즈 |
 | [`integrations/codex.md`](integrations/codex.md) | 검증됨 vs 추정 표, 어댑터 API, 관찰 모드(hooks 기본 / 데몬 소켓 flag), app-server 흐름, hooks 응답 규칙, 승인 매핑, 리뷰 수집, Phase 0 C-시리즈 |
 | [`android.md`](android.md) | 모듈·버전, 홈 3층·승인 상세 화면, FGS·재연결 상태기계, Keystore·생체 게이트·QR, 알림 채널, 권한, core 테스트 |

@@ -18,6 +18,7 @@ docs/            설계 문서, ADR
 protocol/        JSON Schema + 예제 메시지 (언어 중립적 단일 진실 공급원)
 desktop/         Cargo 워크스페이스
   crates/agentnest-protocol   serde 타입 (protocol/schema 와 1:1)
+  crates/agentnest-adapter-api 에이전트 어댑터 트레이트·RawObservation·불투명 ApprovalReply (의존성 최소, ADR-0003/0004)
   crates/agentnest-core       수집기·정규화·저장소·승인 브로커·페어링·WSS 서버
   crates/agentnest-hook       Claude Code 훅이 호출하는 소형 CLI
   apps/desktop                Tauri 2 셸 + Vite/TS 프런트엔드
