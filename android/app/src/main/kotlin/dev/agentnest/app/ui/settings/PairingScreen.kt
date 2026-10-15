@@ -26,6 +26,7 @@ import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.S
 import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.ScreenHeader
+import dev.agentnest.app.ui.common.SecureScreen
 
 /** Formats the six SAS digits as "482 915". */
 fun formatSas(sas: String): String = sas.chunked(3).joinToString(" ")
@@ -43,6 +44,8 @@ fun PairingScreen(
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The confirmation digits on this screen must not be screenshotted or recorded.
+    SecureScreen(controller)
     DisposableEffect(Unit) {
         controller.resetPairing()
         onDispose { controller.cancelPairing() }

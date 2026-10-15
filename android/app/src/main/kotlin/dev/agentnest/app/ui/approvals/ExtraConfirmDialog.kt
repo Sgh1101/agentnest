@@ -22,7 +22,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.S
+import dev.agentnest.core.approval.ApprovalDisplay
 import dev.agentnest.core.protocol.ApprovalRequest
+import dev.agentnest.core.text.DisplaySanitizer
+import dev.agentnest.app.ui.common.HiddenCharsChip
 
 /**
  * The re-confirmation step for risky approvals (docs/android.md 2.2): shows the FULL command again and asks the user
@@ -44,9 +47,10 @@ fun ExtraConfirmDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(S.EXTRA_CONFIRM_BODY, style = MaterialTheme.typography.bodyMedium)
+                HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
                 if (needCheckbox) {
                     Text(
-                        text = request.details.command ?: request.title,
+                        text = DisplaySanitizer.display(request.details.command ?: request.title),
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier
@@ -54,7 +58,7 @@ fun ExtraConfirmDialog(
                             .verticalScroll(rememberScrollState()),
                     )
                     request.details.filePaths.take(5).forEach {
-                        Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        Text(DisplaySanitizer.display(it), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = checked, onCheckedChange = { checked = it })

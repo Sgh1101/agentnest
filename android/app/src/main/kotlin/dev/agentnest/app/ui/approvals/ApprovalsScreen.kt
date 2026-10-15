@@ -97,7 +97,7 @@ private fun HistoryRow(entry: ApprovalHistoryEntry, skewMs: Long, modifier: Modi
     InfoCard(modifier = modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = entry.title.ifBlank { S.UNTITLED_APPROVAL },
+                text = dev.agentnest.core.text.DisplaySanitizer.display(entry.title).ifBlank { S.UNTITLED_APPROVAL },
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.weight(1f),
             )

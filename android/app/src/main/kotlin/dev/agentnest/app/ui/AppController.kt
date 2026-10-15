@@ -106,6 +106,12 @@ interface AppController {
     /** The card was shown: best-effort `approval_seen` and cancel the notification. */
     fun markSeen(requestId: String)
 
+    /**
+     * Marks the window secure (`FLAG_SECURE`, touch filtering while obscured) while a screen with sensitive content is
+     * visible. Calls nest: every `true` must be balanced by a `false`. Main thread only.
+     */
+    fun setScreenSecure(secure: Boolean)
+
     // --- history -------------------------------------------------------------------------------
 
     /** Requests the next page of events and returns the pager with the request marked pending. */

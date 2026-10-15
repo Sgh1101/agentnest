@@ -99,6 +99,12 @@ object S {
     const val EXTRA_CONFIRM_TITLE = "한 번 더 확인해 주세요"
     const val EXTRA_CONFIRM_BODY = "위험한 작업이에요. 아래 내용을 끝까지 읽고 확인해 주세요."
     const val EXTRA_CONFIRM_CHECK = "내용을 확인했어요"
+    const val DENY_STOP_ONLY = "거부 (중단)"
+    const val HOLD_A11Y_ACTION = "확인 창 열기"
+    const val HOLD_A11Y_BODY = "길게 누르기 대신 이 창에서 확인해요. 내용을 끝까지 읽었는지 확인해 주세요."
+
+    /** Warning chip: the card text contains characters that cannot be seen (shown as ⟨U+XXXX⟩ escapes). */
+    fun hiddenChars(count: Int): String = "보이지 않는 문자 ${count}개"
 
     // --- pairing ---
     const val PAIRING_TITLE = "PC 연결"

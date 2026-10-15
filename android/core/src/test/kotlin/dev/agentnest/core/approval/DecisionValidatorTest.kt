@@ -20,6 +20,10 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class DecisionValidatorTest {
+    private companion object {
+        const val RID = "ar_01929f1a-6c2e-7b3c-9e4d-00000000001a"
+    }
+
     private val now = T.T0.plusSeconds(10) // the card was created at T0
 
     private fun card(
@@ -28,7 +32,7 @@ class DecisionValidatorTest {
         origin: String = "claude_code.hook.http",
         allowed: List<Decision> = listOf(Decision.ALLOW, Decision.DENY, Decision.DENY_AND_STOP),
         ttl: Long = 120,
-    ) = ApprovalCard("ar_1", T.request(id = "ar_1", level = level, extra = extra, origin = origin, allowed = allowed, ttlSeconds = ttl), T.T0)
+    ) = ApprovalCard(RID, T.request(id = RID, level = level, extra = extra, origin = origin, allowed = allowed, ttlSeconds = ttl), T.T0)
 
     private fun ctx(
         at: Instant = now,
@@ -36,7 +40,8 @@ class DecisionValidatorTest {
         link: LinkState = T.connected(),
         remote: RemoteApproval? = RemoteApproval.AVAILABLE,
         policy: Policy = Policy(),
-    ) = DecisionContext(at, skew, link, remote?.let { T.session("claude_code:s1", AgentState.AWAITING_APPROVAL, remote = it) }, policy)
+        awaitingSnapshot: Boolean = false,
+    ) = DecisionContext(at, skew, link, remote?.let { T.session("claude_code:s1", AgentState.AWAITING_APPROVAL, remote = it) }, policy, awaitingSnapshot)
 
     private fun fullUser(at: Instant = now, extra: ExtraConfirmationLevel = ExtraConfirmationLevel.HOLD_AND_RECONFIRM) =
         UserGateResult(AuthMethod.BIOMETRIC, at.minusSeconds(2), extra)
@@ -161,7 +166,7 @@ class DecisionValidatorTest {
 
     @Test
     fun `a card cannot weaken the allow gate through auth_required_for`() {
-        val c = ApprovalCard("ar_1", T.request(id = "ar_1", authRequired = emptyList()), T.T0)
+        val c = ApprovalCard(RID, T.request(id = RID, authRequired = emptyList()), T.T0)
         assertTrue(DecisionValidator.gate(c.request!!, Decision.ALLOW, Policy()).requiresAuth)
         assertTrue(DecisionValidator.gate(c.request, Decision.DENY_AND_STOP, Policy()).requiresAuth)
     }

@@ -44,6 +44,12 @@ fun ToneChip(text: String, tone: Tone, modifier: Modifier = Modifier) {
     )
 }
 
+/** Warning chip "보이지 않는 문자 N개" for approval cards whose text hides or reorders characters; nothing when 0. */
+@Composable
+fun HiddenCharsChip(count: Int, modifier: Modifier = Modifier) {
+    if (count > 0) ToneChip(S.hiddenChars(count), Tone.WARNING, modifier)
+}
+
 /** Header of a detail screen: back arrow and title. */
 @Composable
 fun ScreenHeader(title: String, onBack: (() -> Unit)?, modifier: Modifier = Modifier) {

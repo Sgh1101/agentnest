@@ -8,6 +8,7 @@ import dev.agentnest.core.protocol.AgentEvent
 import dev.agentnest.core.protocol.ApprovalRequest
 import dev.agentnest.core.protocol.EventKind
 import dev.agentnest.core.protocol.SessionState
+import dev.agentnest.core.text.DisplaySanitizer
 import dev.agentnest.core.text.Fallbacks
 import dev.agentnest.core.text.RelativeTime
 import java.time.Duration
@@ -41,7 +42,7 @@ object NotificationTexts {
         val agent = Labels.agent(request.agentKind, request.agentLabel)
         val title = "승인 필요 · $agent"
         val parts = ArrayList<String>(3)
-        if (request.title.isNotBlank()) parts += request.title
+        if (request.title.isNotBlank()) parts += DisplaySanitizer.display(request.title)
         parts += Labels.risk(request.risk.level)
         parts += "${RelativeTime.countdown(remainingSeconds)} 남음"
         return NotificationText(title, parts.joinToString(" · "))
@@ -78,10 +79,17 @@ object NotificationTexts {
             NotificationText("인증에 계속 실패했어요", "연결을 멈췄어요. 다시 페어링해 주세요")
     }
 
-    /** Alert (error) notification: the PC-written headline and the project name. */
-    fun alert(event: AgentEvent, session: SessionState?): NotificationText {
-        val project = event.project?.name?.takeIf { it.isNotBlank() } ?: session?.project?.name.orEmpty()
-        val title = event.summary.headline.ifBlank { Labels.eventKind(event.kind) }
+    /**
+     * Alert notification text. Completion notices carry the PC-written headline; ERROR notices carry only the generic
+     * kind label ("작업 실패") plus agent and project: event headlines of failed commands contain `{cmd60}`, i.e. command
+     * text, which must never reach a notification (docs/android.md 5, lock screen and shade).
+     */
+    fun alert(event: AgentEvent, session: SessionState?, kind: AlertKind = AlertKind.COMPLETION): NotificationText {
+        val project = DisplaySanitizer.display(event.project?.name?.takeIf { it.isNotBlank() } ?: session?.project?.name.orEmpty())
+        val title = when (kind) {
+            AlertKind.ERROR -> Labels.eventKind(event.kind)
+            AlertKind.COMPLETION -> DisplaySanitizer.display(event.summary.headline).ifBlank { Labels.eventKind(event.kind) }
+        }
         val agent = Labels.agent(event.agentKind, session?.agentLabel.orEmpty())
         val body = if (project.isBlank()) agent else "$agent · $project"
         return NotificationText(title, body)

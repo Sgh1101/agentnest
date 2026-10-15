@@ -4,10 +4,8 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
-import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.security.ProviderException
-import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -31,25 +29,28 @@ class TokenVault {
     }
 
     /**
-     * Decrypts [blob]. Null when the key is gone or invalidated or the data does not authenticate
-     * (`KeyPermanentlyInvalidatedException` / `AEADBadTagException`): the caller then wipes the pairing and asks the
-     * user to pair again. A missing key is never recreated here (that would hide the loss).
+     * Decrypts [blob]. The result is tri-state, because wiping a pairing is irreversible and a Keystore hiccup must
+     * never cost the user their pairing:
+     * - [VaultResult.Ok] the plain token (the caller wipes the array);
+     * - [VaultResult.Invalid] the key is permanently gone: `KeyPermanentlyInvalidatedException`,
+     *   `AEADBadTagException` (the data does not authenticate), a key that does not exist in a successfully opened
+     *   Keystore, or a blob that cannot be a sealed token. The caller wipes the pairing and asks for a new one;
+     * - [VaultResult.Transient] anything else (Keystore daemon busy or restarting, provider errors, I/O): retry later,
+     *   never wipe. A missing key is never recreated here (that would hide the loss).
      */
-    fun open(blob: ByteArray): ByteArray? {
-        if (blob.size <= IV_BYTES) return null
-        val key = existingKey() ?: return null
+    fun open(blob: ByteArray): VaultResult {
+        if (blob.size <= IV_BYTES) return VaultResult.Invalid
+        val key = try {
+            keyStore().getKey(ALIAS, null) as? SecretKey
+        } catch (e: Exception) {
+            return VaultResult.fromFailure(e)
+        } ?: return VaultResult.Invalid
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES))
-            cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES)
-        } catch (e: KeyPermanentlyInvalidatedException) {
-            null
-        } catch (e: AEADBadTagException) {
-            null
-        } catch (e: GeneralSecurityException) {
-            null
-        } catch (e: ProviderException) {
-            null
+            VaultResult.Ok(cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES))
+        } catch (e: Exception) {
+            VaultResult.fromFailure(e)
         }
     }
 
@@ -64,6 +65,7 @@ class TokenVault {
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
+    /** Only used when sealing: a Keystore error there is simply "no key yet". */
     private fun existingKey(): SecretKey? = try {
         keyStore().getKey(ALIAS, null) as? SecretKey
     } catch (e: Exception) {

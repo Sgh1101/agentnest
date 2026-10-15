@@ -25,12 +25,14 @@ import dev.agentnest.core.protocol.QrPayload
 import dev.agentnest.core.protocol.ServerMessage
 import dev.agentnest.core.util.HostAddress
 import dev.agentnest.core.util.Uuid7Generator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 
 /**
@@ -53,12 +55,16 @@ class AndroidAppController(
     /** Called by the Activity in onCreate. */
     fun attach(newHost: ActivityHost) {
         host = newHost
+        newHost.setSecure(secureCount > 0)
     }
 
     /** Called by the Activity in onDestroy. */
     fun detach(oldHost: ActivityHost) {
         if (host === oldHost) host = null
     }
+
+    /** Number of visible screens that need a secure window (approval detail, pairing). Main thread only. */
+    private var secureCount = 0
 
     // --- state ---------------------------------------------------------------------------------
 
@@ -186,11 +192,13 @@ class AndroidAppController(
                 is QrScanResult.Scanned -> when (val parsed = QrPayload.parse(result.text, Instant.now())) {
                     is QrParseResult.Failure -> controller.onScanFailed(parsed.error.messageKo)
                     is QrParseResult.Success -> {
-                        if (container.deviceKey.publicKeySpki() == null) {
+                        // Keystore work (the first call generates an EC key, which can take hundreds of ms) stays off the main thread.
+                        val spki = withContext(Dispatchers.Default) { container.deviceKey.publicKeySpki() }
+                        if (spki == null) {
                             parsed.payload.wipe()
                             controller.onScanFailed(MSG_NO_DEVICE_KEY)
                         } else {
-                            controller.begin(parsed.payload)
+                            controller.begin(parsed.payload, spki)
                         }
                     }
                 }
@@ -223,6 +231,11 @@ class AndroidAppController(
         container.scope.launch {
             repository.send(DecisionBuilder().seen(requestId, Instant.now()))
         }
+    }
+
+    override fun setScreenSecure(secure: Boolean) {
+        secureCount = (secureCount + if (secure) 1 else -1).coerceAtLeast(0)
+        host?.setSecure(secureCount > 0)
     }
 
     // --- history -------------------------------------------------------------------------------

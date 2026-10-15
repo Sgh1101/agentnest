@@ -29,6 +29,7 @@ class DecisionBuilderTest {
 
     private fun ctx(skew: Long = 0, at: Instant = now) = DecisionContext(
         at, skew, T.connected(), T.session("claude_code:s1", AgentState.AWAITING_APPROVAL, remote = RemoteApproval.AVAILABLE), Policy(),
+        awaitingSnapshot = false,
     )
 
     private val user get() = UserGateResult(AuthMethod.BIOMETRIC, now.minusSeconds(2), ExtraConfirmationLevel.HOLD)
@@ -82,7 +83,7 @@ class DecisionBuilderTest {
         val frame = DecisionMessage(T.meta(), dev.agentnest.core.protocol.DecisionPayload(
             "ar_1", "k", "n", "h", Decision.UNKNOWN, null, T.ts(now), null, null,
         ))
-        assertFailsWith<kotlinx.serialization.SerializationException> { Codec.encode(frame) }
+        assertFailsWith<IllegalArgumentException> { Codec.encode(frame) }
     }
 
     @Test

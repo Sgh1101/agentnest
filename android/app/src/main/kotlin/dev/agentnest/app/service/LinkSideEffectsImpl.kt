@@ -2,6 +2,7 @@ package dev.agentnest.app.service
 
 import dev.agentnest.app.AppContainer
 import dev.agentnest.core.link.HostBookState
+import dev.agentnest.core.link.LinkCounters
 import dev.agentnest.core.link.LinkSideEffects
 import dev.agentnest.core.link.SecurityAlertKind
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +39,10 @@ class LinkSideEffectsImpl(
             container.wipePairingLocal()
             onPairingWiped()
         }
+    }
+
+    override fun persistCounters(counters: LinkCounters) {
+        scope.launch(container.storeDispatcher) { container.pairingStore.saveCounters(counters) }
     }
 
     override fun securityAlert(kind: SecurityAlertKind) {

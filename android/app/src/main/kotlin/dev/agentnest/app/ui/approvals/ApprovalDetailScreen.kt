@@ -1,6 +1,5 @@
 package dev.agentnest.app.ui.approvals
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,15 +35,19 @@ import androidx.compose.ui.unit.dp
 import dev.agentnest.app.approval.ApprovalLogic
 import dev.agentnest.app.approval.ApprovalStatus
 import dev.agentnest.app.approval.AuthAvailability
+import dev.agentnest.app.approval.DenyKind
 import dev.agentnest.app.approval.SubmitOutcome
 import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.Labels
 import dev.agentnest.app.ui.S
 import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.common.EmptyHint
+import dev.agentnest.app.ui.common.HiddenCharsChip
 import dev.agentnest.app.ui.common.InfoCard
+import dev.agentnest.app.ui.common.SecureScreen
 import dev.agentnest.app.ui.common.ScreenHeader
 import dev.agentnest.app.ui.common.ToneChip
+import dev.agentnest.core.approval.ApprovalDisplay
 import dev.agentnest.core.approval.ApprovalGate
 import dev.agentnest.core.approval.DecisionBlock
 import dev.agentnest.core.approval.DecisionValidator
@@ -54,6 +57,7 @@ import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.ApprovalRequest
 import dev.agentnest.core.protocol.Decision
 import dev.agentnest.core.protocol.ExtraConfirmationLevel
+import dev.agentnest.core.text.DisplaySanitizer
 import dev.agentnest.core.text.RelativeTime
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -76,6 +80,8 @@ fun ApprovalDetailScreen(
     val request = card?.request
     val history = nest.history.find(requestId)
 
+    // The command and paths on this screen must not end up in screenshots, screen recordings or the recents thumbnail.
+    SecureScreen(controller)
     LaunchedEffect(requestId, request != null) {
         if (request != null) controller.markSeen(requestId)
     }
@@ -149,6 +155,19 @@ private fun ApprovalBody(
     val deny = ApprovalLogic.enablement(nest, card, Decision.DENY, now)
     val stop = ApprovalLogic.enablement(nest, card, Decision.DENY_AND_STOP, now)
     val canStopAtAll = Decision.DENY_AND_STOP in request.allowedDecisions && !request.isCodexHooksOrigin
+    val denyKind = ApprovalLogic.denyKind(request)
+    val hasPlainDeny = denyKind == DenyKind.DENY
+    // protocol.md 6.1: without `deny` (Codex without `decline`) the refusal IS the stop; it is labelled "거부 (중단)".
+    val stopIsTheDeny = denyKind == DenyKind.DENY_AND_STOP_AS_DENY
+
+    fun startStop() {
+        val gate = (stop as? Enablement.Enabled)?.gate ?: return
+        if (gate.extraConfirmation == ExtraConfirmationLevel.NONE) {
+            run(Decision.DENY_AND_STOP, ExtraConfirmationLevel.NONE)
+        } else {
+            stopDialog = true
+        }
+    }
     val inFlight = card.inFlight != null
     val authReady = authState == AuthAvailability.READY
 
@@ -164,12 +183,13 @@ private fun ApprovalBody(
             request.project.name.takeIf { it.isNotBlank() },
             request.project.branch?.takeIf { it.isNotBlank() },
         ).joinToString(" · ")
-        Text(where, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(DisplaySanitizer.display(where), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(request.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             ToneChip(Labels.risk(request.risk.level), Labels.riskTone(request.risk.level))
         }
+        HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
 
         CommandBlock(request)
         FactsBlock(request)
@@ -191,12 +211,18 @@ private fun ApprovalBody(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (Decision.DENY in request.allowedDecisions) {
+            if (hasPlainDeny) {
                 OutlinedButton(
                     onClick = { run(Decision.DENY, ExtraConfirmationLevel.NONE) },
                     enabled = deny is Enablement.Enabled && !busy && !inFlight,
                     modifier = Modifier.weight(1f),
                 ) { Text(S.DENY) }
+            } else if (stopIsTheDeny) {
+                OutlinedButton(
+                    onClick = ::startStop,
+                    enabled = stop is Enablement.Enabled && !busy && !inFlight && authReady,
+                    modifier = Modifier.weight(1f),
+                ) { Text(S.DENY_STOP_ONLY) }
             }
             if (Decision.ALLOW in request.allowedDecisions) {
                 val gate: ApprovalGate? = (allow as? Enablement.Enabled)?.gate
@@ -222,7 +248,7 @@ private fun ApprovalBody(
                     )
                 }
             }
-            if (canStopAtAll) {
+            if (canStopAtAll && hasPlainDeny) {
                 Box {
                     IconButton(onClick = { menuOpen = true }, enabled = !busy && !inFlight) {
                         Icon(Icons.Filled.MoreVert, contentDescription = S.MORE)
@@ -233,14 +259,7 @@ private fun ApprovalBody(
                             enabled = stop is Enablement.Enabled && authReady,
                             onClick = {
                                 menuOpen = false
-                                val gate = (stop as? Enablement.Enabled)?.gate
-                                if (gate != null) {
-                                    if (gate.extraConfirmation == ExtraConfirmationLevel.NONE) {
-                                        run(Decision.DENY_AND_STOP, ExtraConfirmationLevel.NONE)
-                                    } else {
-                                        stopDialog = true
-                                    }
-                                }
+                                startStop()
                             },
                         )
                     }
@@ -289,9 +308,11 @@ private fun ApprovalBody(
 private fun CommandBlock(request: ApprovalRequest) {
     val command = request.details.command
     val preview = request.details.diffPreview ?: request.details.contentPreview
-    val text = command ?: preview ?: return
+    val raw = command ?: preview ?: return
+    // Hidden / direction-changing characters become visible ⟨U+XXXX⟩ escapes; the text wraps, so nothing sits off screen.
+    val text = DisplaySanitizer.display(raw)
     var expanded by remember(request.requestId) { mutableStateOf(false) }
-    val long = text.length > 160 || text.count { it == '\n' } >= 4
+    val long = text.length > 120 || text.count { it == '\n' } >= 4
     InfoCard(container = MaterialTheme.colorScheme.surfaceVariant) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -309,8 +330,8 @@ private fun CommandBlock(request: ApprovalRequest) {
             fontFamily = FontFamily.Monospace,
             maxLines = if (expanded) Int.MAX_VALUE else 4,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            softWrap = false,
+            softWrap = true,
+            modifier = Modifier.fillMaxWidth(),
         )
         if (request.details.truncated) {
             Text(S.TRUNCATED, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -325,10 +346,10 @@ private fun FactsBlock(request: ApprovalRequest) {
     val mcp = details.mcpServer?.takeIf { it.isNotBlank() }
     if (cwd == null && details.filePaths.isEmpty() && mcp == null) return
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (cwd != null) FactLine(S.WHERE, cwd)
-        if (mcp != null) FactLine(S.MCP_SERVER, mcp)
+        if (cwd != null) FactLine(S.WHERE, DisplaySanitizer.display(cwd))
+        if (mcp != null) FactLine(S.MCP_SERVER, DisplaySanitizer.display(mcp))
         if (details.filePaths.isNotEmpty()) {
-            val shown = details.filePaths.take(5).joinToString("\n")
+            val shown = details.filePaths.take(5).joinToString("\n") { DisplaySanitizer.display(it) }
             val more = details.filePaths.size - 5
             FactLine(S.AFFECTED, if (more > 0) "$shown\n+${more}개" else shown)
         }
@@ -374,7 +395,7 @@ private fun PurposeBlock(request: ApprovalRequest) {
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
         )
         Text(
-            text = "“$purpose”",
+            text = "“${DisplaySanitizer.display(purpose)}”",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
         )

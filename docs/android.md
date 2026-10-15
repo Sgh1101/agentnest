@@ -126,7 +126,12 @@ android/app/src/main/kotlin/dev/agentnest/app/
 
 - **추가 확인의 실제 게이트는 길게 누르기와 재확인 시트다.** `setConfirmationRequired`는 얼굴·홍채 같은 *수동* 생체에서 확인 탭을 요구할지에 대한 **시스템 힌트**일 뿐(시스템이 무시할 수 있고 지문 기기에는 영향이 없음 — 갤럭시 S 시리즈처럼 지문 인증 기기에서는 사실상 무의미) 보안 통제로 취급하지 않는다. [검증: developer.android.com `BiometricPrompt.PromptInfo.Builder#setConfirmationRequired` 2026-10-15 열람] 서버는 `extra_confirmation.completed`(클라이언트가 길게 누르기·시트를 거쳤다는 주장)를 검사하되 이것도 폰의 주장임을 안다(`security.md` §6.4).
 - `purpose`는 에이전트가 쓴 텍스트라 **"에이전트가 한 말 (검증 안 됨)"** 으로 라벨링하고 실제 명령·영향 경로·위험 등급보다 시각적으로 아래·작게 둔다(영문 의미: *Agent says (unverified)*). 헤드업 알림 본문·생체 프롬프트·`headline`에도 쓰지 않는다(허용 판단의 근거로 삼지 않게). `allowed_decisions`에 없는 결정의 버튼은 만들지 않는다 — Codex hooks 출처(`origin=codex.hook.cli`) 카드는 "거부 + 멈추기" 메뉴 대신 "거부만 가능 (Codex hooks는 작업을 멈출 수 없어요)"를 표시한다.
-- 생체 프롬프트: 제목 "승인 확인", 부제 = `title`, 설명 = `details.command` 80자.
+- 생체 프롬프트: 제목 "승인 확인", 부제 = `title`, 설명 = `details.command` 80자(첫 줄). 모든 텍스트는 아래 표시 정화를 거친다.
+- **표시 정화(`core/text/DisplaySanitizer`, 순수·테스트됨)**: 명령·경로·cwd·diff/내용 미리보기·MCP 서버·`purpose`·`title`·프로젝트명을 화면(상세·카드·홈·재확인 대화상자·세션/이벤트 줄)과 생체 프롬프트에 올리기 전에, 방향 제어(U+202A-202E, U+2066-2069)·폭 0/서식 문자(Cf: U+200B-200F, U+061C, U+FEFF, U+2060-2064 …)·C0/C1 제어 문자(개행·탭 제외)·줄/문단 구분자·고아 서로게이트·빈 채움 글자(U+3164 등)를 눈에 보이는 `⟨U+202E⟩` 이스케이프로 바꾼다. 하나라도 있으면 경고 칩 "보이지 않는 문자 N개"를 보이고(프롬프트 설명에는 둘째 줄로), **allow·deny_and_stop의 추가 확인을 최소 HOLD로 올린다**(`DecisionValidator.gate`, 빌드 단계에서도 강제; 일반 `deny`는 그대로). 실행될 명령 블록은 줄바꿈으로 **전부 감싸 보이고**(가로 스크롤 없음) 접힘 상태는 4줄 + "전체 보기".
+- **결정 바인딩 재확인**: 생체 프롬프트가 닫힌 뒤 다시 읽은 카드의 `request_id`·`session_key`·`nonce_b64`·`tool_input_sha256`이 프롬프트를 띄운 카드와 같지 않으면 아무것도 만들지 않는다(`Blocked(BINDING_CHANGED)`). 리듀서도 이미 아는 `request_id`에 다른 nonce/해시의 본문이 오면(approval_request·snapshot 모두) 새 본문을 버리고 카드를 잠그며(`bindingConflict`, 해제 불가 — PC에서 처리) `snapshot_request`를 보낸다. 요청마다 결정 흐름은 **동시에 하나**만 돈다(두 번째 호출은 `Blocked(IN_FLIGHT)`, 프롬프트 중복 없음).
+- **재동기화 중 비활성**: `welcome` 뒤 `snapshot`이 올 때까지(`resync.awaitingSnapshot`) 모든 카드의 버튼은 비활성("PC와 다시 맞추는 중이에요"). `resync.mode=replay`는 끝 표지가 없어 이 보호를 받지 못한다(서버가 결정 시점에 다시 검증).
+- 형식이 잘못된 바인딩 필드(`request_id`가 `ar_`+UUIDv7 아님, `nonce_b64`가 16바이트 base64 아님, `tool_input_sha256`이 소문자 hex 64자 아님)를 가진 카드는 수신 시 버리고, 같은 검사가 `decision` 인코딩에도 적용된다(받을 수 없는 값은 보내지도 않는다). `risk.extra_confirmation: null`은 `none`이 아니라 `unknown`(가장 강한 요구)으로 읽는다.
+- `deny`가 `allowed_decisions`에 없고 `deny_and_stop`만 허용되면 그 버튼이 "거부" 자리에 **"거부 (중단)"** 으로 나온다(`protocol.md` §6.1). 상세·페어링 화면은 `FLAG_SECURE`(스크린샷·화면 녹화·최근 앱 썸네일 차단)와 `filterTouchesWhenObscured`(오버레이 위 탭 무시)를 켠다. 길게 누르기 버튼은 접근성 서비스에 `onClick`("확인 창 열기")을 노출하고, 그 동작은 명시적 확인 대화상자를 연다(터치 입력은 여전히 길게 눌러야 한다).
 - 전송 후 "PC에 전달 중…" → `decision_result{APPLIED}` → "허용했어요 · Claude에 전달했어요" → `approval_resolved{observed_result}` 갱신 시 "Claude가 실행했어요". 5초 내 `decision_result` 없으면 "확인 중…" 유지(**재전송 안 함**).
 - 만료/해결된 카드: 버튼 제거 + "시간이 지나 PC에서 직접 처리하도록 넘겼어요" / 결과 배지. `expires_at − skew − 5s` 이후엔 버튼 비활성.
 - 오프라인(`link != Connected`): 버튼 비활성 + "PC와 연결이 끊겨 지금은 응답할 수 없어요". **결정을 큐에 넣지 않는다.**
@@ -178,6 +183,7 @@ sealed interface LinkState {
 - 백오프: 1, 2, 4, 8, 16, 32, 60, 60… 초 ±20% 지터. `registerDefaultNetworkCallback.onAvailable`·앱 포그라운드 전환·사용자 "재연결"에서 즉시 리셋.
 - 호스트 순회(`HostBook`): 시도 순서 = **`welcome.hosts`/`hosts_update`로 저장한 최신 주소 → 수동 입력 주소 → QR `hosts[]`**(각 3초 connect timeout), 성공 호스트를 선두로 저장. 저장 대상은 사설 대역 주소만(10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7), 최대 8개(`protocol.md` §4.5). 단일 NIC DHCP 변경처럼 기존 주소가 사라진 경우 `hosts_update`가 오지 못하므로 `PcUnreachable` 화면에서 **'IP 직접 입력'**(또는 PC '기기 추가' QR을 다시 스캔하되 `pc_id`·`spki_pin`이 저장값과 같으면 주소만 갱신)로 복구한다.
 - **`NeedsRepair`와 '다시 페어링'**: `E_AUTH_FAILED`가 연속 3회면(`protocol.md` §9.1) `NeedsRepair(AuthFailed)`로 전이해 자동 재시도를 멈추고 "다시 페어링" 버튼을 보인다. `Revoked`(4003)·`Suspended`(핀 불일치)에서도 같은 버튼을 보인다. 버튼은 확인 대화상자("PC 화면의 QR을 직접 스캔해야 해요. 모르는 사람이 준 QR은 쓰지 마세요") 뒤에 **로컬 토큰·핀·`pc_id`·Keystore 항목을 삭제하고 `Suspended`/`Revoked` 상태를 해제**한 뒤 `Pairing` 화면으로 보낸다. PC 신원 재생성(`security.md` §10)처럼 합법적으로 핀이 바뀐 경우 1시간을 기다리지 않고 이 경로로 복구한다.
+- **카운터 영속화·라운드 단위 계산**: 핀 불일치는 호스트 시도마다가 아니라 **연결 라운드(주소 목록 한 바퀴)당 1회**만 세고, 그 라운드의 모든 호스트가 핀 불일치였을 때만 센다(옛 IP를 다른 기기가 쓰고 진짜 PC는 꺼져 있는 경우가 단독으로 `Suspended`/`NeedsRepair`를 만들지 못하게). 카운터(`LinkCounters`: 인증 실패 횟수·핀 불일치 라운드·정지 횟수·`suspendedUntil`·`NeedsRepair` 사유)는 `LinkEffect.PersistCounters`로 DataStore(페어링 데이터와 같은 저장소 — 새 페어링·삭제 시 함께 지워짐)에 저장되고, 서비스 재시작(프로세스 종료 포함) 때 `initialCounters`로 복원된다: 남은 정지 시간이 있으면 접속하지 않고 `Suspended`로, 저장된 `NeedsRepair`는 그대로 복원한다. 한 번 성공(welcome)하면 전부 0으로 되돌린다.
 - OkHttp `pingInterval(25s)`; 70초 수신 없음 → 끊고 재연결(pong 미수신 시 `onFailure` 여부는 [미검증] → 앱 레벨 규칙이 보증).
 - 연결마다 `hello{last_seq}` → `welcome.resync` 처리. `snapshot`은 로컬 상태 **교체**.
 - 시계 보정: `welcome.server_time`/`challenge.server_time`과 폰 시계 차 `skew_ms` 저장. `DecisionValidator`는 `expires_at − skew − 5s`, `decided_at`은 폰 시계 + skew.
@@ -194,7 +200,7 @@ sealed interface LinkState {
 ### 4.1 TokenVault (Keystore AES-256-GCM, [검증: keystore 가이드])
 
 - alias `agentnest.device_token.v1`, `PURPOSE_ENCRYPT|DECRYPT`, GCM/NoPadding, 256비트, **`setUserAuthenticationRequired(false)`**, **`setUnlockedDeviceRequired` 금지**(FGS가 잠금 중 재연결), StrongBox 시도 후 `StrongBoxUnavailableException`이면 폴백. 봉인 결과 `[iv(12)|ct+tag]` base64 → DataStore.
-- `KeyPermanentlyInvalidatedException`/`AEADBadTagException` → 토큰 폐기 + 재페어링 유도.
+- `TokenVault.open`은 3상태(`Ok`/`Invalid`/`Transient`)다. **`KeyPermanentlyInvalidatedException`/`AEADBadTagException`(그리고 정상적으로 열린 Keystore에 키가 아예 없음)만** 토큰 폐기 + 재페어링 유도로 이어진다. 그 밖의 Keystore 오류(데몬 재시작·`ProviderException`·I/O 등)는 `Transient`: 1·2·4·8·16·30초 간격으로 재시도하고, 그래도 안 되면 **지우지 않고** 서비스를 멈춘 뒤 "연결을 시작하지 못했어요" 알림만 띄운다.
 - `DeviceKey`: alias `agentnest.device.v1`, EC P-256 `PURPOSE_SIGN`, 비추출, StrongBox 시도. Phase 1은 **공개키(SPKI DER)만** `pair`에 실어 등록. Phase 3에서 `setUserAuthenticationParameters`(작업별) + `CryptoObject` 서명 검토.
 - `android:allowBackup="false"` + `dataExtractionRules`로 앱 데이터 전부 제외(Keystore 키는 이전 불가라 복원 후 불일치 방지).
 
@@ -226,7 +232,7 @@ sealed interface LinkState {
 | 채널 id | 중요도 | 내용 | 소리/진동 | 취소 |
 | --- | --- | --- | --- | --- |
 | `approvals` (+`approvals_quiet`) | HIGH(헤드업) | 제목 "승인 필요 · Claude Code", 본문 = `title` + 위험 등급 + 남은 시간. **명령 전문 없음**(잠금 화면). **인라인 허용/거부 액션 없음**(탭 → ApprovalDetail). `setTimeoutAfter(expires_at − now)` | on(설정) | `approval_resolved`, 만료, 앱에서 열람 |
-| `alerts` | DEFAULT | 오류(`turn_failed`, `agent_error`, `test_failed`), Codex P0/P1 리뷰(**리뷰 소스가 활성일 때만** — hooks 기본 모드에서는 발생하지 않음, `codex.md` §8) | 진동 | 세션당 60초 1건 |
+| `alerts` | DEFAULT | 오류(`turn_failed`, `agent_error`, `test_failed`; **제목 = 종류 라벨("작업 실패" 등), 본문 = 에이전트·프로젝트 — 이벤트 `headline`(`{cmd60}` 명령 조각 포함)은 쓰지 않는다**), Codex P0/P1 리뷰(**리뷰 소스가 활성일 때만** — hooks 기본 모드에서는 발생하지 않음, `codex.md` §8) | 진동 | 세션당 60초 1건 |
 | `completions` | LOW | `turn_completed`(30초 이상 턴만) | 없음 | 조용한 시간 무음 |
 | `link` | MIN | FGS 상시: "연결됨 · DESKTOP-HOME" / "다시 연결 중 (3회, 8초 후)" / "오프라인". 액션: 다시 연결, 일시정지 | 없음 | 서비스 종료 |
 | `security` | HIGH | 기기 폐기됨, 핀 불일치(MITM 의심), 페어링 실패 반복 | 진동 | — |

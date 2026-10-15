@@ -13,11 +13,14 @@ import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.Labels
 import dev.agentnest.app.ui.S
 import dev.agentnest.app.ui.Tone
+import dev.agentnest.app.ui.common.HiddenCharsChip
 import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.ToneChip
+import dev.agentnest.core.approval.ApprovalDisplay
 import dev.agentnest.core.approval.DecisionValidator
 import dev.agentnest.core.nest.ApprovalCard
 import dev.agentnest.core.nest.NestState
+import dev.agentnest.core.text.DisplaySanitizer
 import dev.agentnest.core.text.RelativeTime
 import java.time.Instant
 
@@ -48,10 +51,10 @@ fun ApprovalSummaryCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(request.title, style = MaterialTheme.typography.bodyLarge)
+        Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.bodyLarge)
         request.details.command?.let { command ->
             Text(
-                text = command,
+                text = DisplaySanitizer.display(command),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 2,
@@ -60,7 +63,8 @@ fun ApprovalSummaryCard(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             ToneChip(Labels.risk(request.risk.level), Labels.riskTone(request.risk.level))
-            val project = request.project.name
+            HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
+            val project = DisplaySanitizer.display(request.project.name)
             if (project.isNotBlank()) {
                 Text(
                     project,

@@ -15,6 +15,9 @@ interface ActivityHost {
     /** Asks for POST_NOTIFICATIONS on Android 13+ (no-op earlier). */
     fun requestNotificationPermission()
 
+    /** Sets or clears `FLAG_SECURE` and touch filtering on the window (approval detail, pairing). Main thread only. */
+    fun setSecure(secure: Boolean)
+
     /** Starts [intent]; silently ignores a missing handler. */
     fun launchSafely(intent: Intent)
 }

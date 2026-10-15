@@ -136,6 +136,18 @@ class NestRepository(
     /** Sends a decision built by `DecisionBuilder`. False when not connected or already in flight. Never queued. */
     suspend fun submitDecision(message: DecisionMessage): Boolean = client?.submitDecision(message) ?: false
 
+    private val activeDecisions = HashSet<String>()
+
+    /** Claims the decision flow of [requestId]; false when one is already running (single flight per request). */
+    @Synchronized
+    fun beginDecision(requestId: String): Boolean = activeDecisions.add(requestId)
+
+    /** Releases the claim taken by [beginDecision]. */
+    @Synchronized
+    fun endDecision(requestId: String) {
+        activeDecisions.remove(requestId)
+    }
+
     /** Sends any client message (`approval_seen`, `events_request`). False when not connected. */
     suspend fun send(message: ClientMessage): Boolean = client?.send(message) ?: false
 

@@ -44,12 +44,14 @@ import dev.agentnest.app.ui.S
 import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.agents.SessionCard
 import dev.agentnest.app.ui.agents.StatusDot
+import dev.agentnest.app.ui.common.HiddenCharsChip
 import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.LinkBanner
 import dev.agentnest.app.ui.common.LinkBannerActions
 import dev.agentnest.app.ui.common.ToneChip
 import dev.agentnest.app.ui.theme.ToneTheme
 import dev.agentnest.app.ui.theme.isDarkTheme
+import dev.agentnest.core.approval.ApprovalDisplay
 import dev.agentnest.core.approval.DecisionValidator
 import dev.agentnest.core.approval.Enablement
 import dev.agentnest.core.link.ClockSkew
@@ -59,6 +61,7 @@ import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.Decision
 import dev.agentnest.core.protocol.ExtraConfirmationLevel
 import dev.agentnest.core.protocol.SessionState
+import dev.agentnest.core.text.DisplaySanitizer
 import dev.agentnest.core.text.RelativeTime
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -287,12 +290,13 @@ private fun ActionCard(
             Text("${RelativeTime.countdown(left)} ${S.REMAINING}", style = MaterialTheme.typography.labelLarge)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(request.title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             ToneChip(Labels.risk(request.risk.level), Labels.riskTone(request.risk.level))
         }
+        HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
         request.details.command?.let {
             Text(
-                text = it,
+                text = DisplaySanitizer.display(it),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 2,
@@ -346,7 +350,7 @@ private fun RecentResults(nest: NestState, now: Instant) {
         if (error != null) {
             val ago = Format.ago(error.ts, now, nest.clockSkewMs)
             Text(
-                text = if (ago != null) "${error.summary.headline} · $ago" else error.summary.headline,
+                text = DisplaySanitizer.display(error.summary.headline).let { if (ago != null) "$it · $ago" else it },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

@@ -141,7 +141,7 @@ class LinkClientTest {
 
         // the user decides: validator -> builder -> client
         val card = client.nest.value.approvals.getValue(request.requestId)
-        val ctx = DecisionContext(clock().instant(), client.nest.value.clockSkewMs, client.nest.value.link, client.nest.value.sessions["claude_code:s1"], client.nest.value.welcome!!.policy)
+        val ctx = DecisionContext.from(client.nest.value, card.request!!, clock().instant())
         val built = assertIs<BuildResult.Built>(
             DecisionBuilder { T.id() }.build(
                 card, Decision.ALLOW,

@@ -112,9 +112,9 @@ fun EventRow(event: AgentEvent, skewMs: Long, modifier: Modifier = Modifier, sho
                 }
             }
         }
-        if (event.summary.headline.isNotBlank()) Text(event.summary.headline, style = MaterialTheme.typography.bodyMedium)
+        if (event.summary.headline.isNotBlank()) Text(dev.agentnest.core.text.DisplaySanitizer.display(event.summary.headline), style = MaterialTheme.typography.bodyMedium)
         event.summary.detail?.takeIf { it.isNotBlank() }?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(dev.agentnest.core.text.DisplaySanitizer.display(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

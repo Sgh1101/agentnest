@@ -80,6 +80,8 @@ class AppContainer(private val app: Application) {
         device = { deviceDescriptor() },
         persist = { result -> persistPairing(result) },
         onPersisted = { onPairingPersisted() },
+        rollback = { withContext(storeDispatcher) { wipePairingLocal() } },
+        transportShutdown = { (it as? OkHttpWsTransport)?.shutdown() },
     )
 
     val controller: AndroidAppController by lazy { AndroidAppController(app, this) }

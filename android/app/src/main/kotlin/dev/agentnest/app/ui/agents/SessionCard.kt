@@ -27,6 +27,7 @@ import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.ToneChip
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.SessionState
+import dev.agentnest.core.text.DisplaySanitizer
 import java.time.Instant
 
 /**
@@ -71,7 +72,7 @@ fun SessionCard(
             )
         }
         if (session.headline.isNotBlank()) {
-            Text(session.headline, style = MaterialTheme.typography.bodyMedium)
+            Text(DisplaySanitizer.display(session.headline), style = MaterialTheme.typography.bodyMedium)
         }
         BadgeRow(session, nest)
         val last = Format.ago(session.lastEventAt, now, skew)
@@ -121,14 +122,14 @@ private fun Details(session: SessionState, nest: NestState, now: Instant) {
     if (session.recentFiles.isNotEmpty()) {
         Text(S.RECENT_FILES, style = MaterialTheme.typography.labelMedium)
         for (file in session.recentFiles.take(5)) {
-            MonoLine("${opLabel(file.op)}  ${file.pathHint}")
+            MonoLine("${opLabel(file.op)}  ${DisplaySanitizer.display(file.pathHint)}")
         }
     }
     if (session.recentCommands.isNotEmpty()) {
         Text(S.RECENT_COMMANDS, style = MaterialTheme.typography.labelMedium)
         for (command in session.recentCommands.take(3)) {
             val exit = command.exitCode?.let { if (it == 0) "" else "  (코드 $it)" } ?: ""
-            MonoLine(command.commandPreview + exit)
+            MonoLine(DisplaySanitizer.display(command.commandPreview) + exit)
         }
     }
 }

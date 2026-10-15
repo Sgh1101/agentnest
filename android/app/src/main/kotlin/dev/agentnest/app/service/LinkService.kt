@@ -17,6 +17,9 @@ import dev.agentnest.app.notify.AlertPolicy
 import dev.agentnest.app.notify.AlertThrottle
 import dev.agentnest.app.notify.LinkNotifier
 import dev.agentnest.app.notify.NotificationTexts
+import dev.agentnest.app.vault.VaultAction
+import dev.agentnest.app.vault.VaultResult
+import dev.agentnest.app.vault.VaultRetry
 import dev.agentnest.core.crypto.B64
 import dev.agentnest.core.crypto.SpkiPin
 import dev.agentnest.core.link.DeviceCredentials
@@ -138,12 +141,30 @@ class LinkService : Service() {
                 stopFromBackground()
                 return@launch
             }
-            val token = withContext(Dispatchers.Default) { openToken(blob) }
-            if (token == null) {
-                // The Keystore refused (invalidated / bad tag): wipe and ask for a new pairing (docs/android.md 4.1).
-                container.handleVaultInvalid()
-                stopFromBackground()
-                return@launch
+            var token: String? = null
+            var attempt = 0
+            while (token == null) {
+                val result = withContext(Dispatchers.Default) { openToken(blob) }
+                when (VaultRetry.action(result, attempt)) {
+                    VaultAction.CONNECT -> token = tokenText((result as VaultResult.Ok).plain)
+                    VaultAction.WIPE_PAIRING -> {
+                        // Key permanently invalidated / data does not authenticate: wipe and ask for a new pairing
+                        // (docs/android.md 4.1). Only these two failures (and a truly missing key) lead here.
+                        container.handleVaultInvalid()
+                        stopFromBackground()
+                        return@launch
+                    }
+                    VaultAction.RETRY -> {
+                        // A transient Keystore failure never costs the pairing: wait and try again.
+                        delay(VaultRetry.delayMs(attempt))
+                        attempt++
+                    }
+                    VaultAction.GIVE_UP -> {
+                        container.alertNotifier.serviceStartBlocked()
+                        stopFromBackground()
+                        return@launch
+                    }
+                }
             }
             val pin = SpkiPin.parse(data.pinString)
             if (pin == null) {
@@ -152,6 +173,7 @@ class LinkService : Service() {
                 return@launch
             }
             credentials = DeviceCredentials(data.deviceId, token)
+            val counters = container.pairingStore.loadCounters()
             val newTransport = OkHttpWsTransport(pin)
             val newClient = LinkClient(
                 transport = newTransport,
@@ -165,6 +187,7 @@ class LinkService : Service() {
                 ),
                 scope = workScope,
                 initialState = container.repository.nest.value,
+                initialCounters = counters,
                 onError = { e -> Log.w(TAG, "link client error: ${e.javaClass.simpleName}") },
             )
             transport = newTransport
@@ -176,14 +199,15 @@ class LinkService : Service() {
         }
     }
 
-    private fun openToken(blob: String): String? {
-        val bytes = B64.decode(blob) ?: return null
-        val plain = container.vault.open(bytes) ?: return null
-        return try {
-            String(plain, Charsets.UTF_8)
-        } finally {
-            plain.fill(0)
-        }
+    private fun openToken(blob: String): VaultResult {
+        val bytes = B64.decode(blob) ?: return VaultResult.Invalid // stored data is not even base64
+        return container.vault.open(bytes)
+    }
+
+    private fun tokenText(plain: ByteArray): String = try {
+        String(plain, Charsets.UTF_8)
+    } finally {
+        plain.fill(0)
     }
 
     private fun stopFromBackground() {
@@ -318,7 +342,7 @@ class LinkService : Service() {
         val now = Instant.now()
         when (kind) {
             AlertKind.ERROR -> if (errorThrottle.allow(event.sessionKey, now)) {
-                container.alertNotifier.error(NotificationTexts.alert(event, session), event.sessionKey)
+                container.alertNotifier.error(NotificationTexts.alert(event, session, AlertKind.ERROR), event.sessionKey)
             }
             AlertKind.COMPLETION -> if (completionThrottle.allow(event.sessionKey, now)) {
                 container.alertNotifier.completion(NotificationTexts.alert(event, session), event.sessionKey)

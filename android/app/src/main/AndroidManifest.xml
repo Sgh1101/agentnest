@@ -57,10 +57,11 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
-        <!-- Optional auto-connect after boot (off by default, user setting). -->
+        <!-- Optional auto-connect after boot (off by default, user setting). The system delivers BOOT_COMPLETED to
+             non-exported receivers too; exported=false keeps every other app from poking it. -->
         <receiver
             android:name=".service.BootReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>

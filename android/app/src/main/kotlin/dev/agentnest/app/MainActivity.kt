@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -62,6 +63,12 @@ class MainActivity : FragmentActivity(), ActivityHost {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    override fun setSecure(secure: Boolean) {
+        if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Ignore touches while another window overlays this one: nobody can tap Allow through a transparent overlay.
+        window.decorView.filterTouchesWhenObscured = secure
     }
 
     override fun launchSafely(intent: Intent) {
