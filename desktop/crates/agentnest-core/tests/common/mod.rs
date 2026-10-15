@@ -1,6 +1,8 @@
 //! Helpers shared by the integration tests of `agentnest-core` (not a test target itself).
 #![allow(dead_code)]
 
+pub mod harness;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -5,7 +5,11 @@ pub mod hooks;
 // UNVERIFIED (Phase 0): Codex shared daemon socket subscription.
 #[cfg(feature = "codex-daemon-observer")]
 pub mod daemon_observer;
-// UNVERIFIED (Phase 0): rollout JSONL backfill.
+/// Codex hooks configuration (draft; UNVERIFIED Phase 0 C6) and the manual installation text.
+pub mod install;
+/// Answers to Codex: app-server decision strings and the hooks reply.
+pub mod responder;
 pub mod review;
+// UNVERIFIED (Phase 0): rollout JSONL backfill.
 #[cfg(feature = "codex-rollout")]
 pub mod rollout;

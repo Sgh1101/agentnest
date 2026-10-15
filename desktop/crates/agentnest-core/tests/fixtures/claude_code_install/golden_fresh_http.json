@@ -1,0 +1,233 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 150,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            },
+            "statusMessage": "AgentNest: 휴대폰 승인 대기 중 (트레이에서 '로컬로 처리' 가능)"
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 5,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
+            "timeout": 1,
+            "headers": {
+              "X-AgentNest-Token": "an_hk_TESTTOKEN"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "agentnest-hook statusline"
+  }
+}

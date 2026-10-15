@@ -14,6 +14,9 @@ adapter-codex-hooks = []
 codex-daemon-observer = []
 # UNVERIFIED (Phase 0): Codex rollout JSONL backfill. Default off.
 codex-rollout = []
+# UNVERIFIED (Phase 0 C6): answering a Codex hooks `PermissionRequest` and writing hooks.json. Default off: until C6
+# passes the hooks path is observation only.
+codex-hooks-approval = []
 # Dev: replays fixture JSONL through the adapter API.
 adapter-mock = []
 
@@ -50,6 +53,7 @@ directories = { workspace = true }
 local-ip-address = { workspace = true }
 
 [dev-dependencies]
+ureq = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tempfile = { workspace = true }
 jsonschema = { workspace = true }

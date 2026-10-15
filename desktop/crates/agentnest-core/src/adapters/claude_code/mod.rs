@@ -16,7 +16,10 @@
 //!
 //! [`RawObservation`]: agentnest_adapter_api::RawObservation
 
+pub mod install;
 pub mod normalize;
+pub mod responder;
+pub mod statusline;
 
 pub use normalize::{
     hook_event_name, normalize, permission_request_draft, pre_tool_use_ask_reply,
