@@ -5,13 +5,15 @@ members = [
   "crates/agentnest-adapter-api",
   "crates/agentnest-core",
   "crates/agentnest-hook",
-  # "apps/desktop/src-tauri",   # enabled by the Tauri-shell task once that crate exists (docs/architecture.md 3.1)
+  "crates/agentnest-shell-api",
+  "apps/desktop/src-tauri",       # Tauri glue: NOT a default member (needs webkit2gtk on Linux; docs/architecture.md 3.1)
 ]
 default-members = [
   "crates/agentnest-protocol",
   "crates/agentnest-adapter-api",
   "crates/agentnest-core",
   "crates/agentnest-hook",
+  "crates/agentnest-shell-api",
 ]
 
 [workspace.package]
@@ -48,6 +50,7 @@ anyhow = "1.0.104"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 tracing-appender = "0.2.5"
+tracing-log = "0.2.0"          # log -> tracing bridge for the desktop shell (tauri-plugin-log records)
 futures-util = "0.3.34"
 directories = "6.0.0"
 local-ip-address = "0.6.13"

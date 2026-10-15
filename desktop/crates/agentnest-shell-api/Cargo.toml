@@ -1,0 +1,27 @@
+[package]
+name = "agentnest-shell-api"
+version = "0.1.0"
+description = "Everything of the desktop (Tauri) shell that does not need Tauri types: command contract, DTOs, event mapping, settings, diagnostics, firewall, tray model"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+agentnest-protocol = { path = "../agentnest-protocol" }
+agentnest-core = { path = "../agentnest-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-log = { workspace = true }
+rusqlite = { workspace = true }
+base64 = { workspace = true }
+directories = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+regex = { workspace = true }
