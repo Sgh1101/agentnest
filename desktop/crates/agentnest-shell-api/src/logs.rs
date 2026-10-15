@@ -56,7 +56,13 @@ fn max_level(level: LogLevel) -> tracing::Level {
 pub fn build_file_subscriber(
     logs_dir: &Path,
     level: LogLevel,
-) -> Result<(impl tracing::Subscriber + Send + Sync + 'static, WorkerGuard), LogInitError> {
+) -> Result<
+    (
+        impl tracing::Subscriber + Send + Sync + 'static,
+        WorkerGuard,
+    ),
+    LogInitError,
+> {
     fs::create_dir_all(logs_dir).map_err(|_| LogInitError::Writer)?;
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
@@ -90,11 +96,10 @@ fn log_files_newest_first(dir: &Path) -> io::Result<Vec<PathBuf>> {
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| {
-                    n.starts_with(&format!("{LOG_FILE_PREFIX}.")) && n.ends_with(&format!(".{LOG_FILE_SUFFIX}"))
-                })
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                n.starts_with(&format!("{LOG_FILE_PREFIX}."))
+                    && n.ends_with(&format!(".{LOG_FILE_SUFFIX}"))
+            })
         })
         .collect();
     // the date is part of the name, so the lexicographic order is the chronological one
@@ -133,7 +138,10 @@ fn auth_header_pattern() -> Option<&'static Regex> {
 
 /// Masks and bounds one log line for display.
 pub fn sanitize_line(line: &str) -> String {
-    let cleaned: String = line.chars().filter(|c| !c.is_control() || *c == '\t').collect();
+    let cleaned: String = line
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .collect();
     let cleaned = match auth_header_pattern() {
         Some(re) => re.replace_all(&cleaned, "<redacted>").into_owned(),
         None => cleaned,
@@ -194,7 +202,16 @@ mod tests {
         write(dir.path(), "agentnest.2026-10-15.log", &numbered("new", 3));
         write(dir.path(), "unrelated.txt", &["x".to_owned()]);
         let t = tail_log_lines(dir.path(), 5).unwrap();
-        assert_eq!(t, vec!["old line 8", "old line 9", "new line 0", "new line 1", "new line 2"]);
+        assert_eq!(
+            t,
+            vec![
+                "old line 8",
+                "old line 9",
+                "new line 0",
+                "new line 1",
+                "new line 2"
+            ]
+        );
     }
 
     #[test]
@@ -222,14 +239,18 @@ mod tests {
     #[test]
     fn missing_directory_and_empty_directory_are_empty() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(tail_log_lines(&dir.path().join("nope"), 10).unwrap().is_empty());
+        assert!(tail_log_lines(&dir.path().join("nope"), 10)
+            .unwrap()
+            .is_empty());
         assert!(tail_log_lines(dir.path(), 10).unwrap().is_empty());
     }
 
     #[test]
     fn a_huge_file_is_read_from_its_end_only() {
         let dir = tempfile::tempdir().unwrap();
-        let lines: Vec<String> = (0..60_000).map(|i| format!("INFO filler line number {i} ........................")).collect();
+        let lines: Vec<String> = (0..60_000)
+            .map(|i| format!("INFO filler line number {i} ........................"))
+            .collect();
         write(dir.path(), "agentnest.2026-10-15.log", &lines);
         let t = tail_log_lines(dir.path(), 3).unwrap();
         assert_eq!(t.len(), 3);
@@ -257,8 +278,13 @@ mod tests {
         });
         drop(guard); // flush
         let t = tail_log_lines(dir.path(), 10).unwrap();
-        assert!(t.iter().any(|l| l.contains("hello from the shell")), "{t:?}");
-        assert!(t.iter().any(|l| l.contains("something odd") && l.contains("attempt=3")));
+        assert!(
+            t.iter().any(|l| l.contains("hello from the shell")),
+            "{t:?}"
+        );
+        assert!(t
+            .iter()
+            .any(|l| l.contains("something odd") && l.contains("attempt=3")));
         assert!(!t.iter().any(|l| l.contains("not at info level")));
     }
 
@@ -268,6 +294,9 @@ mod tests {
         let (subscriber, guard) = build_file_subscriber(dir.path(), LogLevel::Debug).unwrap();
         tracing::subscriber::with_default(subscriber, || tracing::debug!("fine detail"));
         drop(guard);
-        assert!(tail_log_lines(dir.path(), 10).unwrap().iter().any(|l| l.contains("fine detail")));
+        assert!(tail_log_lines(dir.path(), 10)
+            .unwrap()
+            .iter()
+            .any(|l| l.contains("fine detail")));
     }
 }

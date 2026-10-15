@@ -63,7 +63,9 @@ async fn post_hook(h: &Harness, body: &Value) -> u16 {
         "POST /v1/hooks/claude-code HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-AgentNest-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
         text.len()
     );
-    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
     s.write_all(req.as_bytes()).await.unwrap();
     let mut out = Vec::new();
     s.read_to_end(&mut out).await.unwrap();
@@ -136,7 +138,10 @@ async fn status_has_the_contract_shape_and_no_secret() {
     assert_eq!(v["codex_mode"], "hooks");
     assert_eq!(v["effective_ttl_s"], 120);
     assert_eq!(v["hook_timeout_s"], 0, "hooks are not installed yet");
-    assert_eq!(v["last_event_at"], json!({"claude_code": null, "codex": null}));
+    assert_eq!(
+        v["last_event_at"],
+        json!({"claude_code": null, "codex": null})
+    );
     assert!(v["wss_addr"].as_str().unwrap().starts_with("127.0.0.1:"));
     assert!(v["spki_pin"].as_str().unwrap().starts_with("sha256/"));
     let text = v.to_string();
@@ -151,25 +156,45 @@ async fn settings_round_trip_and_persist_through_the_daemon() {
     assert_eq!(v["approval.ttl_s"], 120);
     assert_eq!(v["risk.accepted"], json!([]));
 
-    let v = h.api.settings_set("approval.ttl_s", json!(90)).await.unwrap();
+    let v = h
+        .api
+        .settings_set("approval.ttl_s", json!(90))
+        .await
+        .unwrap();
     assert_eq!(v["approval.ttl_s"], 90);
     // the daemon wrote its config file
     let on_disk = AppConfig::load(&h.api.daemon().paths().config).unwrap();
     assert_eq!(on_disk.approval.ttl_s, 90);
     assert_eq!(h.api.daemon_status().await.unwrap().effective_ttl_s, 90);
 
-    let v = h.api.settings_set("approval.critical_remote", json!("local_only")).await.unwrap();
+    let v = h
+        .api
+        .settings_set("approval.critical_remote", json!("local_only"))
+        .await
+        .unwrap();
     assert_eq!(v["approval.critical_remote"], "local_only");
-    let v = h.api.settings_set("approval.deny_requires_auth", json!(true)).await.unwrap();
+    let v = h
+        .api
+        .settings_set("approval.deny_requires_auth", json!(true))
+        .await
+        .unwrap();
     assert_eq!(v["approval.deny_requires_auth"], true);
-    let v = h.api.settings_set("app.log_level", json!("debug")).await.unwrap();
+    let v = h
+        .api
+        .settings_set("app.log_level", json!("debug"))
+        .await
+        .unwrap();
     assert_eq!(v["app.log_level"], "debug");
     let on_disk = AppConfig::load(&h.api.daemon().paths().config).unwrap();
-    assert_eq!(on_disk.approval.deny_requires_auth, true);
+    assert!(on_disk.approval.deny_requires_auth);
     assert_eq!(on_disk.log_level, agentnest_core::config::LogLevel::Debug);
 
     // UI-only settings live in the UI store, not in the daemon config
-    let v = h.api.settings_set("app.notifications", json!(false)).await.unwrap();
+    let v = h
+        .api
+        .settings_set("app.notifications", json!(false))
+        .await
+        .unwrap();
     assert_eq!(v["app.notifications"], false);
     assert!(!h.api.notifications_enabled());
     assert!(!h.ui.load().notifications);
@@ -179,7 +204,11 @@ async fn settings_round_trip_and_persist_through_the_daemon() {
         .await
         .unwrap();
     assert_eq!(v["onboarding.codex_steps_done"], json!(["trust"]));
-    let v = h.api.settings_set("onboarding.completed", json!(true)).await.unwrap();
+    let v = h
+        .api
+        .settings_set("onboarding.completed", json!(true))
+        .await
+        .unwrap();
     assert_eq!(v["onboarding.completed"], true);
     assert!(h.api.onboarding_completed());
 }
@@ -226,20 +255,33 @@ async fn pairing_needs_r1_and_exposes_only_the_qr_svg() {
     let h = harness().await;
     let e = h.api.pairing_start().await.unwrap_err();
     assert_eq!(e.code, code::RISK_NOT_ACCEPTED);
-    assert_eq!(h.api.risk_accept("R2").await.unwrap_err().code, code::INVALID_SETTING);
+    assert_eq!(
+        h.api.risk_accept("R2").await.unwrap_err().code,
+        code::INVALID_SETTING
+    );
     h.api.risk_accept("R1").await.unwrap();
-    assert_eq!(h.api.settings_get().await.unwrap()["risk.accepted"], json!(["R1"]));
+    assert_eq!(
+        h.api.settings_get().await.unwrap()["risk.accepted"],
+        json!(["R1"])
+    );
     let p = h.api.pairing_start().await.unwrap();
     assert!(p.pairing_id.starts_with("p_"));
     assert!(p.qr_svg.contains("<svg"));
     let text = serde_json::to_string(&p).unwrap();
-    assert!(!text.contains("agentnest://"), "the QR content (with the pairing secret) never leaves");
+    assert!(
+        !text.contains("agentnest://"),
+        "the QR content (with the pairing secret) never leaves"
+    );
     assert_eq!(
         h.api.pairing_start().await.unwrap_err().code,
         code::PAIRING_BUSY
     );
     assert_eq!(
-        h.api.pairing_confirm(&p.pairing_id, true).await.unwrap_err().code,
+        h.api
+            .pairing_confirm(&p.pairing_id, true)
+            .await
+            .unwrap_err()
+            .code,
         code::PAIRING_NOT_PENDING,
         "no phone has proven the QR secret yet"
     );
@@ -256,9 +298,15 @@ async fn a_disabled_link_refuses_pairing_and_is_reported() {
     h.api.risk_accept("R1").await.unwrap();
     h.api.link_set_enabled(false).await.unwrap();
     assert!(!h.api.daemon_status().await.unwrap().link_enabled);
-    assert_eq!(h.api.pairing_start().await.unwrap_err().code, code::LINK_DISABLED);
+    assert_eq!(
+        h.api.pairing_start().await.unwrap_err().code,
+        code::LINK_DISABLED
+    );
     let env = h.api.link_envelope().await.unwrap();
-    assert_eq!(env.payload, json!({"enabled": false, "remote_approval_paused": false}));
+    assert_eq!(
+        env.payload,
+        json!({"enabled": false, "remote_approval_paused": false})
+    );
     h.api.link_set_enabled(true).await.unwrap();
     assert!(h.api.pairing_start().await.is_ok());
 }
@@ -285,7 +333,11 @@ async fn unknown_ids_have_their_own_codes() {
         code::DEVICE_NOT_FOUND
     );
     assert_eq!(
-        h.api.approval_handoff_local("ar_nope").await.unwrap_err().code,
+        h.api
+            .approval_handoff_local("ar_nope")
+            .await
+            .unwrap_err()
+            .code,
         code::UNKNOWN_REQUEST
     );
     let sha = "a".repeat(64);
@@ -299,7 +351,11 @@ async fn unknown_ids_have_their_own_codes() {
         code::UNKNOWN_REQUEST
     );
     assert_eq!(
-        h.api.tray_decide("ar_nope", Decision::Allow).await.unwrap_err().code,
+        h.api
+            .tray_decide("ar_nope", Decision::Allow)
+            .await
+            .unwrap_err()
+            .code,
         code::UNKNOWN_REQUEST
     );
     assert!(h.api.approvals_pending().await.unwrap().is_empty());
@@ -313,10 +369,20 @@ async fn claude_hooks_install_status_uninstall_follow_the_daemon() {
     let h = harness().await;
     let s = h.api.hooks_status(HookAgent::ClaudeCode).await.unwrap();
     assert!(!s.installed);
-    let s = h.api.hooks_install(HookAgent::ClaudeCode, HooksMode::Http).await.unwrap();
+    let s = h
+        .api
+        .hooks_install(HookAgent::ClaudeCode, HooksMode::Http)
+        .await
+        .unwrap();
     assert!(s.installed);
     assert!(s.path.as_deref().unwrap().ends_with("settings.json"));
-    assert!(h.api.hooks_status(HookAgent::ClaudeCode).await.unwrap().installed);
+    assert!(
+        h.api
+            .hooks_status(HookAgent::ClaudeCode)
+            .await
+            .unwrap()
+            .installed
+    );
     let st = h.api.daemon_status().await.unwrap();
     assert!(st.hooks_installed);
     assert_eq!(st.hook_timeout_s, 150, "TTL 120 + 30");
@@ -324,7 +390,11 @@ async fn claude_hooks_install_status_uninstall_follow_the_daemon() {
     assert!(!s.installed);
     assert!(!h.api.daemon_status().await.unwrap().hooks_installed);
     // Codex: instructions only until Phase 0 C6
-    let c = h.api.hooks_install(HookAgent::Codex, HooksMode::Cli).await.unwrap();
+    let c = h
+        .api
+        .hooks_install(HookAgent::Codex, HooksMode::Cli)
+        .await
+        .unwrap();
     assert!(!c.installed);
     assert!(!c.warnings.is_empty());
 }
@@ -345,8 +415,17 @@ async fn diagnostics_reflect_the_network_and_the_listener() {
     assert!(r.firewall.scoped_ok && r.firewall.rule_present && !r.firewall.block_rule_present);
     assert!(r.self_connect_ok, "the listener is really there");
     assert!(r.last_preauth_attempt.is_none());
-    assert!(r.hints_ko.iter().any(|x| x.contains("휴대폰이 PC에 닿지 못했어요")));
-    assert!(h.net.log.lock().unwrap().iter().any(|l| l.starts_with("profile 127.0.0.1")));
+    assert!(r
+        .hints_ko
+        .iter()
+        .any(|x| x.contains("휴대폰이 PC에 닿지 못했어요")));
+    assert!(h
+        .net
+        .log
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|l| l.starts_with("profile 127.0.0.1")));
 
     // a public network with no rule
     let mut net = FakeNetwork::new();
@@ -390,7 +469,10 @@ async fn a_pre_auth_attempt_shows_up_in_the_diagnostics_masked() {
     assert!(actions.is_empty());
     let r = h.api.diagnostics_run().await.unwrap();
     let a = r.last_preauth_attempt.unwrap();
-    assert_eq!((a.at.as_str(), a.ip_masked.as_str()), ("2026-10-15T09:00:00.000Z", "192.168.0.x"));
+    assert_eq!(
+        (a.at.as_str(), a.ip_masked.as_str()),
+        ("2026-10-15T09:00:00.000Z", "192.168.0.x")
+    );
     assert!(!r.hints_ko.iter().any(|x| x.contains("닿지 못했어요")));
 }
 
@@ -400,13 +482,24 @@ async fn creating_the_firewall_rule_is_verified_audited_and_scoped() {
     let r = h.api.firewall_rule_create().await.unwrap();
     assert!(r.ok && r.elevated && r.error.is_none());
     let port = h.api.daemon().link_addr().unwrap().port();
-    assert!(h.net.log.lock().unwrap().contains(&format!("create {port}")));
+    assert!(h
+        .net
+        .log
+        .lock()
+        .unwrap()
+        .contains(&format!("create {port}")));
     let rows = h.api.daemon().store().list_audit_log(20).unwrap();
-    let row = rows.iter().find(|r| r.action == "firewall_rule_created").expect("audit row");
+    let row = rows
+        .iter()
+        .find(|r| r.action == "firewall_rule_created")
+        .expect("audit row");
     assert_eq!(row.actor, "desktop_user");
     let details = row.details_json.clone().unwrap_or_default();
     assert!(details.contains("private") && details.contains("localsubnet"));
-    assert!(!details.contains("Program Files"), "no path in the audit details");
+    assert!(
+        !details.contains("Program Files"),
+        "no path in the audit details"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -415,8 +508,14 @@ async fn a_declined_uac_prompt_is_elevation_denied_and_changes_nothing() {
     net.create = ElevatedOutcome::Denied;
     net.remove = ElevatedOutcome::Denied;
     let h = harness_with_net(net).await;
-    assert_eq!(h.api.firewall_rule_create().await.unwrap_err().code, code::ELEVATION_DENIED);
-    assert_eq!(h.api.firewall_rule_remove().await.unwrap_err().code, code::ELEVATION_DENIED);
+    assert_eq!(
+        h.api.firewall_rule_create().await.unwrap_err().code,
+        code::ELEVATION_DENIED
+    );
+    assert_eq!(
+        h.api.firewall_rule_remove().await.unwrap_err().code,
+        code::ELEVATION_DENIED
+    );
     let rows = h.api.daemon().store().list_audit_log(20).unwrap();
     assert!(!rows.iter().any(|r| r.action.starts_with("firewall_rule")));
 }
@@ -489,7 +588,10 @@ async fn the_pump_forwards_daemon_events_in_order_with_batching_and_notification
     h.api.remote_approval_pause(true).await.unwrap();
     h.api.link_set_enabled(false).await.unwrap();
     let link = eventually("link envelope", || rec.emits("link").into_iter().next()).await;
-    assert_eq!(link.payload, json!({"enabled": false, "remote_approval_paused": true}));
+    assert_eq!(
+        link.payload,
+        json!({"enabled": false, "remote_approval_paused": true})
+    );
 
     // pairing end: start then cancel
     h.api.link_set_enabled(true).await.unwrap();
@@ -512,10 +614,16 @@ async fn the_pump_forwards_daemon_events_in_order_with_batching_and_notification
         assert!(e.get("detail").is_none());
         assert_eq!(e["agent_kind"], "claude_code");
     }
-    let state = eventually("session_state", || rec.emits("session_state").into_iter().next()).await;
+    let state = eventually("session_state", || {
+        rec.emits("session_state").into_iter().next()
+    })
+    .await;
     assert_eq!(state.payload["session_key"], "claude_code:s-pump");
     // the tray was told to refresh
-    eventually("tray refresh", || rec.all().contains(&Rec::Tray).then_some(())).await;
+    eventually("tray refresh", || {
+        rec.all().contains(&Rec::Tray).then_some(())
+    })
+    .await;
 
     // the daemon's data is visible through the commands
     let st = h.api.daemon_status().await.unwrap();
@@ -530,19 +638,37 @@ async fn the_pump_forwards_daemon_events_in_order_with_batching_and_notification
     assert_eq!(tray.session_states.len(), 1);
 
     // notifications honour app.notifications
-    h.api.settings_set("app.notifications", json!(false)).await.unwrap();
-    let before = rec.all().iter().filter(|r| matches!(r, Rec::Notify(_))).count();
+    h.api
+        .settings_set("app.notifications", json!(false))
+        .await
+        .unwrap();
+    let before = rec
+        .all()
+        .iter()
+        .filter(|r| matches!(r, Rec::Notify(_)))
+        .count();
     for action in h
         .api
-        .process(DaemonEvent::Device(agentnest_core::events::DeviceUiEvent::Offline {
-            device_id: "dev_ghost".into(),
-        }))
+        .process(DaemonEvent::Device(
+            agentnest_core::events::DeviceUiEvent::Offline {
+                device_id: "dev_ghost".into(),
+            },
+        ))
         .await
     {
         // an unknown device produces no payload and no toast
-        assert!(!matches!(action, ShellAction::Emit(_) | ShellAction::Notify(_)));
+        assert!(!matches!(
+            action,
+            ShellAction::Emit(_) | ShellAction::Notify(_)
+        ));
     }
-    assert_eq!(rec.all().iter().filter(|r| matches!(r, Rec::Notify(_))).count(), before);
+    assert_eq!(
+        rec.all()
+            .iter()
+            .filter(|r| matches!(r, Rec::Notify(_)))
+            .count(),
+        before
+    );
 
     pump.abort();
 }

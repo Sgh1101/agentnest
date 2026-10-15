@@ -32,7 +32,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
-# desktop only (single-instance must be registered first; autostart is a desktop plugin)
-[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+# desktop plugins; single-instance is registered first (docs/desktop.md 1)
 tauri-plugin-autostart = "2.7.0"
 tauri-plugin-single-instance = "2.5.4"

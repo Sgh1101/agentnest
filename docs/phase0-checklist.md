@@ -53,7 +53,7 @@
 | # | 항목 | 방법 | 통과 기준 |
 | --- | --- | --- | --- |
 | ★P1 | windows-latest(VS2026) `tauri build` | `desktop-windows.yml` 1회 | NSIS `-setup.exe` 산출, 설치본에서 토스트에 앱 이름/아이콘, 트레이 4단계 교체 |
-| ★P2 | 빌드박스 로컬 | `cargo test`(default-members), `cargo check --target x86_64-pc-windows-msvc`, `pnpm typecheck && pnpm test`, `./gradlew :core:test` | 전부 녹색(리서치 실측과 동일) |
+| ★P2 | 빌드박스 로컬 | `cargo test`(default-members), `cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc`(심 환경변수 포함, `testing-and-ci.md` 2.1), `pnpm typecheck && pnpm test`, `./gradlew :core:test` | 전부 녹색(리서치 실측과 동일) |
 | ★P3 | Android CI | `android.yml` | `:core:test` + `:app:assembleDebug` 녹색; `./gradlew :app:dependencies`로 `play-services-code-scanner` 최신 버전 확인·확정; AGP built-in Kotlin이 KGP 2.4.21을 쓰는지 로그 확인 |
 | ★P4 | WSS + SPKI 핀 실기 | Windows 데몬(rcgen+ring) ↔ 갤럭시 OkHttp | (a) 핀 일치 → 연결, (b) 다른 키 → 실패, (c) 같은 키 재발급(SAN 변경) → 재페어링 없이 연결, (d) IP 변경 후 재연결(주소 갱신 경로의 상세·한계는 **P16**) |
 | P5 | 페어링 UX | QR → SAS → PC 승인 | 폰·PC SAS 일치, 거절 시 미등록, 촬영 QR로 먼저 보낸 `pair`가 PC 모달 거절로 차단됨, 120초 만료·3회 실패 소각 |

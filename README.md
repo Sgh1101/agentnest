@@ -42,8 +42,9 @@ cd desktop && cargo fmt --all --check \
   && cargo clippy --workspace --exclude agentnest-desktop --all-targets -- -D warnings \
   && cargo test --workspace --exclude agentnest-desktop
 
-# Tauri 셸 타입 검사 (Linux 에서는 llvm-rc 필요)
-cd desktop && cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
+# Tauri 셸 타입 검사 (Linux: apt install llvm clang mingw-w64-x86-64-dev, docs/testing-and-ci.md 2.1)
+cd desktop && CC_x86_64_pc_windows_msvc=$PWD/tools/cc-msvc-check.sh AR_x86_64_pc_windows_msvc=llvm-ar \
+  cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
 
 # 프런트엔드
 cd desktop/apps/desktop && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test

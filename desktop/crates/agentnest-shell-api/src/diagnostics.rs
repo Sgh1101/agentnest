@@ -137,7 +137,8 @@ pub fn build_report(i: &DiagnosticsInput) -> DiagnosticsReport {
     }
     if i.link_enabled && i.last_preauth.is_none() {
         hints.push(
-            "휴대폰이 PC에 닿지 못했어요. 같은 Wi-Fi에 연결돼 있는지, 방화벽을 확인해 주세요.".into(),
+            "휴대폰이 PC에 닿지 못했어요. 같은 Wi-Fi에 연결돼 있는지, 방화벽을 확인해 주세요."
+                .into(),
         );
     }
 
@@ -189,7 +190,10 @@ mod tests {
         let r = build_report(&healthy());
         assert!(r.hints_ko.is_empty(), "{:?}", r.hints_ko);
         let v = serde_json::to_value(&r).unwrap();
-        assert_eq!(v["listener"], serde_json::json!({"bound": true, "addr": "192.168.0.10", "port": 47832}));
+        assert_eq!(
+            v["listener"],
+            serde_json::json!({"bound": true, "addr": "192.168.0.10", "port": 47832})
+        );
         assert_eq!(v["network_profile"], "private");
         assert_eq!(
             v["firewall"],
@@ -222,14 +226,20 @@ mod tests {
         i.profile = NetworkProfile::Public;
         let r = build_report(&i);
         assert_eq!(r.network_profile, "public");
-        assert!(r.hints_ko.iter().any(|h| h.contains("'공용'") && h.contains("'개인'")));
+        assert!(r
+            .hints_ko
+            .iter()
+            .any(|h| h.contains("'공용'") && h.contains("'개인'")));
     }
 
     #[test]
     fn every_firewall_state_has_its_own_hint() {
         let mut i = healthy();
         i.firewall = FirewallState::default();
-        assert!(build_report(&i).hints_ko.iter().any(|h| h.contains("규칙 만들기")));
+        assert!(build_report(&i)
+            .hints_ko
+            .iter()
+            .any(|h| h.contains("규칙 만들기")));
         i.firewall = FirewallState {
             rule_present: true,
             ..FirewallState::default()
@@ -244,7 +254,10 @@ mod tests {
             check_failed: true,
             ..FirewallState::default()
         };
-        assert!(build_report(&i).hints_ko.iter().any(|h| h.contains("확인하지 못했어요")));
+        assert!(build_report(&i)
+            .hints_ko
+            .iter()
+            .any(|h| h.contains("확인하지 못했어요")));
     }
 
     #[test]
@@ -253,7 +266,10 @@ mod tests {
         i.last_preauth = None;
         let r = build_report(&i);
         assert!(r.last_preauth_attempt.is_none());
-        assert!(r.hints_ko.iter().any(|h| h.contains("휴대폰이 PC에 닿지 못했어요")));
+        assert!(r
+            .hints_ko
+            .iter()
+            .any(|h| h.contains("휴대폰이 PC에 닿지 못했어요")));
     }
 
     #[test]

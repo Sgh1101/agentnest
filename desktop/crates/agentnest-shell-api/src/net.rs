@@ -344,7 +344,11 @@ fn firewall_query_script(exe: &str) -> String {
 
 /// Parses the `PROFILE|<category>` line.
 pub fn parse_profile(output: &str) -> NetworkProfile {
-    let Some(line) = output.lines().map(str::trim).find(|l| l.starts_with("PROFILE|")) else {
+    let Some(line) = output
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("PROFILE|"))
+    else {
         return NetworkProfile::Unknown;
     };
     match line["PROFILE|".len()..].trim() {
@@ -629,7 +633,14 @@ mod tests {
             "advfirewall firewall add rule name=\"AgentNest Link (TCP 47832)\" dir=in action=allow protocol=TCP localport=47832 profile=private remoteip=localsubnet program=\"C:\\Program Files\\AgentNest\\AgentNest.exe\" enable=yes"
         );
         // never broader than security.md 3.1 allows
-        for forbidden in ["profile=any", "profile=public", "profile=domain", "remoteip=any", "protocol=UDP", "localport=any"] {
+        for forbidden in [
+            "profile=any",
+            "profile=public",
+            "profile=domain",
+            "remoteip=any",
+            "protocol=UDP",
+            "localport=any",
+        ] {
             assert!(!args.contains(forbidden), "{forbidden}");
         }
         assert_eq!(
@@ -647,7 +658,10 @@ mod tests {
         assert_eq!(validate_exe_path(EXE), Ok(()));
         assert_eq!(validate_exe_path("D:/x/a.exe"), Ok(()));
         assert_eq!(validate_exe_path("\\\\host\\share\\a.exe"), Ok(()));
-        assert_eq!(validate_exe_path("relative\\a.exe"), Err(PathError::NotAbsolute));
+        assert_eq!(
+            validate_exe_path("relative\\a.exe"),
+            Err(PathError::NotAbsolute)
+        );
         assert_eq!(validate_exe_path("/usr/bin/a"), Err(PathError::NotAbsolute));
         assert_eq!(validate_exe_path(""), Err(PathError::NotAbsolute));
         for bad in [
@@ -683,7 +697,10 @@ mod tests {
     fn the_elevated_script_runs_the_netsh_commands_and_reports_a_declined_prompt() {
         let runner = FakeRunner::new(Some(0), "");
         let net = WindowsNetwork::new(runner);
-        assert_eq!(net.create_rule(Path::new(EXE), 47832), ElevatedOutcome::Done);
+        assert_eq!(
+            net.create_rule(Path::new(EXE), 47832),
+            ElevatedOutcome::Done
+        );
         let runner = &net.runner;
         assert_eq!(runner.calls.lock().unwrap()[0].0, "powershell.exe");
         let launcher = runner.script(0);
@@ -705,12 +722,18 @@ mod tests {
     #[test]
     fn remove_deletes_by_name_and_by_program() {
         let net = WindowsNetwork::new(FakeRunner::new(Some(0), ""));
-        assert_eq!(net.remove_rules(Path::new(EXE), 47841), ElevatedOutcome::Done);
+        assert_eq!(
+            net.remove_rules(Path::new(EXE), 47841),
+            ElevatedOutcome::Done
+        );
         let launcher = net.runner.script(0);
         let start = launcher.find("'-EncodedCommand','").unwrap() + "'-EncodedCommand','".len();
         let end = launcher[start..].find('\'').unwrap() + start;
         let inner = decode_powershell(&launcher[start..end]).unwrap();
-        assert!(inner.contains("name=\"\"AgentNest Link (TCP 47832)\"\"") || inner.contains("AgentNest Link (TCP 47832)"));
+        assert!(
+            inner.contains("name=\"\"AgentNest Link (TCP 47832)\"\"")
+                || inner.contains("AgentNest Link (TCP 47832)")
+        );
         assert!(inner.contains("AgentNest Link (TCP 47841)"));
         assert!(inner.contains("name=all dir=in program="));
     }
@@ -722,9 +745,15 @@ mod tests {
         assert_eq!(outcome_from_exit(Some(1)), ElevatedOutcome::Failed);
         assert_eq!(outcome_from_exit(None), ElevatedOutcome::Failed);
         let net = WindowsNetwork::new(FakeRunner::new(Some(1223), ""));
-        assert_eq!(net.create_rule(Path::new(EXE), 47832), ElevatedOutcome::Denied);
+        assert_eq!(
+            net.create_rule(Path::new(EXE), 47832),
+            ElevatedOutcome::Denied
+        );
         let net = WindowsNetwork::new(FakeRunner::failing());
-        assert_eq!(net.create_rule(Path::new(EXE), 47832), ElevatedOutcome::NotStarted);
+        assert_eq!(
+            net.create_rule(Path::new(EXE), 47832),
+            ElevatedOutcome::NotStarted
+        );
     }
 
     #[test]
@@ -745,8 +774,14 @@ mod tests {
     #[test]
     fn the_profile_is_parsed_from_the_fixed_marker() {
         assert_eq!(parse_profile("PROFILE|Private"), NetworkProfile::Private);
-        assert_eq!(parse_profile("noise\r\nPROFILE|Public\r\n"), NetworkProfile::Public);
-        assert_eq!(parse_profile("PROFILE|DomainAuthenticated"), NetworkProfile::Domain);
+        assert_eq!(
+            parse_profile("noise\r\nPROFILE|Public\r\n"),
+            NetworkProfile::Public
+        );
+        assert_eq!(
+            parse_profile("PROFILE|DomainAuthenticated"),
+            NetworkProfile::Domain
+        );
         assert_eq!(parse_profile("PROFILE|Unknown"), NetworkProfile::Unknown);
         assert_eq!(parse_profile("PROFILE|Something"), NetworkProfile::Unknown);
         assert_eq!(parse_profile(""), NetworkProfile::Unknown);
@@ -763,7 +798,14 @@ mod tests {
         );
     }
 
-    fn rule(name: &str, display: &str, action: &str, profile: &str, remote: &str, program: &str) -> String {
+    fn rule(
+        name: &str,
+        display: &str,
+        action: &str,
+        profile: &str,
+        remote: &str,
+        program: &str,
+    ) -> String {
         format!("RULE|{name}|{display}|{action}|True|Inbound|{profile}|TCP|47832|{remote}|{program}\r\n")
     }
 
@@ -771,7 +813,14 @@ mod tests {
     fn a_correctly_scoped_rule_is_ok() {
         let out = format!(
             "{}DONE\r\n",
-            rule("{A}", "AgentNest Link (TCP 47832)", "Allow", "Private", "LocalSubnet", EXE)
+            rule(
+                "{A}",
+                "AgentNest Link (TCP 47832)",
+                "Allow",
+                "Private",
+                "LocalSubnet",
+                EXE
+            )
         );
         let s = parse_firewall_report(&out, EXE, 47832);
         assert_eq!(
@@ -799,13 +848,23 @@ mod tests {
         ] {
             let out = format!(
                 "{}DONE\r\n",
-                rule("{A}", "AgentNest Link (TCP 47832)", "Allow", profile, remote, program)
+                rule(
+                    "{A}",
+                    "AgentNest Link (TCP 47832)",
+                    "Allow",
+                    profile,
+                    remote,
+                    program
+                )
             );
             let s = parse_firewall_report(&out, EXE, port);
             assert!(!s.scoped_ok, "{profile} {remote} {program} {port}");
         }
         // a Windows-prompt rule for this exe is an allow rule but not ours
-        let prompt = format!("{}DONE\r\n", rule("{B}", "agentnest", "Allow", "Any", "Any", EXE));
+        let prompt = format!(
+            "{}DONE\r\n",
+            rule("{B}", "agentnest", "Allow", "Any", "Any", EXE)
+        );
         let s = parse_firewall_report(&prompt, EXE, 47832);
         assert!(s.rule_present && !s.scoped_ok);
     }
@@ -829,19 +888,33 @@ mod tests {
             "RULE|{{F}}|AgentNest Link (TCP 47832)|Allow|False|Inbound|Private|TCP|47832|LocalSubnet|{EXE}\r\n\
              RULE|{{G}}|AgentNest Link (TCP 47832)|Allow|True|Outbound|Private|TCP|47832|LocalSubnet|{EXE}\r\nDONE\r\n"
         );
-        assert_eq!(parse_firewall_report(&out, EXE, 47832), FirewallState::default());
+        assert_eq!(
+            parse_firewall_report(&out, EXE, 47832),
+            FirewallState::default()
+        );
     }
 
     #[test]
     fn a_rule_listed_twice_is_counted_once_and_garbage_is_ignored() {
-        let one = rule("{A}", "AgentNest Link (TCP 47832)", "Allow", "Private", "LocalSubnet", EXE);
+        let one = rule(
+            "{A}",
+            "AgentNest Link (TCP 47832)",
+            "Allow",
+            "Private",
+            "LocalSubnet",
+            EXE,
+        );
         let out = format!("{one}{one}RULE|short\r\nrandom\r\nDONE\r\n");
         assert!(parse_firewall_report(&out, EXE, 47832).scoped_ok);
     }
 
     #[test]
     fn a_failed_query_is_unknown_not_absent() {
-        for out in ["", "ERROR", "RULE|{A}|x|Allow|True|Inbound|Private|TCP|1|LocalSubnet|p"] {
+        for out in [
+            "",
+            "ERROR",
+            "RULE|{A}|x|Allow|True|Inbound|Private|TCP|1|LocalSubnet|p",
+        ] {
             let s = parse_firewall_report(out, EXE, 47832);
             assert!(s.check_failed, "{out:?}");
             assert!(!s.rule_present && !s.scoped_ok && !s.block_rule_present);
@@ -853,19 +926,38 @@ mod tests {
     #[test]
     fn the_unsupported_platform_changes_nothing() {
         let n = UnsupportedNetwork;
-        assert_eq!(n.network_profile("10.0.0.1".parse().unwrap()), NetworkProfile::Unknown);
+        assert_eq!(
+            n.network_profile("10.0.0.1".parse().unwrap()),
+            NetworkProfile::Unknown
+        );
         assert!(n.firewall_state(Path::new(EXE), 47832).check_failed);
-        assert_eq!(n.create_rule(Path::new(EXE), 47832), ElevatedOutcome::NotStarted);
-        assert_eq!(n.remove_rules(Path::new(EXE), 47832), ElevatedOutcome::NotStarted);
+        assert_eq!(
+            n.create_rule(Path::new(EXE), 47832),
+            ElevatedOutcome::NotStarted
+        );
+        assert_eq!(
+            n.remove_rules(Path::new(EXE), 47832),
+            ElevatedOutcome::NotStarted
+        );
     }
 
     #[test]
     fn the_query_script_reads_only() {
         let q = firewall_query_script(EXE);
-        for write in ["New-NetFirewallRule", "Set-NetFirewallRule", "Remove-NetFirewallRule", "netsh", "Enable-", "Disable-"] {
+        for write in [
+            "New-NetFirewallRule",
+            "Set-NetFirewallRule",
+            "Remove-NetFirewallRule",
+            "netsh",
+            "Enable-",
+            "Disable-",
+        ] {
             assert!(!q.contains(write), "{write}");
         }
         let p = profile_script("192.168.0.10".parse().unwrap());
-        assert!(!p.contains("Set-NetConnectionProfile"), "the profile is never changed (security.md 3.1)");
+        assert!(
+            !p.contains("Set-NetConnectionProfile"),
+            "the profile is never changed (security.md 3.1)"
+        );
     }
 }

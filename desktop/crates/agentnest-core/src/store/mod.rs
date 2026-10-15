@@ -132,9 +132,11 @@ impl Store {
 
     /// Opens (and migrates) the database file.
     pub fn open_with(path: &Path, options: StoreOptions) -> Result<Self, StoreError> {
+        restrict_db_file(path)?;
         let mut conn = Connection::open(path)?;
         apply_pragmas(&conn)?;
         migrations::migrate(&mut conn)?;
+        // SQLite gives `-wal` / `-shm` the mode of the main file, so they are user-only too
         let mut readers = Vec::new();
         for _ in 0..options.readers {
             let r = Connection::open_with_flags(
@@ -233,12 +235,50 @@ impl Store {
     }
 }
 
+/// On Unix the database (decision evidence, device hashes, approval details) is readable by the owner only: the file is
+/// created with `0600` before SQLite opens it (SQLite would use the umask, usually `0644`) and an existing file is
+/// tightened. On Windows the per-user data directory ACL applies (docs/security.md R1).
+fn restrict_db_file(path: &Path) -> Result<(), StoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            }
+            Err(e) => return Err(StoreError::Io(e)),
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
 /// Runs `f` inside a transaction that commits with `synchronous=FULL`, then restores `NORMAL`.
 ///
 /// The pragma is set before `BEGIN`: SQLite ignores `PRAGMA synchronous` inside a transaction.
+///
+/// **What the return value says.** `Ok` means exactly "the transaction committed". Failing to put `synchronous` back to
+/// `NORMAL` afterwards does *not* turn a committed transaction into an error (the caller would report "not applied"
+/// for a decision that is durably recorded): the failure is logged and the connection simply stays on `FULL`, which is
+/// slower but never less durable.
 pub fn with_full_sync<T>(
     conn: &mut Connection,
     f: impl FnOnce(&Transaction<'_>) -> Result<T, StoreError>,
+) -> Result<T, StoreError> {
+    with_full_sync_restoring(conn, f, |c| c.pragma_update(None, "synchronous", "NORMAL"))
+}
+
+fn with_full_sync_restoring<T>(
+    conn: &mut Connection,
+    f: impl FnOnce(&Transaction<'_>) -> Result<T, StoreError>,
+    restore: impl FnOnce(&Connection) -> rusqlite::Result<()>,
 ) -> Result<T, StoreError> {
     conn.pragma_update(None, "synchronous", "FULL")?;
     let result = (|| {
@@ -247,10 +287,14 @@ pub fn with_full_sync<T>(
         tx.commit()?;
         Ok::<T, StoreError>(value)
     })();
-    let restore = conn.pragma_update(None, "synchronous", "NORMAL");
-    let value = result?;
-    restore?;
-    Ok(value)
+    if let Err(e) = restore(conn) {
+        tracing::warn!(
+            error = %e,
+            committed = result.is_ok(),
+            "could not restore synchronous=NORMAL; the connection stays on FULL"
+        );
+    }
+    result
 }
 
 #[cfg(test)]
@@ -281,6 +325,68 @@ mod tests {
             .query_row("PRAGMA synchronous", [], |r| r.get(0))
             .unwrap();
         assert_eq!(after, 1);
+    }
+
+    #[test]
+    fn a_failed_pragma_restore_does_not_undo_a_committed_transaction() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        apply_pragmas(&conn).unwrap();
+        conn.execute_batch("CREATE TABLE t(x INTEGER)").unwrap();
+        let committed = with_full_sync_restoring(
+            &mut conn,
+            |tx| {
+                tx.execute("INSERT INTO t VALUES (1)", [])?;
+                Ok("done")
+            },
+            |_| Err(rusqlite::Error::InvalidQuery),
+        );
+        assert_eq!(committed.unwrap(), "done", "the commit is what is reported");
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "and it is really there");
+        // a failing transaction is still an error, restore failure or not
+        let failed: Result<(), _> = with_full_sync_restoring(
+            &mut conn,
+            |_| Err(StoreError::Invalid("x".into())),
+            |_| Err(rusqlite::Error::InvalidQuery),
+        );
+        assert!(failed.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_files_are_user_only_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agentnest.db");
+        let store = Store::open(&path).unwrap();
+        store
+            .run(|c| {
+                c.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS probe(x); INSERT INTO probe VALUES (1);",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        for name in ["agentnest.db", "agentnest.db-wal", "agentnest.db-shm"] {
+            let p = dir.path().join(name);
+            if let Ok(m) = std::fs::metadata(&p) {
+                assert_eq!(m.permissions().mode() & 0o777, 0o600, "{name}");
+            }
+        }
+        assert!(
+            dir.path().join("agentnest.db-wal").exists(),
+            "WAL mode is on"
+        );
+        drop(store);
+        // an existing, world readable file is tightened on the next open
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let _again = Store::open(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 
     #[test]

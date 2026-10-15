@@ -44,7 +44,9 @@ impl EventBatcher {
             Value::Array(items) => self.pending.extend(items),
             other => self.pending.push(other),
         }
-        (self.pending.len() >= BATCH_MAX).then(|| self.take()).flatten()
+        (self.pending.len() >= BATCH_MAX)
+            .then(|| self.take())
+            .flatten()
     }
 
     /// Releases everything collected so far.

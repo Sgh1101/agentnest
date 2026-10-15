@@ -29,7 +29,9 @@ fn set<I: IntoIterator<Item = S>, S: Into<String>>(it: I) -> BTreeSet<String> {
 /// `COMMANDS = { camelName: "snake_name", ... }` of backend.ts.
 fn ts_commands() -> Vec<(String, String)> {
     let src = read("src/api/backend.ts");
-    let start = src.find("export const COMMANDS = {").expect("COMMANDS constant");
+    let start = src
+        .find("export const COMMANDS = {")
+        .expect("COMMANDS constant");
     let body = &src[start..];
     let end = body.find("} as const").expect("end of COMMANDS");
     let re = Regex::new(r#"(?m)^\s*(\w+):\s*"([a-z_]+)","#).unwrap();
@@ -95,7 +97,10 @@ fn every_ts_command_has_a_rust_handler_name_and_vice_versa() {
     assert!(ts.len() >= 20, "parsed {} commands", ts.len());
     let ts_names = set(ts.iter().map(|(_, n)| n.clone()));
     let rust_names = set(COMMAND_NAMES);
-    assert_eq!(ts_names, rust_names, "COMMANDS (backend.ts) and COMMAND_NAMES differ");
+    assert_eq!(
+        ts_names, rust_names,
+        "COMMANDS (backend.ts) and COMMAND_NAMES differ"
+    );
     // same order too, so a diff of the two tables reads naturally
     let ordered: Vec<&str> = ts.iter().map(|(_, n)| n.as_str()).collect();
     assert_eq!(ordered, COMMAND_NAMES.to_vec());
@@ -124,9 +129,14 @@ fn ts_call_args() -> std::collections::BTreeMap<String, BTreeSet<String>> {
                 args = literal_keys(brace_body(&src, open));
             } else {
                 // a variable: find its literal and its later `name["key"] =` assignments within the method
-                let ident: String = r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                let ident: String = r
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
                 let method_start = src[..m.get(0).unwrap().start()].rfind("async ").unwrap();
-                let method_end = after.find("\n  }\n").map_or(src.len(), |e| m.get(0).unwrap().end() + e);
+                let method_end = after
+                    .find("\n  }\n")
+                    .map_or(src.len(), |e| m.get(0).unwrap().end() + e);
                 let method = &src[method_start..method_end];
                 let decl = Regex::new(&format!(r"const {ident}[^=]*=\s*\{{")).unwrap();
                 if let Some(d) = decl.find(method) {
@@ -161,8 +171,12 @@ fn argument_names_match_what_tauri_ts_sends() {
 
 fn glue_source() -> String {
     let path = app_dir().join("src-tauri/src/commands.rs");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("the glue crate's commands.rs must exist ({}): {e}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "the glue crate's commands.rs must exist ({}): {e}",
+            path.display()
+        )
+    })
 }
 
 /// Parameter names of `fn name(...)` excluding injected Tauri state.
@@ -218,7 +232,11 @@ fn the_glue_crate_declares_every_command_with_the_contract_arguments() {
     for (name, args) in COMMAND_ARGS {
         let params = glue_params(&src, name)
             .unwrap_or_else(|| panic!("src-tauri/src/commands.rs has no `fn {name}(`"));
-        assert_eq!(params, set(args.iter().copied()), "parameters of glue command {name}");
+        assert_eq!(
+            params,
+            set(args.iter().copied()),
+            "parameters of glue command {name}"
+        );
         // a #[tauri::command] attribute with snake_case argument names right above the function
         let idx = src.find(&format!("fn {name}")).unwrap();
         let before = &src[..idx];
@@ -274,10 +292,9 @@ fn guard_keys(function: &str) -> BTreeSet<String> {
         .unwrap_or_else(|| panic!("guards.ts has no {function}"));
     let open = src[start..].find(" {\n").unwrap() + start + 1;
     let body = brace_body(&src, open);
-    let helper = Regex::new(
-        r#"(?:reqStr|optStr|reqNum|optNum|reqBool|boolOr)\(\s*r\s*,\s*"([^"]+)""#,
-    )
-    .unwrap();
+    let helper =
+        Regex::new(r#"(?:reqStr|optStr|reqNum|optNum|reqBool|boolOr)\(\s*r\s*,\s*"([^"]+)""#)
+            .unwrap();
     let index = Regex::new(r#"\b(?:r|v)\["([^"]+)"\]"#).unwrap();
     let mut keys = BTreeSet::new();
     for c in helper.captures_iter(body) {
@@ -313,7 +330,10 @@ fn daemon_status_fields_are_exactly_what_the_guard_reads() {
         remote_approval_paused: false,
         last_event_at: LastEventAt::default(),
     };
-    assert_eq!(top_keys(&serde_json::to_value(dto).unwrap()), guard_keys("parseDaemonStatus"));
+    assert_eq!(
+        top_keys(&serde_json::to_value(dto).unwrap()),
+        guard_keys("parseDaemonStatus")
+    );
 }
 
 #[test]
@@ -329,15 +349,47 @@ fn small_result_payloads_match_their_guards() {
         online: false,
         revoked_at: None,
     };
-    assert_eq!(top_keys(&serde_json::to_value(device).unwrap()), guard_keys("parseDevice"));
-    let hooks = HooksStatusDto { installed: true, path: None, warnings: vec![] };
-    assert_eq!(top_keys(&serde_json::to_value(hooks).unwrap()), guard_keys("parseHooksStatus"));
-    let probe = CodexProbeDto { socket_path: None, reachable: false, user_agent: None, threads: 0 };
-    assert_eq!(top_keys(&serde_json::to_value(probe).unwrap()), guard_keys("parseCodexProbe"));
-    let fw = FirewallResultDto { ok: true, elevated: false, error: None };
-    assert_eq!(top_keys(&serde_json::to_value(fw).unwrap()), guard_keys("parseFirewallResult"));
-    let pairing = PairingStartDto { pairing_id: "p".into(), qr_svg: "<svg/>".into(), expires_at: "t".into() };
-    assert_eq!(top_keys(&serde_json::to_value(pairing).unwrap()), guard_keys("parsePairingStart"));
+    assert_eq!(
+        top_keys(&serde_json::to_value(device).unwrap()),
+        guard_keys("parseDevice")
+    );
+    let hooks = HooksStatusDto {
+        installed: true,
+        path: None,
+        warnings: vec![],
+    };
+    assert_eq!(
+        top_keys(&serde_json::to_value(hooks).unwrap()),
+        guard_keys("parseHooksStatus")
+    );
+    let probe = CodexProbeDto {
+        socket_path: None,
+        reachable: false,
+        user_agent: None,
+        threads: 0,
+    };
+    assert_eq!(
+        top_keys(&serde_json::to_value(probe).unwrap()),
+        guard_keys("parseCodexProbe")
+    );
+    let fw = FirewallResultDto {
+        ok: true,
+        elevated: false,
+        error: None,
+    };
+    assert_eq!(
+        top_keys(&serde_json::to_value(fw).unwrap()),
+        guard_keys("parseFirewallResult")
+    );
+    let pairing = PairingStartDto {
+        pairing_id: "p".into(),
+        qr_svg: "<svg/>".into(),
+        expires_at: "t".into(),
+    };
+    assert_eq!(
+        top_keys(&serde_json::to_value(pairing).unwrap()),
+        guard_keys("parsePairingStart")
+    );
     let hist = HistoryEntry {
         request_id: "r".into(),
         title: "t".into(),
@@ -348,7 +400,10 @@ fn small_result_payloads_match_their_guards() {
         resolved_device_name: None,
         resolved_at: "t".into(),
     };
-    assert_eq!(top_keys(&serde_json::to_value(hist).unwrap()), guard_keys("parseHistoryEntry"));
+    assert_eq!(
+        top_keys(&serde_json::to_value(hist).unwrap()),
+        guard_keys("parseHistoryEntry")
+    );
 }
 
 #[test]
@@ -369,18 +424,40 @@ fn diagnostics_payload_matches_the_guard() {
     assert_eq!(top_keys(&v), guard_keys("parseDiagnostics"));
     // nested objects: the guard reads exactly these keys
     let src = read("src/api/guards.ts");
-    for k in ["bound", "addr", "port", "rule_present", "scoped_ok", "block_rule_present", "at", "ip_masked"] {
-        assert!(src.contains(&format!("\"{k}\"")), "guards.ts does not read {k}");
+    for k in [
+        "bound",
+        "addr",
+        "port",
+        "rule_present",
+        "scoped_ok",
+        "block_rule_present",
+        "at",
+        "ip_masked",
+    ] {
+        assert!(
+            src.contains(&format!("\"{k}\"")),
+            "guards.ts does not read {k}"
+        );
     }
     assert_eq!(top_keys(&v["listener"]), set(["bound", "addr", "port"]));
-    assert_eq!(top_keys(&v["firewall"]), set(["rule_present", "scoped_ok", "block_rule_present"]));
-    assert_eq!(top_keys(&v["last_preauth_attempt"]), set(["at", "ip_masked"]));
+    assert_eq!(
+        top_keys(&v["firewall"]),
+        set(["rule_present", "scoped_ok", "block_rule_present"])
+    );
+    assert_eq!(
+        top_keys(&v["last_preauth_attempt"]),
+        set(["at", "ip_masked"])
+    );
 }
 
 #[test]
 fn settings_keys_are_exactly_the_ones_the_guard_reads_minus_autostart() {
     use crate::settings::{settings_value, UiSettings};
-    let v = settings_value(&agentnest_core::config::AppConfig::default(), &UiSettings::default(), false);
+    let v = settings_value(
+        &agentnest_core::config::AppConfig::default(),
+        &UiSettings::default(),
+        false,
+    );
     let mut guard = guard_keys("parseSettings");
     // the TS side owns `app.autostart` (autostart plugin)
     guard.remove("app.autostart");
@@ -397,7 +474,10 @@ fn settings_keys_are_exactly_the_ones_the_guard_reads_minus_autostart() {
     let mut rust: BTreeSet<String> = set(crate::settings::WRITABLE_KEYS.iter().copied());
     rust.extend(set(crate::settings::READ_ONLY_KEYS.iter().copied()));
     rust.insert("app.autostart".to_owned());
-    assert_eq!(ts_keys, rust, "SETTING_KEYS (types.ts) vs the Rust whitelist");
+    assert_eq!(
+        ts_keys, rust,
+        "SETTING_KEYS (types.ts) vs the Rust whitelist"
+    );
     // the TTL range is the same on both sides
     assert!(types.contains("TTL_MIN_S = 60") && types.contains("TTL_MAX_S = 180"));
 }
@@ -422,12 +502,18 @@ fn the_approval_card_and_event_carry_every_field_the_guards_read() {
     guard.remove("origin"); // read through enumStrict(.., r["origin"], ..) below
     let sent = top_keys(&v);
     for k in &guard {
-        assert!(sent.contains(k), "the card lacks `{k}`, which the guard reads");
+        assert!(
+            sent.contains(k),
+            "the card lacks `{k}`, which the guard reads"
+        );
     }
     assert!(sent.contains("origin") && sent.contains("delivery"));
     assert!(!sent.contains("nonce_b64"));
     // and nothing is sent that the guard would silently drop, except the delivery wrapper the pending guard reads
-    let known: BTreeSet<String> = guard.into_iter().chain(["origin".to_owned(), "delivery".to_owned()]).collect();
+    let known: BTreeSet<String> = guard
+        .into_iter()
+        .chain(["origin".to_owned(), "delivery".to_owned()])
+        .collect();
     assert_eq!(sent, known);
     assert_eq!(top_keys(&v["delivery"]), guard_keys("parseDelivery"));
 
@@ -450,7 +536,10 @@ fn the_approval_card_and_event_carry_every_field_the_guards_read() {
         }
         assert!(sent.contains(&k), "the event lacks `{k}`");
     }
-    assert!(!sent.contains("detail"), "the bounded detail object stays in the daemon");
+    assert!(
+        !sent.contains("detail"),
+        "the bounded detail object stays in the daemon"
+    );
     assert!(!e.to_string().contains("SECRET"));
 }
 
@@ -467,16 +556,112 @@ fn event_kinds_match_the_guard_switch() {
         .collect();
     assert_eq!(kinds, set(EVENT_KINDS));
     let types = read("src/api/types.ts");
-    assert!(types.contains(&format!("DAEMON_EVENT_NAME = \"{}\"", crate::commands::DAEMON_EVENT_NAME)));
+    assert!(types.contains(&format!(
+        "DAEMON_EVENT_NAME = \"{}\"",
+        crate::commands::DAEMON_EVENT_NAME
+    )));
 }
 
 #[test]
 fn pairing_and_approval_ops_match_the_guards() {
     let src = read("src/api/guards.ts");
-    for op in ["pending_sas", "completed", "ended", "requested", "delivery", "resolved"] {
-        assert!(src.contains(&format!("op === \"{op}\"")), "guards.ts has no op {op}");
+    for op in [
+        "pending_sas",
+        "completed",
+        "ended",
+        "requested",
+        "delivery",
+        "resolved",
+    ] {
+        assert!(
+            src.contains(&format!("op === \"{op}\"")),
+            "guards.ts has no op {op}"
+        );
     }
-    for reason in ["expired", "cancelled", "rejected", "failed", "timeout", "link_disabled"] {
-        assert!(src.contains(&format!("\"{reason}\"")), "guards.ts lacks the pairing reason {reason}");
+    for reason in [
+        "expired",
+        "cancelled",
+        "rejected",
+        "failed",
+        "timeout",
+        "link_disabled",
+    ] {
+        assert!(
+            src.contains(&format!("\"{reason}\"")),
+            "guards.ts lacks the pairing reason {reason}"
+        );
     }
+}
+
+/// Keys a guard function requires (`reqStr`/`reqNum`/`reqBool` on `r`), i.e. the ones whose absence is a
+/// `ContractError` on the TypeScript side.
+fn guard_required_keys(function: &str) -> BTreeSet<String> {
+    let src = read("src/api/guards.ts");
+    let start = src
+        .find(&format!("export function {function}("))
+        .unwrap_or_else(|| panic!("guards.ts has no {function}"));
+    let open = src[start..].find(" {\n").unwrap() + start + 1;
+    let body = brace_body(&src, open);
+    let re = Regex::new(r#"req(?:Str|Num|Bool)\(\s*r\s*,\s*"([^"]+)""#).unwrap();
+    re.captures_iter(body).map(|c| c[1].to_owned()).collect()
+}
+
+#[test]
+fn session_state_events_carry_every_field_the_guard_requires() {
+    let example = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../protocol/examples/session_state.1.json"),
+    )
+    .expect("protocol/examples/session_state.1.json");
+    let v: Value = serde_json::from_str(&example).unwrap();
+    // examples are whole frames: the payload is what the daemon event carries
+    let payload = v.get("payload").cloned().unwrap_or(v);
+    let state: agentnest_protocol::SessionState = serde_json::from_value(payload).unwrap();
+    let sent = top_keys(&serde_json::to_value(&state).unwrap());
+    for k in guard_required_keys("parseSessionState") {
+        assert!(
+            sent.contains(&k),
+            "SessionState lacks `{k}`, which the guard requires"
+        );
+    }
+}
+
+#[test]
+fn adapter_status_and_resolved_payloads_carry_the_required_fields() {
+    let st = agentnest_protocol::AdapterStatus {
+        agent_kind: agentnest_protocol::AgentKind::Codex,
+        status: agentnest_protocol::AdapterStatusKind::Degraded,
+        mode: agentnest_protocol::AdapterMode::HooksCli,
+        detail: None,
+        updated_at: "t".into(),
+    };
+    let sent = top_keys(&serde_json::to_value(st).unwrap());
+    for k in guard_required_keys("parseAdapterStatus") {
+        assert!(sent.contains(&k), "AdapterStatus lacks `{k}`");
+    }
+    // `approval_resolved` is built by the mapper itself: check against its guard
+    let mut m = crate::events::EventMapper::new(
+        std::sync::Arc::new(agentnest_core::state::timers::ManualClock::new(0)),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    let out = m.map(&agentnest_core::events::DaemonEvent::Approval(
+        agentnest_core::events::ApprovalUiEvent::Resolved {
+            request_id: "ar_1".into(),
+            session_key: "s".into(),
+            outcome: agentnest_protocol::ApprovalOutcome::Allowed,
+            resolved_by: agentnest_protocol::ResolvedBy::Desktop,
+            delivery: agentnest_protocol::Delivery::Delivered,
+            observed_result: agentnest_protocol::ObservedResult::Undetermined,
+            message_ko: "m".into(),
+        },
+    ));
+    let payload = match &out[0] {
+        crate::events::Mapped::Emit(e) => e.payload["resolved"].clone(),
+        other => panic!("{other:?}"),
+    };
+    let sent = top_keys(&payload);
+    for k in guard_required_keys("parseApprovalResolved") {
+        assert!(sent.contains(&k), "approval_resolved lacks `{k}`");
+    }
+    assert_eq!(sent, guard_keys("parseApprovalResolved"));
 }

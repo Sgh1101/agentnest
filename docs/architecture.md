@@ -48,7 +48,7 @@
 | 항목 | 사실 | 결과 |
 | --- | --- | --- |
 | Linux 빌드박스 | Rust 1.97.0, Node 22.22 + pnpm 10.28, Java 21, Gradle 8.14.3(전역) | 저장소 루트 `rust-toolchain.toml` `channel = "1.97.0"`; Android는 wrapper 9.7.1 강제 |
-| webkit2gtk 없음 | Tauri 셸을 호스트 타깃으로 빌드·check 불가 | `default-members`에서 셸 제외. 셸은 `cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc`(llvm-rc 존재, 성공 실측) |
+| webkit2gtk 없음 | Tauri 글루를 호스트 타깃으로 빌드·check 불가 | `default-members`에서 글루 제외. **셸 로직은 Tauri 타입이 필요 없는 부분을 전부 `agentnest-shell-api`(default-members)로 분리**해 Linux에서 단위·통합 테스트한다. 글루는 `cargo check`/`clippy --target x86_64-pc-windows-msvc`로 타입 검사한다 — `ring`·번들 SQLite의 C 빌드 스크립트가 MSVC CRT 헤더를 요구하므로 `tools/cc-msvc-check.sh` 심(clang + mingw-w64 헤더)이 필요하다(실측 성공, `testing-and-ci.md` 2.1) |
 | Android SDK 없음, `dl.google.com` 차단 | AGP 해석 불가 | `android/core`(순수 JVM)만 로컬 검증, `:app`은 조건부 include → CI(ubuntu-latest)에서만 |
 | 도달 가능 | crates.io, npm, Maven Central, plugins.gradle.org, services.gradle.org, code.claude.com, raw.githubusercontent.com | 의존성 해석 가능 |
 | windows-latest | Windows Server 2025 + VS2026, Rust 1.98.1, WiX 3.14.1, **NSIS·NASM 없음** | NSIS는 tauri-bundler가 자동 다운로드; rustls 프로바이더는 **ring**으로 통일(aws-lc-rs는 NASM 필요) |
@@ -57,7 +57,7 @@
 
 ```bash
 cd desktop && cargo fmt --all --check && cargo clippy --workspace --exclude agentnest-desktop --all-targets -- -D warnings && cargo test --workspace --exclude agentnest-desktop
-cd desktop && cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
+cd desktop && CC_x86_64_pc_windows_msvc=$PWD/tools/cc-msvc-check.sh AR_x86_64_pc_windows_msvc=llvm-ar cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
 cd desktop/apps/desktop && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
 cd android && ./gradlew :core:test
 ```
@@ -100,10 +100,12 @@ agentnest/
 │   │   ├── agentnest-protocol/             # serde 타입(스키마와 1:1) + 스키마 적합성·라운드트립 테스트
 │   │   ├── agentnest-adapter-api/          # AgentAdapter 트레이트, RawObservation, ApprovalResponder (의존성 최소)
 │   │   ├── agentnest-core/                 # 데몬: http(훅 수집)·adapters·normalize·summarize·risk·state·approvals·store·auth·link(WSS)·redact
-│   │   └── agentnest-hook/                 # CLI: stdin JSON → 로컬 데몬 POST → stdout (Codex 훅 필수, Claude Code 폴백)
+│   │   ├── agentnest-hook/                 # CLI: stdin JSON → 로컬 데몬 POST → stdout (Codex 훅 필수, Claude Code 폴백)
+│   │   └── agentnest-shell-api/            # 셸 로직 전부(Tauri 타입 없음): 커맨드 계약·DTO·오류 매핑·이벤트 매핑/배칭·설정·approvals 기록·로그·진단·방화벽/네트워크 프로필(트레이트+가짜)·트레이 모델·첫 실행 체크리스트 + ShellApi
+│   ├── tools/                              # cc-msvc-check.sh(리눅스 msvc 타입 검사용 C 컴파일러 심), gen_icons.py(자리표시 아이콘 생성)
 │   └── apps/desktop/
 │       ├── package.json / vite.config.ts / tsconfig.json / src/ / dist/index.html(더미, check용 커밋)
-│       └── src-tauri/                      # tauri 2.12.4 (tray-icon), tauri-build 2.7.3, icons/icon.ico, capabilities/default.json
+│       └── src-tauri/                      # 얇은 글루: tauri 2.12.4 (tray-icon) + 플러그인, commands.rs(한 줄 위임)·startup.rs·tray.rs·sink.rs, tauri.conf.json, icons/, capabilities/default.json
 ├── android/
 │   ├── settings.gradle.kts                 # :core 항상, :app 은 SDK 있을 때만 include
 │   ├── build.gradle.kts                    # kotlin.jvm / compose / serialization apply false (AGP 선언 금지)
@@ -125,6 +127,7 @@ members = [
   "crates/agentnest-adapter-api",
   "crates/agentnest-core",
   "crates/agentnest-hook",
+  "crates/agentnest-shell-api",
   "apps/desktop/src-tauri",
 ]
 default-members = [
@@ -132,6 +135,7 @@ default-members = [
   "crates/agentnest-adapter-api",
   "crates/agentnest-core",
   "crates/agentnest-hook",
+  "crates/agentnest-shell-api",
 ]
 
 [workspace.package]
@@ -186,9 +190,11 @@ tempfile = "3.27.0"
 ### 3.2 의존 방향
 
 ```text
-agentnest-protocol ◀── agentnest-adapter-api ◀── agentnest-core ◀── agentnest-desktop(src-tauri)
+agentnest-protocol ◀── agentnest-adapter-api ◀── agentnest-core ◀── agentnest-shell-api ◀── agentnest-desktop(src-tauri)
 agentnest-protocol ◀── agentnest-hook
 ```
+
+`agentnest-shell-api`는 Tauri를 모른다(`agentnest-core`·`agentnest-protocol`·serde·tokio·rusqlite(읽기 전용 질의)·tracing·base64·regex). 승인 허용 응답을 만드는 코드는 없다: 로컬 승인은 `DaemonHandle::approval_decide_local`(브로커의 단일 전이)만 호출한다.
 
 `agentnest-adapter-api`는 `protocol`, `serde`, `serde_json`, `futures-util`, `tokio(sync)`, `thiserror`만 의존한다. `agentnest-core`는 Tauri를 모른다: `Daemon::start(config) -> DaemonHandle{events: broadcast::Receiver<DaemonEvent>, cmds: mpsc::Sender<DaemonCommand>}`.
 
@@ -223,7 +229,8 @@ crates/agentnest-core/src/
 | `agentnest-adapter-api` | `AgentAdapter`, `AdapterCapabilities`, `RawObservation`, `ApprovalResponder`, `NativeBinding` | 결정 생성(어댑터는 번역만) |
 | `agentnest-core` | 수집·정규화·요약·위험 분류·상태 파생·승인 브로커·저장·페어링·WSS·레댁션 | UI, 캐릭터 렌더링 |
 | `agentnest-hook` | stdin JSON → 데몬 POST → stdout 패스스루, 항상 exit 0 | 결정 생성, 입력 가공(32 KiB 초과 문자열 절단만) |
-| `agentnest-desktop`(Tauri) | 트레이, 페어링 QR + SAS 확인 모달, 기기 폐기, 훅 설치, 승인 로컬 처리/로컬 결정, 설정 | 캐릭터, 폰 대체 모니터링 |
+| `agentnest-shell-api` | 프런트 계약(커맨드·인자·오류·`daemon-event`)의 Rust 쪽, DaemonCommand/Event 매핑, 설정 화이트리스트, 진단·방화벽(UAC 상승 `netsh`, Private+LocalSubnet+이 exe+WSS 포트)·네트워크 프로필, approvals 기록, 로그 tail, 트레이 메뉴 모델(인라인 허용은 `low`/`medium`만) | Tauri 타입 사용, 허용 응답 생성, 위험 규칙 변경 |
+| `agentnest-desktop`(Tauri 글루) | 위 로직을 `#[tauri::command]`·창·트레이·토스트·플러그인에 연결, 데몬 시작/종료 순서, 단일 인스턴스, 창 숨김(닫기=트레이 상주) | 로직 판단(전부 shell-api), 캐릭터, 폰 대체 모니터링 |
 | `android/core` | 프로토콜 모델, `NestReducer`, `MoodResolver`, `LinkStateMachine`, `DecisionValidator`, 핀닝 TLS, HMAC/canonical | Android API |
 | `android/app` | FGS 링크 서비스, 알림, Keystore 토큰 보관, 생체 게이트, QR 스캔, Compose UI, 콩이 | 상태 파생 로직(core에 위임) |
 
@@ -301,8 +308,8 @@ PermissionRequest(HTTP 열림, timeout=TTL+30)
 
 | 워크플로 / 잡 | 러너 | 핵심 단계 |
 | --- | --- | --- |
-| `rust.yml` | ubuntu-24.04 | `dtolnay/rust-toolchain@1.97.0` + `Swatinem/rust-cache@v2` → fmt → clippy(default-members) → test → `apt-get install llvm` + msvc 타깃 `cargo check -p agentnest-desktop` → `! cargo tree --workspace --target all -i aws-lc-rs`(종료 코드 반전: 없으면 오류로 종료하는 것이 정상) + `ApplyProof::mint` 호출 1곳 grep |
-| `desktop-windows.yml` | windows-latest | pnpm 10 / node 22 / rust 1.97.0 → `pnpm typecheck && pnpm test` → `tauri-apps/tauri-action@v1`(`projectPath: desktop/apps/desktop`, `uploadWorkflowArtifacts: true`) → `cargo test -p agentnest-core`(Windows 경로·ACL 테스트) |
+| `rust.yml` | ubuntu-24.04 | `dtolnay/rust-toolchain@1.97.0` + `Swatinem/rust-cache@v2` → fmt → clippy(default-members) → test → `apt-get install llvm clang mingw-w64-x86-64-dev` + 심 환경(`tools/cc-msvc-check.sh`)으로 msvc 타깃 `cargo check`·`clippy -p agentnest-desktop -p agentnest-shell-api` → `! cargo tree --workspace --target all -i aws-lc-rs`(종료 코드 반전: 없으면 오류로 종료하는 것이 정상) + `ApplyProof::mint` 호출 1곳 grep |
+| `desktop-windows.yml` | windows-latest | pnpm 10 / node 22 / rust 1.97.0 → `pnpm typecheck && pnpm test` → `tauri-apps/tauri-action@v1`(`projectPath: desktop/apps/desktop`, `uploadWorkflowArtifacts: true`) → `cargo test -p agentnest-core -p agentnest-shell-api`(Windows 경로·ACL 테스트) → 글루 `clippy -D warnings`(호스트 타깃) |
 | `android.yml` | ubuntu-latest | `actions/checkout@v7`, `setup-java@v6`(temurin 17), `gradle/actions/setup-gradle@v6` → job A `:core:test`(`ANDROID_HOME=""`) / job B `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` → APK 아티팩트 |
 | `release-desktop.yml` | windows-latest | 태그 `desktop-v*` → `tauri-action@v1` `releaseDraft: true` |
 

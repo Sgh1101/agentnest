@@ -74,9 +74,20 @@ use agentnest_protocol::{AgentState, Severity};
 /// Duplicate hooks of the same call (user and project settings both define the hook) arrive within this window and
 /// share one card (claude-code.md 6). Requests of different `agent_id`s, or further apart, are separate cards.
 ///
-/// Phase 0 A14 (does `PermissionRequest` carry `agent_id`?) is open; until it is answered the window also applies to
-/// requests without an `agent_id` (both sides `""`).
+/// **The window applies only to requests that carry an `agent_id`.** Phase 0 A14 (does `PermissionRequest` carry
+/// `agent_id`?) is open, and without an `agent_id` the broker cannot tell "the same hook fired twice" from "two parallel
+/// sub-agents asked for the same command": merging would let one approval run both. So a request **without** an
+/// `agent_id` has a merge window of `0`: it is never merged, every one gets its own card and its own decision
+/// (claude-code.md 6, security.md 1.2).
 pub const MERGE_WINDOW_MS: i64 = 2_000;
+
+/// Most requests that can be pending at once. Beyond this a new request is answered "no decision" (the local prompt)
+/// without being stored: a runaway or hostile agent cannot grow the pending table, the phone's card list or the number
+/// of held HTTP connections without bound.
+pub const MAX_PENDING_APPROVALS: usize = 64;
+
+/// Most native handles (open HTTP requests) that can share one pending card.
+pub const MAX_HANDLES_PER_ENTRY: usize = 8;
 
 /// The classifier signature (injectable so that tests can prove the fail-closed panic path).
 pub type ClassifierFn = for<'a> fn(&RiskInput<'a>) -> Risk;
@@ -507,7 +518,26 @@ impl Broker {
 
     /// Opens an approval request for `draft` and takes ownership of its `responder`. The responder is answered exactly
     /// once by a validated decision, or abandoned ("no decision") on every other path.
+    ///
+    /// The work runs on its **own task**: if the caller's future is dropped half way (the agent closed the HTTP
+    /// connection while the request was being stored), the request is still either fully registered or not stored at
+    /// all, never a `pending` database row without an entry in the pending table (a zombie that phones would still
+    /// be offered by a replay). A registered request whose caller is gone is closed by the usual paths (the agent-closed
+    /// notification, the TTL).
     pub async fn open(
+        self: &Arc<Self>,
+        draft: ApprovalDraft,
+        responder: Box<dyn ApprovalResponder>,
+    ) -> OpenOutcome {
+        let this = self.clone();
+        match tokio::spawn(async move { this.open_inner(draft, responder).await }).await {
+            Ok(outcome) => outcome,
+            // the task panicked: its responder was dropped, which the agent side reads as "no decision"
+            Err(_) => OpenOutcome::Failed,
+        }
+    }
+
+    async fn open_inner(
         &self,
         draft: ApprovalDraft,
         responder: Box<dyn ApprovalResponder>,
@@ -617,9 +647,24 @@ impl Broker {
             allowed_decisions_json: serde_json::to_string(&allowed).unwrap_or_else(|_| "[]".into()),
             permission_mode: draft.permission_mode.clone(),
         };
-        let merge_window = self.deps.settings.merge_window_ms();
+        // no `agent_id` -> no merging at all (see MERGE_WINDOW_MS)
+        let merge_window = if draft.agent_id.as_deref().is_some_and(|a| !a.is_empty()) {
+            self.deps.settings.merge_window_ms()
+        } else {
+            0
+        };
 
         let mut st = self.state.lock().await;
+        if st.pending.len() >= MAX_PENDING_APPROVALS {
+            // Fail closed, nothing stored: the agent falls back to its local prompt.
+            tracing::warn!(
+                pending = st.pending.len(),
+                "too many pending approvals; this request goes to the local prompt"
+            );
+            drop(st);
+            responder.abandon(AbandonReason::InternalError).await;
+            return OpenOutcome::Failed;
+        }
         let inserted = match self.db(move |s| s.insert_approval(new, merge_window)).await {
             Ok(v) => v,
             Err(e) => {
@@ -644,6 +689,12 @@ impl Broker {
                 };
             }
             if let Some(entry) = st.pending.get_mut(&existing) {
+                if entry.handles.len() >= MAX_HANDLES_PER_ENTRY {
+                    // one card cannot collect handles without bound
+                    drop(st);
+                    responder.abandon(AbandonReason::InternalError).await;
+                    return OpenOutcome::Failed;
+                }
                 entry.handles.push(Handle {
                     binding: draft.binding.clone(),
                     responder,
@@ -1413,7 +1464,8 @@ impl Broker {
 
     /// Applies a decision of the phone or the desktop. **The only function that can produce an allow reply.**
     ///
-    /// Order, all before any state change: idempotency check by decision id, then the nine validation steps
+    /// Order, all before any state change: the replay check of an already **applied** decision (same id, request and
+    /// actor, and only for a device that is still active), then the nine validation steps
     /// ([`validate`]). Only a decision that passes all of them reaches the conditional `UPDATE`
     /// (`WHERE status='pending' AND expires_at > now`) together with the `decisions` and `approval_audit` rows in one
     /// transaction; **after that commit** the reply is built and delivered. A failure anywhere leaves the request
@@ -1422,25 +1474,46 @@ impl Broker {
         let mut st = self.state.lock().await;
         let now_ms = self.now_ms();
 
-        // idempotency: a decision id that was already processed gets its stored result, nothing is re-applied
-        let did = input.decision_id.clone();
-        if let Ok(Some(prev)) = self.db(move |s| s.decision_verify_result(&did)).await {
-            let reason = DecisionResultReason::from_wire(&prev);
-            let accepted = reason == DecisionResultReason::Applied;
-            return DecisionOutcome {
-                request_id: input.request_id.clone(),
-                accepted,
-                message_ko: decision_result_message_ko(
-                    &reason,
-                    Some(&if input.decision == Decision::Allow {
-                        ApprovalOutcome::Allowed
-                    } else {
-                        ApprovalOutcome::Denied
-                    }),
-                    AgentKind::Other,
-                ),
-                reason,
-            };
+        // Step 1 first: a revoked device gets DEVICE_REVOKED for *everything*, an old APPLIED id included.
+        let device_active = match &input.source {
+            DecisionSource::Phone { device_id } => {
+                let devices = self.deps.devices.clone();
+                let id = device_id.clone();
+                tokio::task::spawn_blocking(move || devices.is_active(&id))
+                    .await
+                    .unwrap_or(false)
+            }
+            DecisionSource::Desktop => true,
+        };
+
+        // Idempotency (security.md 6.3): only a decision that was APPLIED - same envelope id, same request, same actor -
+        // is answered from the record, and nothing is re-applied. A rejected attempt is not replayed: its id may
+        // come back valid and is then evaluated afresh. An id applied for another request is not this decision.
+        if device_active {
+            let (did, rid, actor) = (
+                input.decision_id.clone(),
+                input.request_id.clone(),
+                input.source.actor(),
+            );
+            if let Ok(true) = self
+                .db(move |s| s.decision_applied_replay(&did, &rid, &actor))
+                .await
+            {
+                return DecisionOutcome {
+                    request_id: input.request_id.clone(),
+                    accepted: true,
+                    message_ko: decision_result_message_ko(
+                        &DecisionResultReason::Applied,
+                        Some(&if input.decision == Decision::Allow {
+                            ApprovalOutcome::Allowed
+                        } else {
+                            ApprovalOutcome::Denied
+                        }),
+                        AgentKind::Other,
+                    ),
+                    reason: DecisionResultReason::Applied,
+                };
+            }
         }
 
         // steps 2 and 3 read the database; the card data for steps 4-9 comes from the pending table
@@ -1463,16 +1536,6 @@ impl Broker {
             }
         };
         let stored_status = row.as_ref().map(|r| r.status.clone());
-        let device_active = match &input.source {
-            DecisionSource::Phone { device_id } => {
-                let devices = self.deps.devices.clone();
-                let id = device_id.clone();
-                tokio::task::spawn_blocking(move || devices.is_active(&id))
-                    .await
-                    .unwrap_or(false)
-            }
-            DecisionSource::Desktop => true,
-        };
         let env = ValidationEnv {
             now_ms,
             device_active,

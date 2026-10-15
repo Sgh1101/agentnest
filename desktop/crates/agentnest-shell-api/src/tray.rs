@@ -42,6 +42,26 @@ pub fn inline_decision_allowed(card: &ApprovalRequest, decision: Decision) -> bo
     low_friction && kind_ok && card.allows(decision)
 }
 
+/// The gate of a tray "허용" / "거부" click, applied to the **live** pending cards: the card must still exist, and the
+/// decision must be inline-approvable. Anything else is an error and the glue opens the window instead.
+pub fn tray_gate<'a>(
+    pending: &'a [ApprovalRequest],
+    request_id: &str,
+    decision: Decision,
+) -> Result<&'a ApprovalRequest, crate::IpcError> {
+    let card = pending
+        .iter()
+        .find(|c| c.request_id == request_id)
+        .ok_or(crate::IpcError::new(crate::error::code::UNKNOWN_REQUEST))?;
+    if inline_decision_allowed(card, decision) {
+        Ok(card)
+    } else {
+        Err(crate::IpcError::new(
+            crate::error::code::EXTRA_CONFIRMATION_REQUIRED,
+        ))
+    }
+}
+
 /// A pending request as the menu needs it. Built from the live card; holds the title only, never the command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PendingBrief {
@@ -290,7 +310,10 @@ fn icon_for(i: &TrayInput) -> TrayIcon {
     } else if states.iter().any(|s| {
         matches!(
             s,
-            AgentState::Working | AgentState::WritingCode | AgentState::Reviewing | AgentState::Testing
+            AgentState::Working
+                | AgentState::WritingCode
+                | AgentState::Reviewing
+                | AgentState::Testing
         )
     }) {
         TrayIcon::Blue
@@ -393,8 +416,14 @@ impl TrayModel {
                 .collect();
             if i.pending.len() > MAX_LISTED_APPROVALS {
                 entries.push(action(
-                    &format!("approval:{}:open", i.pending[MAX_LISTED_APPROVALS].request_id),
-                    &format!("외 {}건 — 승인 창 열기", i.pending.len() - MAX_LISTED_APPROVALS),
+                    &format!(
+                        "approval:{}:open",
+                        i.pending[MAX_LISTED_APPROVALS].request_id
+                    ),
+                    &format!(
+                        "외 {}건 — 승인 창 열기",
+                        i.pending.len() - MAX_LISTED_APPROVALS
+                    ),
                 ));
             }
             items.push(TrayItem::Submenu {
@@ -437,7 +466,9 @@ impl TrayModel {
         fn walk(items: &[TrayItem], out: &mut Vec<String>) {
             for item in items {
                 match item {
-                    TrayItem::Action { id, .. } | TrayItem::Check { id, .. } => out.push(id.clone()),
+                    TrayItem::Action { id, .. } | TrayItem::Check { id, .. } => {
+                        out.push(id.clone())
+                    }
                     TrayItem::Submenu { items, .. } => walk(items, out),
                     TrayItem::Info { .. } | TrayItem::Separator => {}
                 }
@@ -507,7 +538,9 @@ mod tests {
     }
 
     fn has_decision_item(model: &TrayModel, request_id: &str, kind: &str) -> bool {
-        model.ids().contains(&format!("approval:{request_id}:{kind}"))
+        model
+            .ids()
+            .contains(&format!("approval:{request_id}:{kind}"))
     }
 
     #[test]
@@ -529,12 +562,83 @@ mod tests {
         ] {
             let c = card("ar_1", level, extra, &["allow", "deny", "deny_and_stop"]);
             let model = TrayModel::build(&input_with(&[c]));
-            assert_eq!(has_decision_item(&model, "ar_1", "allow"), inline, "{level}/{extra} allow");
-            assert_eq!(has_decision_item(&model, "ar_1", "deny"), inline, "{level}/{extra} deny");
+            assert_eq!(
+                has_decision_item(&model, "ar_1", "allow"),
+                inline,
+                "{level}/{extra} allow"
+            );
+            assert_eq!(
+                has_decision_item(&model, "ar_1", "deny"),
+                inline,
+                "{level}/{extra} deny"
+            );
             // hand-off and the window are always there
-            assert!(has_decision_item(&model, "ar_1", "handoff"), "{level}/{extra}");
+            assert!(
+                has_decision_item(&model, "ar_1", "handoff"),
+                "{level}/{extra}"
+            );
             assert!(has_decision_item(&model, "ar_1", "open"), "{level}/{extra}");
         }
+    }
+
+    #[test]
+    fn the_tray_gate_checks_the_live_card() {
+        use crate::error::code;
+        let cards = [
+            card("ar_low", "low", "none", &["allow", "deny"]),
+            card("ar_med", "medium", "none", &["allow", "deny"]),
+            card(
+                "ar_high",
+                "high",
+                "hold",
+                &["allow", "deny", "deny_and_stop"],
+            ),
+            card(
+                "ar_crit",
+                "critical",
+                "hold_and_reconfirm",
+                &["allow", "deny"],
+            ),
+            // a stale menu entry whose request was replaced by a riskier card under the same id
+            card("ar_swapped", "high", "hold", &["allow", "deny"]),
+            card("ar_denyonly", "low", "none", &["deny"]),
+        ];
+        for id in ["ar_low", "ar_med"] {
+            for d in [Decision::Allow, Decision::Deny] {
+                assert_eq!(tray_gate(&cards, id, d).unwrap().request_id, id);
+            }
+        }
+        for id in ["ar_high", "ar_crit", "ar_swapped"] {
+            for d in [Decision::Allow, Decision::Deny, Decision::DenyAndStop] {
+                assert_eq!(
+                    tray_gate(&cards, id, d).unwrap_err().code,
+                    code::EXTRA_CONFIRMATION_REQUIRED,
+                    "{id} {d:?}"
+                );
+            }
+        }
+        assert_eq!(
+            tray_gate(&cards, "ar_low", Decision::DenyAndStop)
+                .unwrap_err()
+                .code,
+            code::EXTRA_CONFIRMATION_REQUIRED
+        );
+        assert_eq!(
+            tray_gate(&cards, "ar_denyonly", Decision::Allow)
+                .unwrap_err()
+                .code,
+            code::EXTRA_CONFIRMATION_REQUIRED
+        );
+        assert_eq!(
+            tray_gate(&cards, "ar_gone", Decision::Allow)
+                .unwrap_err()
+                .code,
+            code::UNKNOWN_REQUEST
+        );
+        assert_eq!(
+            tray_gate(&[], "ar_low", Decision::Deny).unwrap_err().code,
+            code::UNKNOWN_REQUEST
+        );
     }
 
     #[test]
@@ -573,13 +677,20 @@ mod tests {
             .map(|i| card(&format!("ar_{i}"), "low", "none", &["allow", "deny"]))
             .collect();
         let model = TrayModel::build(&input_with(&cards));
-        let listed = model.labels().iter().filter(|l| l.starts_with("명령 실행 · ")).count();
+        let listed = model
+            .labels()
+            .iter()
+            .filter(|l| l.starts_with("명령 실행 · "))
+            .count();
         assert_eq!(listed, 5);
         assert!(model.labels().iter().any(|l| l == "외 3건 — 승인 창 열기"));
         assert!(model.labels().iter().any(|l| l == "승인 대기 8건"));
         assert_eq!(model.tooltip, "AgentNest — 승인 대기 8건");
         // the overflow entry never decides anything
-        assert!(!model.ids().iter().any(|id| id.starts_with("approval:ar_5:allow")));
+        assert!(!model
+            .ids()
+            .iter()
+            .any(|id| id.starts_with("approval:ar_5:allow")));
     }
 
     #[test]
@@ -597,7 +708,12 @@ mod tests {
         i.session_states = vec![AgentState::AwaitingApproval, AgentState::Error];
         assert_eq!(icon_for(&i), TrayIcon::Red);
         i.session_states = vec![];
-        i.pending = vec![PendingBrief::from_card(&card("ar_1", "low", "none", &["allow"]))];
+        i.pending = vec![PendingBrief::from_card(&card(
+            "ar_1",
+            "low",
+            "none",
+            &["allow"],
+        ))];
         let m = TrayModel::build(&i);
         assert_eq!(m.icon, TrayIcon::Yellow);
         assert!(m.blink);
@@ -622,7 +738,10 @@ mod tests {
         let mut i = TrayInput::default();
         let m = TrayModel::build(&i);
         assert!(m.ids().contains(&"pause:1".to_owned()));
-        assert!(m.ids().contains(&"link:0".to_owned()), "link:0 = set link.enabled to false (disconnect phones)");
+        assert!(
+            m.ids().contains(&"link:0".to_owned()),
+            "link:0 = set link.enabled to false (disconnect phones)"
+        );
         assert!(m.ids().contains(&"autostart:1".to_owned()));
         i.remote_paused = true;
         i.link_enabled = false;
@@ -648,7 +767,12 @@ mod tests {
     fn menu_ids_parse_back() {
         let cards = [
             card("ar_1", "low", "none", &["allow", "deny"]),
-            card("ar_2", "critical", "hold_and_reconfirm", &["allow", "deny", "deny_and_stop"]),
+            card(
+                "ar_2",
+                "critical",
+                "hold_and_reconfirm",
+                &["allow", "deny", "deny_and_stop"],
+            ),
         ];
         let mut i = input_with(&cards);
         i.daemon_running = false;
@@ -657,16 +781,28 @@ mod tests {
             assert!(parse_menu_id(&id).is_some(), "{id} must parse");
         }
         assert_eq!(parse_menu_id("pause:1"), Some(TrayAction::SetPaused(true)));
-        assert_eq!(parse_menu_id("link:0"), Some(TrayAction::SetLinkEnabled(false)));
-        assert_eq!(parse_menu_id("autostart:1"), Some(TrayAction::SetAutostart(true)));
+        assert_eq!(
+            parse_menu_id("link:0"),
+            Some(TrayAction::SetLinkEnabled(false))
+        );
+        assert_eq!(
+            parse_menu_id("autostart:1"),
+            Some(TrayAction::SetAutostart(true))
+        );
         assert_eq!(parse_menu_id("quit"), Some(TrayAction::Quit));
         assert_eq!(
             parse_menu_id("approval:ar_1:allow"),
-            Some(TrayAction::Approval { request_id: "ar_1".into(), kind: ApprovalClick::Allow })
+            Some(TrayAction::Approval {
+                request_id: "ar_1".into(),
+                kind: ApprovalClick::Allow
+            })
         );
         assert_eq!(
             parse_menu_id("approval:ar_018f-ab:handoff"),
-            Some(TrayAction::Approval { request_id: "ar_018f-ab".into(), kind: ApprovalClick::Handoff })
+            Some(TrayAction::Approval {
+                request_id: "ar_018f-ab".into(),
+                kind: ApprovalClick::Handoff
+            })
         );
     }
 
@@ -700,13 +836,19 @@ mod tests {
             devices_online: 1,
             ..TrayInput::default()
         };
-        assert_eq!(status_line(&i), "Claude Code ● 연결됨 / Codex ○ hooks / 폰 1대 온라인");
+        assert_eq!(
+            status_line(&i),
+            "Claude Code ● 연결됨 / Codex ○ hooks / 폰 1대 온라인"
+        );
         i.link_enabled = false;
         assert!(status_line(&i).ends_with("폰 연결 꺼짐"));
         i.link_enabled = true;
         i.devices_online = 0;
         i.codex = CodexLine::Off;
-        assert_eq!(status_line(&i), "Claude Code ● 연결됨 / Codex ○ 꺼짐 / 폰 오프라인");
+        assert_eq!(
+            status_line(&i),
+            "Claude Code ● 연결됨 / Codex ○ 꺼짐 / 폰 오프라인"
+        );
     }
 
     #[test]
@@ -715,8 +857,16 @@ mod tests {
             onboarding_pending: true,
             ..TrayInput::default()
         };
-        assert_eq!(TrayModel::build(&i).tooltip, "AgentNest — 첫 설정을 마쳐 주세요");
-        i.pending = vec![PendingBrief::from_card(&card("ar_1", "low", "none", &["allow"]))];
+        assert_eq!(
+            TrayModel::build(&i).tooltip,
+            "AgentNest — 첫 설정을 마쳐 주세요"
+        );
+        i.pending = vec![PendingBrief::from_card(&card(
+            "ar_1",
+            "low",
+            "none",
+            &["allow"],
+        ))];
         assert_eq!(TrayModel::build(&i).tooltip, "AgentNest — 승인 대기 1건");
     }
 

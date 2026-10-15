@@ -21,7 +21,8 @@ desktop/         Cargo 워크스페이스
   crates/agentnest-adapter-api 에이전트 어댑터 트레이트·RawObservation·불투명 ApprovalReply (의존성 최소, ADR-0003/0004)
   crates/agentnest-core       수집기·정규화·저장소·승인 브로커·페어링·WSS 서버
   crates/agentnest-hook       Claude Code 훅이 호출하는 소형 CLI
-  apps/desktop                Tauri 2 셸 + Vite/TS 프런트엔드
+  crates/agentnest-shell-api  Tauri 없이 테스트되는 셸 로직(커맨드 계약·DTO·이벤트 매핑·설정·진단·방화벽·트레이 모델)
+  apps/desktop                Tauri 2 셸(src-tauri = 얇은 글루) + Vite/TS 프런트엔드
 android/
   core/                       순수 Kotlin JVM 모듈 (프로토콜 모델, 상태 매핑, 재연결 로직) — SDK 없이 테스트 가능
   app/                        Jetpack Compose 앱
@@ -33,8 +34,8 @@ android/
 ```bash
 # Rust (Linux에서도 동작: Tauri 셸은 default-members 에서 제외)
 cd desktop && cargo fmt --all --check && cargo clippy --workspace --exclude agentnest-desktop --all-targets -- -D warnings && cargo test --workspace --exclude agentnest-desktop
-# Tauri 셸 타입 검사 (webkit2gtk 없는 리눅스 박스에서도 가능)
-cd desktop && cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
+# Tauri 셸 타입 검사 (webkit2gtk 없는 리눅스 박스에서도 가능: clang + mingw-w64 헤더 필요, docs/testing-and-ci.md 2.1)
+cd desktop && CC_x86_64_pc_windows_msvc=$PWD/tools/cc-msvc-check.sh AR_x86_64_pc_windows_msvc=llvm-ar cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
 # 프런트엔드
 cd desktop/apps/desktop && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
 # Android 순수 모듈 (SDK 불필요)

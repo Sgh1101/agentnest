@@ -646,23 +646,27 @@ async fn hooks_http_when_claude_closes_the_connection_the_request_is_superseded(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hooks_http_duplicate_permission_requests_share_one_card_and_both_get_the_answer() {
+    // the merge needs an `agent_id` (claude-code.md 6): both duplicates carry the same one
+    let with_agent = |command: &str| {
+        let mut b = permission_request("s1", command);
+        b["agent_id"] = json!("a1");
+        b
+    };
     let t = std::sync::Arc::new(HttpHarness::new().await);
     let phone = t.h.add_phone("Galaxy");
-    let first = start_held(&t, "cargo test").await;
-    let t2 = t.clone();
-    let second = tokio::spawn(async move {
-        t2.post(
-            "/v1/hooks/claude-code",
-            permission_request("s1", "cargo test"),
-        )
-        .await
-    });
-    eventually("two handles", || {
-        // the second request joined the first one's card; still only one pending approval
-        (t.h.store.list_pending_approvals(None).unwrap().len() == 1).then_some(())
+    let t1 = t.clone();
+    let body = with_agent("cargo test");
+    let first = tokio::spawn(async move { t1.post("/v1/hooks/claude-code", body).await });
+    eventually("pending approval", || {
+        (!t.h.store.list_pending_approvals(None).unwrap().is_empty()).then_some(())
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let t2 = t.clone();
+    let body = with_agent("cargo test");
+    let second = tokio::spawn(async move { t2.post("/v1/hooks/claude-code", body).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // the second request joined the first one's card; still only one pending approval
+    assert_eq!(t.h.store.list_pending_approvals(None).unwrap().len(), 1);
     let cards = t.h.broker.pending_cards().await;
     assert_eq!(cards.len(), 1);
     assert!(
@@ -675,6 +679,52 @@ async fn hooks_http_duplicate_permission_requests_share_one_card_and_both_get_th
     let (s2, b2) = second.await.unwrap();
     assert_eq!((s1, s2), (200, 200));
     assert_eq!(b1, b2);
+}
+
+/// Review PoC 5 over real HTTP: two identical `PermissionRequest`s one second apart WITHOUT an `agent_id` (whether the
+/// hook carries one is Phase 0 A14) are two cards; one Allow answers exactly one of them.
+#[tokio::test(flavor = "multi_thread")]
+async fn hooks_http_identical_permission_requests_without_an_agent_id_are_two_cards_one_allow_answers_one() {
+    let t = std::sync::Arc::new(HttpHarness::new().await);
+    let phone = t.h.add_phone("Galaxy");
+    let first = start_held(&t, "rm -rf build").await;
+    t.h.advance(1_000).await; // inside what used to be the 2 s merge window
+    let t2 = t.clone();
+    let second = tokio::spawn(async move {
+        t2.post(
+            "/v1/hooks/claude-code",
+            permission_request("s1", "rm -rf build"),
+        )
+        .await
+    });
+    eventually("a second card", || {
+        (t.h.store.list_pending_approvals(None).unwrap().len() == 2).then_some(())
+    })
+    .await;
+    let cards = t.h.broker.pending_cards().await;
+    assert_eq!(cards.len(), 2, "the user sees two cards");
+    let out =
+        t.h.broker
+            .apply_decision(t.h.phone_decision(&cards[0], &phone.device_id, Decision::Allow))
+            .await;
+    assert!(out.accepted);
+    let (s1, b1) = first.await.unwrap();
+    assert_eq!(s1, 200, "the first hook is answered");
+    assert!(b1.contains("allow"));
+    assert!(
+        !second.is_finished(),
+        "one Allow must not answer the second, identical hook"
+    );
+    // end the second by its own (deny) decision
+    assert!(
+        t.h.broker
+            .apply_decision(t.h.phone_decision(&cards[1], &phone.device_id, Decision::Deny))
+            .await
+            .accepted
+    );
+    let (s2, b2) = second.await.unwrap();
+    assert_eq!(s2, 200);
+    assert!(b2.contains("deny"), "{b2}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -235,7 +235,10 @@ mod tests {
             ("app.notifications", json!(false)),
             ("app.log_level", json!("debug")),
             ("onboarding.completed", json!(true)),
-            ("onboarding.codex_steps_done", json!(["trust", "hooks_json"])),
+            (
+                "onboarding.codex_steps_done",
+                json!(["trust", "hooks_json"]),
+            ),
         ];
         assert_eq!(cases.len(), WRITABLE_KEYS.len());
         for (key, value) in cases {
@@ -389,7 +392,11 @@ mod tests {
         let v = settings_value(&cfg, &ui, true);
         let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
         keys.sort_unstable();
-        let mut want: Vec<&str> = WRITABLE_KEYS.iter().chain(READ_ONLY_KEYS).copied().collect();
+        let mut want: Vec<&str> = WRITABLE_KEYS
+            .iter()
+            .chain(READ_ONLY_KEYS)
+            .copied()
+            .collect();
         want.sort_unstable();
         assert_eq!(keys, want);
         assert!(v.get("app.autostart").is_none());
@@ -429,7 +436,13 @@ mod tests {
     #[test]
     fn the_ui_settings_file_has_no_security_fields() {
         let text = serde_json::to_string(&UiSettings::default()).unwrap();
-        for forbidden in ["auto_allow", "allow_for_session", "trust_all", "risk_overrides", "ttl"] {
+        for forbidden in [
+            "auto_allow",
+            "allow_for_session",
+            "trust_all",
+            "risk_overrides",
+            "ttl",
+        ] {
             assert!(!text.contains(forbidden), "{forbidden} in {text}");
         }
     }

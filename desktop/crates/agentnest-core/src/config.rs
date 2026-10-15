@@ -104,13 +104,17 @@ impl Default for ApprovalConfig {
     }
 }
 
-/// How the phone confirms the pairing SAS (security.md 4.3). `retype_sas` only tightens.
+/// How the phone confirms the pairing SAS (security.md 4.3). `retype_sas` would only tighten.
+///
+/// **Phase 1 implements `sas_display` only.** `retype_sas` is a parsable spelling (so that a settings file or a UI
+/// that already knows it gives a clear error), but [`AppConfig::validate`] rejects it: a setting that silently does
+/// nothing would claim a protection that does not exist (a security setting must never be a no-op).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfirmMode {
     /// The phone shows the SAS it computed and the PC user compares (default).
     SasDisplay,
-    /// The user types the SAS on the phone (stricter).
+    /// The user types the SAS on the phone (stricter). NOT IMPLEMENTED in Phase 1: rejected by validation.
     RetypeSas,
 }
 
@@ -128,6 +132,18 @@ impl Default for PairingConfig {
             confirm_mode: ConfirmMode::SasDisplay,
         }
     }
+}
+
+/// `hooks.*`: what the daemon may do to the Claude Code `settings.json` on its own (security.md 1.2, 9).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct HooksConfig {
+    /// Opt-in. When the collector cannot get its preferred port (somebody else holds it) and has to bind a fallback
+    /// port, the installed HTTP hooks still point at the old port: Claude Code would talk to whoever holds it, and an
+    /// HTTP hook cannot authenticate the answer. With this switch on, the daemon rewrites the HTTP hooks to the new
+    /// port itself. Off (default): the daemon only reports `hook_port_unavailable` and refuses to answer approvals on
+    /// a port `settings.json` does not point at. Never silently changes `settings.json` without the opt-in.
+    pub auto_reinstall_on_port_change: bool,
 }
 
 /// `risk.*`. There is no way to lower a risk level from configuration (I10).
@@ -233,6 +249,8 @@ pub struct AppConfig {
     pub pairing: PairingConfig,
     /// `risk.*`.
     pub risk: RiskConfig,
+    /// `hooks.*`.
+    pub hooks: HooksConfig,
     /// `link.*`.
     pub link: LinkConfig,
     /// `codex.*`.
@@ -247,6 +265,7 @@ impl Default for AppConfig {
             approval: ApprovalConfig::default(),
             pairing: PairingConfig::default(),
             risk: RiskConfig::default(),
+            hooks: HooksConfig::default(),
             link: LinkConfig::default(),
             codex: CodexConfig::default(),
             log_level: LogLevel::Info,
@@ -268,6 +287,13 @@ impl AppConfig {
             return Err(ConfigError::Invalid {
                 key: "approval.reconnect_grace_s",
                 reason: "must be between 0 and 10 seconds",
+            });
+        }
+        if self.pairing.confirm_mode != ConfirmMode::SasDisplay {
+            return Err(ConfigError::Invalid {
+                key: "pairing.confirm_mode",
+                reason:
+                    "only sas_display is implemented in Phase 1 (retype_sas is not available yet)",
             });
         }
         if !self.link.private_sources_only {
@@ -375,6 +401,15 @@ impl Paths {
         std::fs::create_dir_all(&self.root)?;
         std::fs::create_dir_all(&self.identity_dir)?;
         std::fs::create_dir_all(&self.logs_dir)?;
+        // The data directory holds the database and the key: on Unix only the owner may enter it (Windows: the
+        // per-user `%LOCALAPPDATA%` ACL, security.md R1).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for dir in [&self.root, &self.identity_dir, &self.logs_dir] {
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
         Ok(())
     }
 }
@@ -397,6 +432,7 @@ mod tests {
         assert!(!c.approval.daemon_down_deny);
         assert_eq!(c.approval.reconnect_grace_s, 10);
         assert_eq!(c.pairing.confirm_mode, ConfirmMode::SasDisplay);
+        assert!(!c.hooks.auto_reinstall_on_port_change);
         assert!(c.risk.force_ask_on_critical);
         assert!(c.link.private_sources_only);
         assert!(c.link.enabled);
@@ -470,6 +506,7 @@ mod tests {
                 Some("approval"),
                 Some("pairing"),
                 Some("risk"),
+                Some("hooks"),
                 Some("link"),
                 Some("codex"),
             ] {
@@ -514,6 +551,33 @@ mod tests {
         assert!(AppConfig::from_json(r#"{"approval":{"critical_remote":"allow_all"}}"#).is_err());
         assert!(AppConfig::from_json(r#"{"approval":{"ttl_s":"120"}}"#).is_err());
         assert!(AppConfig::from_json("not json").is_err());
+    }
+
+    #[test]
+    fn retype_sas_is_rejected_because_nothing_implements_it() {
+        // security.md 4.3 / 9: a setting that silently does nothing would claim a protection that does not exist
+        let r = AppConfig::from_json(r#"{"pairing":{"confirm_mode":"retype_sas"}}"#);
+        assert!(
+            matches!(
+                r,
+                Err(ConfigError::Invalid {
+                    key: "pairing.confirm_mode",
+                    ..
+                })
+            ),
+            "{r:?}"
+        );
+        let mut c = AppConfig::default();
+        c.pairing.confirm_mode = ConfirmMode::RetypeSas;
+        assert!(c.validate().is_err());
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            c.save(&dir.path().join("config.json")).is_err(),
+            "not even saved"
+        );
+        AppConfig::from_json(r#"{"pairing":{"confirm_mode":"sas_display"}}"#).unwrap();
+        // an unknown spelling is still a parse error
+        assert!(AppConfig::from_json(r#"{"pairing":{"confirm_mode":"anything"}}"#).is_err());
     }
 
     #[cfg(not(feature = "codex-daemon-observer"))]

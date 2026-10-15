@@ -5,8 +5,8 @@
 //! devices carry no keys or hashes.
 
 use agentnest_core::approvals::broker::PendingOverview;
-use agentnest_core::daemon::{DaemonStatus as CoreStatus, DeviceSummary, HooksReport};
 use agentnest_core::auth::pairing::PairingStarted;
+use agentnest_core::daemon::{DaemonStatus as CoreStatus, DeviceSummary, HooksReport};
 use agentnest_protocol::{AgentEvent, ApprovalRequest};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -322,7 +322,10 @@ mod tests {
         ];
         want.sort_unstable();
         assert_eq!(keys, want);
-        assert_eq!(v["last_event_at"], json!({"claude_code": null, "codex": null}));
+        assert_eq!(
+            v["last_event_at"],
+            json!({"claude_code": null, "codex": null})
+        );
     }
 
     #[test]
@@ -330,7 +333,8 @@ mod tests {
         let mut s = core_status();
         s.wss_addr = None;
         s.hook_timeout_s = None;
-        let v = serde_json::to_value(DaemonStatusDto::from_core(s, LastEventAt::default())).unwrap();
+        let v =
+            serde_json::to_value(DaemonStatusDto::from_core(s, LastEventAt::default())).unwrap();
         assert_eq!(v["wss_addr"], "");
         assert_eq!(v["hook_timeout_s"], 0);
     }
@@ -353,7 +357,10 @@ mod tests {
             hook_timeout_s: None,
         };
         let v = serde_json::to_value(HooksStatusDto::from(r)).unwrap();
-        assert_eq!(v, json!({"installed": false, "path": null, "warnings": ["w"]}));
+        assert_eq!(
+            v,
+            json!({"installed": false, "path": null, "warnings": ["w"]})
+        );
     }
 
     #[test]

@@ -28,6 +28,8 @@ jobs:
           cache-dependency-path: desktop/apps/desktop/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -43,9 +45,13 @@ jobs:
           pnpm typecheck
           pnpm test
 
-      - name: core tests on Windows (paths, ACL)
+      - name: core and shell-api tests on Windows (paths, ACL, PowerShell script builders)
         working-directory: desktop
-        run: cargo test -p agentnest-core
+        run: cargo test -p agentnest-core -p agentnest-shell-api
+
+      - name: Tauri glue clippy (the real host target)
+        working-directory: desktop
+        run: cargo clippy -p agentnest-desktop -p agentnest-shell-api --all-targets -- -D warnings
 
       - name: build Tauri app
         uses: tauri-apps/tauri-action@v1

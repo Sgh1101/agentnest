@@ -397,9 +397,14 @@ async fn identical_hooks_within_two_seconds_share_one_card_and_one_decision_answ
     let h = Harness::new();
     let phone = h.add_phone("Galaxy");
     let input = json!({"command": "cargo test"});
-    let (o1, rx1) = h.open(h.draft("Bash", input.clone())).await;
+    // merging needs an agent_id (claude-code.md 6): both hooks carry the same one
+    let (o1, rx1) = h
+        .open(h.draft_for(SESSION, Some("agent-a"), "Bash", input.clone()))
+        .await;
     h.clock.advance(1_000);
-    let (o2, rx2) = h.open(h.draft("Bash", input.clone())).await;
+    let (o2, rx2) = h
+        .open(h.draft_for(SESSION, Some("agent-a"), "Bash", input.clone()))
+        .await;
     let OpenOutcome::Opened { request_id } = o1 else {
         panic!("{o1:?}")
     };
@@ -462,9 +467,13 @@ async fn different_agents_or_a_longer_gap_get_separate_cards_each_answered_by_it
     );
     assert!(matches!(rx2.await.unwrap(), Seen::Deny { .. }));
     // the same call 3 s later: a new card
-    let (o3, _rx3) = h.open(h.draft("Bash", input.clone())).await;
+    let (o3, _rx3) = h
+        .open(h.draft_for(SESSION, Some("agent-c"), "Bash", input.clone()))
+        .await;
     h.clock.advance(3_000);
-    let (o4, _rx4) = h.open(h.draft("Bash", input)).await;
+    let (o4, _rx4) = h
+        .open(h.draft_for(SESSION, Some("agent-c"), "Bash", input))
+        .await;
     assert!(matches!(o3, OpenOutcome::Opened { .. }));
     assert!(matches!(o4, OpenOutcome::Opened { .. }));
     assert_eq!(h.broker.pending_count().await, 2);
@@ -810,8 +819,8 @@ async fn closing_one_of_two_merged_handles_keeps_the_request_until_the_last_one_
     let h = Harness::new();
     let _phone = h.add_phone("Galaxy");
     let input = json!({"command": "cargo test"});
-    let d1 = h.draft("Bash", input.clone());
-    let d2 = h.draft("Bash", input);
+    let d1 = h.draft_for(SESSION, Some("agent-a"), "Bash", input.clone());
+    let d2 = h.draft_for(SESSION, Some("agent-a"), "Bash", input);
     let (b1, b2) = (d1.binding.clone(), d2.binding.clone());
     let (o1, _rx1) = h.open(d1).await;
     let (o2, _rx2) = h.open(d2).await;
@@ -1071,4 +1080,216 @@ async fn a_failing_store_never_answers_a_request() {
         Seen::Abandoned(AbandonReason::InternalError)
     );
     assert_eq!(h.broker.pending_count().await, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// security review regressions: merge window without agent_id, idempotency keys, caps, cancellation
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// Review PoC 5: two PermissionRequests with the same command and no `agent_id` (two parallel sub-agents; whether
+/// `PermissionRequest` carries `agent_id` is Phase 0 A14) used to become ONE card, so one Allow answered BOTH hooks.
+#[tokio::test]
+async fn identical_requests_without_an_agent_id_are_two_cards_and_one_allow_cannot_answer_both() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let input = json!({"command": "rm -rf build"});
+    let (o1, rx1) = h.open(h.draft("Bash", input.clone())).await;
+    h.clock.advance(1_000); // inside the old 2 s merge window
+    let (o2, mut rx2) = h.open(h.draft("Bash", input)).await;
+    let (OpenOutcome::Opened { request_id: id1 }, OpenOutcome::Opened { request_id: id2 }) =
+        (o1, o2)
+    else {
+        panic!("without an agent_id there is no merging: two cards");
+    };
+    assert_ne!(id1, id2);
+    assert_eq!(h.broker.pending_cards().await.len(), 2, "the user sees two cards");
+    let c1 = h.broker.pending_card(&id1).await.unwrap();
+    assert!(
+        h.broker
+            .apply_decision(h.phone_decision(&c1, &phone.device_id, Decision::Allow))
+            .await
+            .accepted
+    );
+    assert_eq!(rx1.await.unwrap(), Seen::Allow);
+    assert_eq!(
+        try_seen(&mut rx2),
+        None,
+        "one Allow never satisfies the other hook"
+    );
+    assert_eq!(h.row(&id2).status, "pending");
+}
+
+#[tokio::test]
+async fn an_empty_agent_id_is_the_same_as_none_for_merging() {
+    let h = Harness::new();
+    let _phone = h.add_phone("Galaxy");
+    let input = json!({"command": "cargo test"});
+    let (o1, _r1) = h
+        .open(h.draft_for(SESSION, Some(""), "Bash", input.clone()))
+        .await;
+    let (o2, _r2) = h
+        .open(h.draft_for(SESSION, Some(""), "Bash", input))
+        .await;
+    assert!(matches!(o1, OpenOutcome::Opened { .. }));
+    assert!(matches!(o2, OpenOutcome::Opened { .. }));
+}
+
+/// Review PoC 12 (a): a decision id that was APPLIED for request A must not be replayed as "applied" for request B.
+#[tokio::test]
+async fn an_applied_decision_id_is_not_a_result_for_another_request() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let (a, _rxa) = h.open_low().await;
+    let (o, rxb) = h
+        .open(h.draft("Bash", json!({"command": "cargo build"})))
+        .await;
+    let OpenOutcome::Opened { request_id: b_id } = o else {
+        panic!()
+    };
+    let b = h.broker.pending_card(&b_id).await.unwrap();
+    let d1 = h.phone_decision(&a, &phone.device_id, Decision::Deny);
+    let shared_id = d1.decision_id.clone();
+    assert!(h.broker.apply_decision(d1).await.accepted);
+    // the same envelope id, now for B: B must be evaluated on its own merits
+    let mut d2 = h.phone_decision(&b, &phone.device_id, Decision::Deny);
+    d2.decision_id = shared_id.clone();
+    let out = h.broker.apply_decision(d2).await;
+    assert!(out.accepted, "valid for B on its own: {:?}", out.reason);
+    assert_eq!(out.request_id, b_id);
+    assert!(matches!(rxb.await.unwrap(), Seen::Deny { .. }));
+    assert_eq!(h.row(&b_id).status, "resolved");
+    // and an invalid decision reusing that id for a third request is refused, not replayed as success
+    let (c, _rxc) = h
+        .open(h.draft("Bash", json!({"command": "cargo fmt"})))
+        .await;
+    let OpenOutcome::Opened { request_id: c_id } = c else {
+        panic!()
+    };
+    let card_c = h.broker.pending_card(&c_id).await.unwrap();
+    let mut bad = h.phone_decision(&card_c, &phone.device_id, Decision::Allow);
+    bad.decision_id = shared_id;
+    bad.auth = None;
+    let out = h.broker.apply_decision(bad).await;
+    assert!(!out.accepted);
+    assert_eq!(out.reason, DecisionResultReason::AuthRequired);
+    assert_eq!(h.row(&c_id).status, "pending");
+}
+
+/// Review PoC 12 (b): a decision id that was REJECTED once (here: no authentication) used to be replayed as a rejection
+/// forever, so the user's valid retry with the same id could never be applied.
+#[tokio::test]
+async fn a_rejected_decision_id_is_evaluated_again_and_can_succeed() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let (card, rx) = h.open_low().await;
+    let mut bad = h.phone_decision(&card, &phone.device_id, Decision::Allow);
+    bad.auth = None;
+    let id = bad.decision_id.clone();
+    let out = h.broker.apply_decision(bad).await;
+    assert!(!out.accepted);
+    assert_eq!(out.reason, DecisionResultReason::AuthRequired);
+    let mut good = h.phone_decision(&card, &phone.device_id, Decision::Allow);
+    good.decision_id = id.clone();
+    let out = h.broker.apply_decision(good.clone()).await;
+    assert!(out.accepted, "the valid retry is applied: {:?}", out.reason);
+    assert_eq!(rx.await.unwrap(), Seen::Allow);
+    assert_eq!(h.row(&card.request_id).status, "resolved");
+    // both attempts are on record (the rejected one under the original id, the applied one under a derived id)
+    let rows = h.store.list_decisions(&card.request_id).unwrap();
+    let results: Vec<&str> = rows.iter().map(|r| r.verify_result.as_str()).collect();
+    assert_eq!(results, vec!["AUTH_REQUIRED", "APPLIED"]);
+    // and re-sending the applied decision is the idempotent replay: nothing is re-applied
+    let again = h.broker.apply_decision(good).await;
+    assert!(again.accepted);
+    assert_eq!(again.reason, DecisionResultReason::Applied);
+    assert_eq!(h.store.list_decisions(&card.request_id).unwrap().len(), 2);
+}
+
+/// Review PoC 12 (c): a revoked device that replays an old APPLIED id got "applied"; it must get DEVICE_REVOKED.
+#[tokio::test]
+async fn a_revoked_device_gets_device_revoked_even_for_an_old_applied_decision_id() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let (card, rx) = h.open_low().await;
+    let d = h.phone_decision(&card, &phone.device_id, Decision::Deny);
+    assert!(h.broker.apply_decision(d.clone()).await.accepted);
+    assert!(matches!(rx.await.unwrap(), Seen::Deny { .. }));
+    // still active: the replay is answered from the record
+    assert!(h.broker.apply_decision(d.clone()).await.accepted);
+    h.devices.revoke(&phone.device_id, "user_desktop").unwrap();
+    let out = h.broker.apply_decision(d).await;
+    assert!(!out.accepted);
+    assert_eq!(out.reason, DecisionResultReason::DeviceRevoked);
+}
+
+#[tokio::test]
+async fn the_number_of_pending_approvals_and_handles_per_card_is_bounded() {
+    use agentnest_core::approvals::broker::{MAX_HANDLES_PER_ENTRY, MAX_PENDING_APPROVALS};
+    let h = Harness::new();
+    let _phone = h.add_phone("Galaxy");
+    // pending cap: the request beyond the cap is answered "no decision" and not stored
+    let mut keep = Vec::new();
+    for i in 0..MAX_PENDING_APPROVALS {
+        let (o, rx) = h
+            .open(h.draft("Bash", json!({"command": format!("cargo test --bin b{i}")})))
+            .await;
+        assert!(matches!(o, OpenOutcome::Opened { .. }), "{i}: {o:?}");
+        keep.push(rx);
+    }
+    let (o, rx) = h
+        .open(h.draft("Bash", json!({"command": "cargo test --bin overflow"})))
+        .await;
+    assert_eq!(o, OpenOutcome::Failed);
+    assert!(matches!(rx.await.unwrap(), Seen::Abandoned(_)), "an empty reply, never an allow");
+    assert_eq!(h.broker.pending_count().await, MAX_PENDING_APPROVALS);
+    assert_eq!(
+        h.store.list_pending_approvals(None).unwrap().len(),
+        MAX_PENDING_APPROVALS,
+        "the refused request left no row"
+    );
+    // handle cap: one card cannot collect handles without bound
+    let h2 = Harness::new();
+    let _p2 = h2.add_phone("Galaxy");
+    let input = json!({"command": "cargo test"});
+    let mut rxs = Vec::new();
+    for i in 0..MAX_HANDLES_PER_ENTRY + 3 {
+        let (o, rx) = h2
+            .open(h2.draft_for(SESSION, Some("agent-a"), "Bash", input.clone()))
+            .await;
+        if i == 0 {
+            assert!(matches!(o, OpenOutcome::Opened { .. }));
+        } else if i < MAX_HANDLES_PER_ENTRY {
+            assert!(matches!(o, OpenOutcome::Merged { .. }), "{i}: {o:?}");
+        } else {
+            assert_eq!(o, OpenOutcome::Failed, "{i}");
+        }
+        rxs.push(rx);
+    }
+}
+
+/// Review suspicion: `open` cancelled after the request was stored but before it was registered must not leave a
+/// `pending` database row that no connection owns (a replay would still offer it to the phones).
+#[tokio::test]
+async fn cancelling_open_never_leaves_a_zombie_pending_row() {
+    use futures_util::FutureExt;
+    let h = Harness::new();
+    let _phone = h.add_phone("Galaxy");
+    let (responder, _rx) = responder();
+    let draft = h.draft("Bash", json!({"command": "cargo test"}));
+    // poll once (the work is under way), then drop the future
+    assert!(h.broker.open(draft, responder).now_or_never().is_none());
+    let broker = h.broker.clone();
+    for _ in 0..200 {
+        if broker.pending_count().await == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let rows = h.store.list_pending_approvals(None).unwrap().len();
+    assert_eq!(
+        rows,
+        broker.pending_count().await,
+        "every pending row has a registered entry (and the reverse)"
+    );
+    assert_eq!(rows, 1, "the request itself was completed");
 }

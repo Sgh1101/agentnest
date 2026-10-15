@@ -60,7 +60,10 @@ mod tests {
             codex_home(Some(Path::new("/opt/codex")), Some(home)),
             Some(PathBuf::from("/opt/codex"))
         );
-        assert_eq!(codex_home(None, Some(home)), Some(PathBuf::from("/home/kim/.codex")));
+        assert_eq!(
+            codex_home(None, Some(home)),
+            Some(PathBuf::from("/home/kim/.codex"))
+        );
         assert_eq!(
             codex_home(Some(Path::new("")), Some(home)),
             Some(PathBuf::from("/home/kim/.codex"))

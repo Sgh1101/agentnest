@@ -49,9 +49,8 @@ pub fn approvals_history(store: &Store, limit: u32) -> Result<Vec<HistoryEntry>,
 /// The last event time per agent kind (`daemon_status.last_event_at`), read from the small `sessions` table.
 pub fn last_event_times(store: &Store) -> Result<Vec<(String, String)>, StoreError> {
     store.read(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT agent_kind, MAX(last_event_at) FROM sessions GROUP BY agent_kind",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT agent_kind, MAX(last_event_at) FROM sessions GROUP BY agent_kind")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         let mut out = Vec::new();
         for row in rows {

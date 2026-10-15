@@ -1495,11 +1495,6 @@ impl Inner {
         if new.codex.mode != old.codex.mode {
             applied.restart_required.push("codex.mode".to_owned());
         }
-        if new.pairing.confirm_mode != old.pairing.confirm_mode {
-            applied
-                .restart_required
-                .push("pairing.confirm_mode".to_owned());
-        }
         if new.link.enabled != old.link.enabled {
             // the stored value is already new; make the listener follow it
             let mut tmp = new.clone();

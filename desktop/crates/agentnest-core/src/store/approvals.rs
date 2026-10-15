@@ -344,24 +344,41 @@ fn insert_audit_tx(tx: &Transaction<'_>, a: &NewApprovalAudit) -> Result<(), Sto
     Ok(())
 }
 
+/// Inserts one decision attempt. The envelope id is the phone's choice and therefore not unique over time: if a row
+/// with that id exists (an earlier, rejected attempt; or another request's decision) the new attempt is stored under
+/// `<id>#<n>` instead of failing the whole transition (a rejected attempt must never be able to block the next valid
+/// one that reuses its id). [`Store::decision_applied_replay`] knows the suffix form.
 fn insert_decision_tx(tx: &Transaction<'_>, d: &NewDecision) -> Result<(), StoreError> {
-    tx.execute(
-        "INSERT INTO decisions(id, request_id, actor, decision, decided_at, received_at, auth_method, \
-         extra_confirmation, verify_result, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![
-            d.id,
-            d.request_id,
-            d.actor,
-            d.decision,
-            d.decided_at,
-            d.received_at,
-            d.auth_method,
-            d.extra_confirmation,
-            d.verify_result,
-            d.signature
-        ],
-    )?;
-    Ok(())
+    for n in 0..16u32 {
+        let id = if n == 0 {
+            d.id.clone()
+        } else {
+            format!("{}#{n}", d.id)
+        };
+        let inserted = tx.execute(
+            "INSERT INTO decisions(id, request_id, actor, decision, decided_at, received_at, auth_method, \
+             extra_confirmation, verify_result, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+             ON CONFLICT(id) DO NOTHING",
+            params![
+                id,
+                d.request_id,
+                d.actor,
+                d.decision,
+                d.decided_at,
+                d.received_at,
+                d.auth_method,
+                d.extra_confirmation,
+                d.verify_result,
+                d.signature
+            ],
+        )?;
+        if inserted == 1 {
+            return Ok(());
+        }
+    }
+    Err(StoreError::Invalid(
+        "too many attempts with one decision id".to_owned(),
+    ))
 }
 
 impl Store {
@@ -369,8 +386,9 @@ impl Store {
     ///
     /// The merge decision is made here, inside the single writer: a pending approval with the same
     /// `(session_key, agent_id, tool_name, tool_input_sha256)` created less than `merge_window_ms` before
-    /// `new.created_at` absorbs the new one. `merge_window_ms == 0` never merges (use it when the hook input carries no
-    /// `agent_id`, claude-code.md 6). The `approval_audit` row `opened` (a self-contained snapshot: tool, risk, hash,
+    /// `new.created_at` absorbs the new one. `merge_window_ms == 0` never merges, and **a request without an
+    /// `agent_id` (empty string) never merges whatever the window is** (claude-code.md 6: without an `agent_id` two
+    /// identical requests may be two parallel sub-agents, and one approval must not satisfy both). The `approval_audit` row `opened` (a self-contained snapshot: tool, risk, hash,
     /// origin) is written in the same transaction.
     pub fn insert_approval(
         &self,
@@ -385,7 +403,7 @@ impl Store {
         check_json_size("details_json", &new.details_json)?;
         self.run(move |conn| {
             with_full_sync(conn, |tx| {
-                if merge_window_ms > 0 {
+                if merge_window_ms > 0 && !new.agent_id.is_empty() {
                     let created_ms = parse_ms(&new.created_at)
                         .ok_or_else(|| StoreError::Invalid("created_at is not RFC 3339".to_owned()))?;
                     let cutoff = format_ms(created_ms - merge_window_ms);
@@ -719,8 +737,36 @@ impl Store {
         self.run(move |conn| with_full_sync(conn, |tx| insert_decision_tx(tx, &d)))
     }
 
-    /// The stored `verify_result` of a decision envelope id: the idempotency check (`SELECT verify_result FROM
-    /// decisions WHERE id = ?`).
+    /// `true` if this exact decision - the same envelope id, for the same request, by the same actor - was **applied**
+    /// before (`verify_result = 'APPLIED'`): the idempotency check of security.md 6.3.
+    ///
+    /// Only an *applied* decision is replayed. A decision that was rejected (no authentication, a bad hash, expired, ...)
+    /// is not a result worth repeating: the same id may come again, valid this time, and is then evaluated afresh. An
+    /// id that was applied for another request or by another actor is not this decision either.
+    pub fn decision_applied_replay(
+        &self,
+        decision_id: &str,
+        request_id: &str,
+        actor: &str,
+    ) -> Result<bool, StoreError> {
+        let (id, rid, actor) = (
+            decision_id.to_owned(),
+            request_id.to_owned(),
+            actor.to_owned(),
+        );
+        self.read(move |c| {
+            Ok(c.query_row(
+                "SELECT 1 FROM decisions WHERE request_id=?2 AND actor=?3 AND verify_result='APPLIED' \
+                 AND (id=?1 OR substr(id, 1, length(?1) + 1) = ?1 || '#') LIMIT 1",
+                params![id, rid, actor],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false))
+        })
+    }
+
+    /// The stored `verify_result` of the decision row with this exact id (tests, diagnostics).
     pub fn decision_verify_result(&self, decision_id: &str) -> Result<Option<String>, StoreError> {
         let id = decision_id.to_owned();
         self.read(move |c| {
@@ -876,7 +922,7 @@ pub(crate) mod testing {
             nonce: vec![7u8; 16],
             session_key: session.to_owned(),
             agent_kind: "claude_code".to_owned(),
-            agent_id: String::new(),
+            agent_id: "abc123".to_owned(),
             origin: "claude_code.hook.http".to_owned(),
             native_binding_json: "{}".to_owned(),
             tool_name: "Bash".to_owned(),
@@ -1034,6 +1080,21 @@ mod tests {
                 request_id: "ar_5".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn a_request_without_an_agent_id_never_merges() {
+        let s = Store::open_in_memory().unwrap();
+        for (i, dt) in [0, 100, 900].into_iter().enumerate() {
+            let mut n = new_approval(&format!("ar_{i}"), "s", T0 + dt, 120_000);
+            n.agent_id = String::new();
+            assert_eq!(
+                s.insert_approval(n, 2_000).unwrap(),
+                InsertApproval::Inserted,
+                "identical requests without an agent_id are separate cards, even inside the window"
+            );
+        }
+        assert_eq!(s.list_pending_approvals(None).unwrap().len(), 3);
     }
 
     #[test]

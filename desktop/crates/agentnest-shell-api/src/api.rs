@@ -12,9 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agentnest_core::audit::{Audit, ACTOR_DESKTOP_USER};
-use agentnest_core::daemon::{
-    CommandError, DaemonCommand, DaemonHandle, HookAgent, HooksMode,
-};
+use agentnest_core::daemon::{CommandError, DaemonCommand, DaemonHandle, HookAgent, HooksMode};
 use agentnest_core::events::DaemonEvent;
 use agentnest_core::redact::{clip, sanitize_display_text};
 use agentnest_core::state::timers::{format_ms, Clock};
@@ -34,7 +32,7 @@ use crate::history::{approvals_history, last_event_times};
 use crate::logs::tail_log_lines;
 use crate::net::{rule_name, ElevatedOutcome, NetworkOps, NetworkProfile, DEFAULT_LINK_PORT};
 use crate::settings::{apply_setting, settings_value, SettingError, UiSettingsStore};
-use crate::tray::{inline_decision_allowed, CodexLine, PendingBrief, TrayInput};
+use crate::tray::{tray_gate, CodexLine, PendingBrief, TrayInput};
 
 /// How long a daemon error keeps the tray red.
 const DAEMON_ERROR_TRAY_MS: i64 = 60_000;
@@ -188,12 +186,9 @@ impl ShellApi {
             .as_deref()
             .and_then(|a| a.parse::<SocketAddr>().ok());
         let port = listener.map_or(DEFAULT_LINK_PORT, |a| a.port());
-        let profile_addr: Option<IpAddr> = listener.map(|a| a.ip()).or_else(|| {
-            status
-                .hosts
-                .first()
-                .and_then(|h| h.parse::<IpAddr>().ok())
-        });
+        let profile_addr: Option<IpAddr> = listener
+            .map(|a| a.ip())
+            .or_else(|| status.hosts.first().and_then(|h| h.parse::<IpAddr>().ok()));
         let net = self.net.clone();
         let exe = self.opts.exe_path.clone();
         let (profile, firewall) = Self::blocking(move || {
@@ -677,12 +672,21 @@ impl ShellApi {
             .daemon
             .approvals_pending()
             .await
-            .map(|list| list.iter().map(|o| PendingBrief::from_card(&o.card)).collect())
+            .map(|list| {
+                list.iter()
+                    .map(|o| PendingBrief::from_card(&o.card))
+                    .collect()
+            })
             .unwrap_or_default();
         let session_states: Vec<AgentState> = self
             .sessions_list()
             .await
-            .map(|s| s.into_iter().filter(|x| !x.ended).map(|x| x.state).collect())
+            .map(|s| {
+                s.into_iter()
+                    .filter(|x| !x.ended)
+                    .map(|x| x.state)
+                    .collect()
+            })
             .unwrap_or_default();
         let store = self.daemon.store().clone();
         let adapters = Self::blocking(move || store.list_adapter_states())
@@ -727,16 +731,11 @@ impl ShellApi {
             .approvals_pending()
             .await
             .map_err(|e| Self::core_err(&e, Ctx::Generic))?;
-        let card = pending
-            .iter()
-            .map(|o| &o.card)
-            .find(|c| c.request_id == request_id)
-            .ok_or(IpcError::new(code::UNKNOWN_REQUEST))?;
-        if !inline_decision_allowed(card, decision) {
-            // high / critical (or a decision the card does not offer): only the window may decide
-            return Err(IpcError::new(code::EXTRA_CONFIRMATION_REQUIRED));
-        }
-        let sha = card.tool_input_sha256.clone();
+        let cards: Vec<_> = pending.into_iter().map(|o| o.card).collect();
+        // high / critical (or a decision the card does not offer): only the window may decide
+        let sha = tray_gate(&cards, request_id, decision)?
+            .tool_input_sha256
+            .clone();
         self.approval_decide_local(request_id, decision, &sha, false, None)
             .await
     }

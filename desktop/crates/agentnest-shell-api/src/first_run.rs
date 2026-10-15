@@ -95,11 +95,26 @@ pub fn checklist(i: &ChecklistInput) -> Vec<Step> {
         StepState::Pending
     };
     vec![
-        Step { id: "risk_r1", state: risk },
-        Step { id: "network_firewall", state: network },
-        Step { id: "claude_hooks", state: claude },
-        Step { id: "codex_hooks", state: codex },
-        Step { id: "add_device", state: device },
+        Step {
+            id: "risk_r1",
+            state: risk,
+        },
+        Step {
+            id: "network_firewall",
+            state: network,
+        },
+        Step {
+            id: "claude_hooks",
+            state: claude,
+        },
+        Step {
+            id: "codex_hooks",
+            state: codex,
+        },
+        Step {
+            id: "add_device",
+            state: device,
+        },
     ]
 }
 

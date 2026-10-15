@@ -202,10 +202,11 @@ impl EventMapper {
                     }),
                 ))];
                 // A request that fell back to the local prompt without the user doing it needs the user at the PC.
-                let fell_back = matches!(
-                    outcome,
-                    ApprovalOutcome::Expired | ApprovalOutcome::HandedOffLocal
-                ) && matches!(resolved_by, ResolvedBy::Timeout | ResolvedBy::System);
+                let fell_back =
+                    matches!(
+                        outcome,
+                        ApprovalOutcome::Expired | ApprovalOutcome::HandedOffLocal
+                    ) && matches!(resolved_by, ResolvedBy::Timeout | ResolvedBy::System);
                 if fell_back && !self.local_notified.iter().any(|r| r == request_id) {
                     self.remember_local(request_id);
                     out.push(Mapped::Notify(Notification::new(
@@ -239,13 +240,11 @@ impl EventMapper {
     fn map_device(&mut self, d: &DeviceUiEvent) -> Vec<Mapped> {
         let (op, device_id, toast) = match d {
             DeviceUiEvent::Paired { device_id, .. } => {
-                (
-                    "paired",
-                    device_id,
-                    Some("기기를 추가했어요"),
-                )
+                ("paired", device_id, Some("기기를 추가했어요"))
             }
-            DeviceUiEvent::Revoked { device_id } => ("revoked", device_id, Some("기기를 폐기했어요")),
+            DeviceUiEvent::Revoked { device_id } => {
+                ("revoked", device_id, Some("기기를 폐기했어요"))
+            }
             DeviceUiEvent::Online { device_id } => {
                 ("online", device_id, Some("휴대폰이 연결됐어요"))
             }
@@ -357,7 +356,10 @@ mod tests {
     fn mapper() -> (EventMapper, Arc<AtomicBool>) {
         let paused = Arc::new(AtomicBool::new(false));
         (
-            EventMapper::new(Arc::new(ManualClock::new(1_792_055_553_120)), paused.clone()),
+            EventMapper::new(
+                Arc::new(ManualClock::new(1_792_055_553_120)),
+                paused.clone(),
+            ),
             paused,
         )
     }
@@ -434,7 +436,9 @@ mod tests {
                 request: Box::new(card("ar_2", "파일 쓰기")),
                 channel: ch,
             }));
-            assert!(out.iter().any(|x| matches!(x, Mapped::Notify(n) if n.title == "PC에서 처리해야 하는 요청")));
+            assert!(out
+                .iter()
+                .any(|x| matches!(x, Mapped::Notify(n) if n.title == "PC에서 처리해야 하는 요청")));
         }
         // the immediate hand-off that follows must not toast a second time
         let out = m.map(&DaemonEvent::Approval(ApprovalUiEvent::Resolved {
@@ -463,17 +467,32 @@ mod tests {
                 message_ko: "x".into(),
             })
         };
-        let out = m.map(&resolved("ar_3", ApprovalOutcome::Expired, ResolvedBy::Timeout));
+        let out = m.map(&resolved(
+            "ar_3",
+            ApprovalOutcome::Expired,
+            ResolvedBy::Timeout,
+        ));
         assert!(out.iter().any(|x| matches!(x, Mapped::Notify(_))));
-        let again = m.map(&resolved("ar_3", ApprovalOutcome::Expired, ResolvedBy::Timeout));
+        let again = m.map(&resolved(
+            "ar_3",
+            ApprovalOutcome::Expired,
+            ResolvedBy::Timeout,
+        ));
         assert!(!again.iter().any(|x| matches!(x, Mapped::Notify(_))));
-        let user = m.map(&resolved("ar_4", ApprovalOutcome::Allowed, ResolvedBy::Desktop));
+        let user = m.map(&resolved(
+            "ar_4",
+            ApprovalOutcome::Allowed,
+            ResolvedBy::Desktop,
+        ));
         assert!(!user.iter().any(|x| matches!(x, Mapped::Notify(_))));
         let env = envelopes(&user)[0];
         assert_eq!(env.payload["op"], "resolved");
         assert_eq!(env.payload["resolved"]["outcome"], "allowed");
         assert_eq!(env.payload["resolved"]["resolved_by"], "desktop");
-        assert_eq!(env.payload["resolved"]["resolved_at"], "2026-10-15T09:12:33.120Z");
+        assert_eq!(
+            env.payload["resolved"]["resolved_at"],
+            "2026-10-15T09:12:33.120Z"
+        );
         assert!(env.payload["resolved"]["resolved_device_id"].is_null());
     }
 
@@ -585,14 +604,31 @@ mod tests {
     fn device_events_request_a_lookup_with_a_toast() {
         let (mut m, _) = mapper();
         let table = [
-            (DeviceUiEvent::Revoked { device_id: "d".into() }, "revoked"),
-            (DeviceUiEvent::Online { device_id: "d".into() }, "online"),
-            (DeviceUiEvent::Offline { device_id: "d".into() }, "offline"),
+            (
+                DeviceUiEvent::Revoked {
+                    device_id: "d".into(),
+                },
+                "revoked",
+            ),
+            (
+                DeviceUiEvent::Online {
+                    device_id: "d".into(),
+                },
+                "online",
+            ),
+            (
+                DeviceUiEvent::Offline {
+                    device_id: "d".into(),
+                },
+                "offline",
+            ),
         ];
         for (ev, op) in table {
             let out = m.map(&DaemonEvent::Device(ev));
             assert!(
-                out.iter().any(|x| matches!(x, Mapped::DeviceLookup { op: o, toast: Some(_), .. } if *o == op)),
+                out.iter().any(
+                    |x| matches!(x, Mapped::DeviceLookup { op: o, toast: Some(_), .. } if *o == op)
+                ),
                 "{op}"
             );
         }

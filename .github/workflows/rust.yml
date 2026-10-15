@@ -47,12 +47,19 @@ jobs:
         working-directory: desktop
         run: cargo test -p agentnest-core --features codex-daemon-observer,codex-rollout
 
-      - name: Tauri shell type check (windows msvc target, no link)
+      # `cargo check` never links, but ring and the bundled SQLite compile C in their build scripts. The MSVC CRT headers
+      # are not available on Linux, so the shim compiles them with clang against the mingw-w64 headers
+      # (desktop/tools/cc-msvc-check.sh, docs/testing-and-ci.md 2.1). llvm provides llvm-rc (Windows resources) and llvm-ar.
+      - name: Tauri shell type check + clippy (windows msvc target, no link)
         working-directory: desktop
+        env:
+          CC_x86_64_pc_windows_msvc: ${{ github.workspace }}/desktop/tools/cc-msvc-check.sh
+          AR_x86_64_pc_windows_msvc: llvm-ar
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm
+          sudo apt-get install -y llvm clang mingw-w64-x86-64-dev
           cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
+          cargo clippy -p agentnest-desktop -p agentnest-shell-api --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 
       - name: single crypto backend (no aws-lc-rs)
         working-directory: desktop

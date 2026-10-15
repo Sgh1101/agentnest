@@ -71,7 +71,13 @@ pub const COMMAND_ARGS: [(&str, &[&str]); 27] = [
     ("approval_handoff_local", &["request_id"]),
     (
         "approval_decide_local",
-        &["request_id", "decision", "tool_input_sha256", "confirm_ack", "reason"],
+        &[
+            "request_id",
+            "decision",
+            "tool_input_sha256",
+            "confirm_ack",
+            "reason",
+        ],
     ),
     ("remote_approval_pause", &[]),
     ("remote_approval_resume", &[]),
@@ -110,7 +116,10 @@ mod tests {
 
     #[test]
     fn args_of_finds_commands() {
-        assert_eq!(args_of("pairing_confirm"), Some(&["pairing_id", "approve"][..]));
+        assert_eq!(
+            args_of("pairing_confirm"),
+            Some(&["pairing_id", "approve"][..])
+        );
         assert_eq!(args_of("nope"), None);
     }
 }
