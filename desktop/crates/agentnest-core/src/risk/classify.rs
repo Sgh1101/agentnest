@@ -433,15 +433,17 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
     let args = &toks[1..];
     let lc: Vec<String> = args.iter().map(|a| a.to_lowercase()).collect();
     let mut hit = false;
-    let mut add = |r: Rule, rules: &mut BTreeSet<Rule>| {
-        rules.insert(r);
-        hit = true;
-    };
+    macro_rules! add {
+        ($r:expr) => {{
+            rules.insert($r);
+            hit = true;
+        }};
+    }
 
     match n {
         "rm" | "del" | "erase" | "rmdir" | "rd" | "remove-item" | "ri" | "rimraf" => {
             if let Some(r) = delete_rule(n, args, &lc) {
-                add(r, rules);
+                add!(r);
                 if r == Rule::DeleteRoot {
                     rules.insert(Rule::RecursiveDelete);
                 }
@@ -449,46 +451,46 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
         }
         "git" => {
             if let Some(r) = git_rule(args, &lc) {
-                add(r, rules);
+                add!(r);
             }
         }
         "gh" => {
             if lc.first().map(String::as_str) == Some("release") && lc.get(1).map(String::as_str) == Some("create") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             } else if lc.first().map(String::as_str) == Some("repo") && lc.get(1).map(String::as_str) == Some("delete") {
-                add(Rule::InfraDestructive, rules);
+                add!(Rule::InfraDestructive);
             }
         }
         "npm" | "pnpm" | "yarn" | "bun" => {
             if first_word(&lc) == Some("publish") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             }
         }
         "cargo" => {
             if first_word(&lc) == Some("publish") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             }
         }
         "twine" => {
             if first_word(&lc) == Some("upload") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             }
         }
         "gem" => {
             if first_word(&lc) == Some("push") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             }
         }
         "dotnet" => {
             if first_word(&lc) == Some("nuget") && lc.iter().any(|a| a == "push") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             }
         }
         "docker" | "podman" => {
             let sub = first_word(&lc);
             let force = args.iter().any(|a| a == "--force" || (is_short_group(a) && a.contains('f')));
             if sub == Some("push") || lc.iter().any(|a| a == "--push") {
-                add(Rule::Publish, rules);
+                add!(Rule::Publish);
             }
             let prune = lc.iter().any(|a| a == "prune");
             let second = lc.iter().filter(|a| !is_flag(a)).nth(1).map(String::as_str);
@@ -497,27 +499,27 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
                 || (matches!(sub, Some("volume" | "container" | "image" | "network")) && second == Some("rm") && force)
                 || (sub == Some("volume") && second == Some("rm"))
             {
-                add(Rule::InfraDestructive, rules);
+                add!(Rule::InfraDestructive);
             }
         }
         "kubectl" | "oc" => {
             if first_word(&lc) == Some("delete") {
-                add(Rule::InfraDestructive, rules);
+                add!(Rule::InfraDestructive);
             }
         }
         "helm" => {
             if matches!(first_word(&lc), Some("uninstall" | "delete")) {
-                add(Rule::InfraDestructive, rules);
+                add!(Rule::InfraDestructive);
             }
         }
         "terraform" | "tofu" | "pulumi" => {
             if matches!(first_word(&lc), Some("apply" | "destroy")) {
-                add(Rule::InfraDestructive, rules);
+                add!(Rule::InfraDestructive);
             }
         }
         "chmod" => {
             if args.iter().any(|a| is_wide_open_mode(a)) {
-                add(Rule::PermissionsWideOpen, rules);
+                add!(Rule::PermissionsWideOpen);
             }
         }
         "icacls" => {
@@ -527,20 +529,22 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
                         .get(i + 1)
                         .is_some_and(|g| g.starts_with("everyone") || g.contains("*s-1-1-0"))
                 {
-                    add(Rule::PermissionsWideOpen, rules);
+                    add!(Rule::PermissionsWideOpen);
                 }
             }
         }
         "format" | "diskpart" | "fdisk" | "parted" | "wipefs" | "format-volume" | "clear-disk"
-        | "initialize-disk" | "mke2fs" => add(Rule::DiskFormat, rules),
-        _ if n == "mkfs" || n.starts_with("mkfs.") => add(Rule::DiskFormat, rules),
+        | "initialize-disk" | "mke2fs" => add!(Rule::DiskFormat),
+        _ if n == "mkfs" || n.starts_with("mkfs.") => add!(Rule::DiskFormat),
         "dd" => {
             if lc.iter().any(|a| a.starts_with("if=")) {
-                add(Rule::DiskFormat, rules);
-            }
-            for a in args {
-                if let Some(of) = a.strip_prefix("of=") {
-                    write_rules(of, ctx, false, rules);
+                // `dd if=...` is critical as a whole (claude-code.md 7); its `of=` target is not reported separately.
+                add!(Rule::DiskFormat);
+            } else {
+                for a in args {
+                    if let Some(of) = a.strip_prefix("of=") {
+                        write_rules(of, ctx, false, rules);
+                    }
                 }
             }
         }
@@ -548,29 +552,29 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
             if matches!(first_word(&lc), Some("add" | "delete" | "import"))
                 && lc.iter().any(|a| a.contains("hklm") || a.contains("hkey_local_machine"))
             {
-                add(Rule::SystemModify, rules);
+                add!(Rule::SystemModify);
             }
         }
         "netsh" | "bcdedit" | "shutdown" | "stop-computer" | "restart-computer" | "reboot" | "poweroff"
-        | "halt" => add(Rule::SystemModify, rules),
+        | "halt" => add!(Rule::SystemModify),
         "schtasks" => {
             if lc.iter().any(|a| a.starts_with("/create") || a.starts_with("/change") || a.starts_with("/delete")) {
-                add(Rule::SystemModify, rules);
+                add!(Rule::SystemModify);
             }
         }
         "sc" => {
             let sub = lc.iter().find(|a| !is_flag(a) && !a.starts_with("//") && !a.starts_with("\\\\"));
             if matches!(sub.map(String::as_str), Some("create" | "delete" | "config")) {
-                add(Rule::SystemModify, rules);
+                add!(Rule::SystemModify);
             }
         }
-        "invoke-expression" | "iex" => add(Rule::RemoteCodeExec, rules),
-        "runas" => add(Rule::Elevation, rules),
+        "invoke-expression" | "iex" => add!(Rule::RemoteCodeExec),
+        "runas" => add!(Rule::Elevation),
         "start-process" | "saps" | "start" => {
             if lc.iter().enumerate().any(|(i, a)| {
                 (a == "-verb" && lc.get(i + 1).is_some_and(|v| v == "runas")) || a == "-verb:runas" || a == "-verb=runas"
             }) {
-                add(Rule::Elevation, rules);
+                add!(Rule::Elevation);
             }
         }
         "cp" | "mv" | "copy" | "move" | "xcopy" | "robocopy" | "ln" | "install" | "rsync" | "copy-item" | "move-item" => {
@@ -589,7 +593,7 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
     if !matches!(class, CommandClass::Test | CommandClass::Build)
         && args.iter().any(|a| names_secret_file(a))
     {
-        add(Rule::SecretPathRead, rules);
+        add!(Rule::SecretPathRead);
     }
 
     if hit {
@@ -597,9 +601,9 @@ fn analyze_segment(seg: &Segment, shell: Shell, ctx: &Ctx<'_>, depth: u8, rules:
     }
     // Generic classes
     match class {
-        CommandClass::Test | CommandClass::Build => add(Rule::TestOrBuild, rules),
-        CommandClass::Package => add(Rule::InstallsDeps, rules),
-        CommandClass::Network => add(Rule::NetworkTool, rules),
+        CommandClass::Test | CommandClass::Build => add!(Rule::TestOrBuild),
+        CommandClass::Package => add!(Rule::InstallsDeps),
+        CommandClass::Network => add!(Rule::NetworkTool),
         _ => {}
     }
     if !hit && !is_neutral_segment(seg) {
