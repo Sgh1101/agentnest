@@ -1,0 +1,88 @@
+package dev.agentnest.app.ui.approvals
+
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+
+/** How long the button must be held (docs/android.md 2.2: "길게 누르기 1.5초"). */
+const val HOLD_MILLIS: Int = 1500
+
+/**
+ * A button that only fires after being held for [HOLD_MILLIS]; a fill sweeps across while holding and resets when the
+ * finger lifts early. This (and the re-confirm dialog) is the real extra-confirmation gate for risky approvals: a
+ * single tap can never trigger [onConfirmed].
+ */
+@Composable
+fun HoldToConfirmButton(
+    label: String,
+    enabled: Boolean,
+    onConfirmed: () -> Unit,
+    modifier: Modifier = Modifier,
+    holdMillis: Int = HOLD_MILLIS,
+) {
+    val progress = remember { Animatable(0f) }
+    val latest by rememberUpdatedState(onConfirmed)
+    val fill = MaterialTheme.colorScheme.primary
+    val track = if (enabled) fill.copy(alpha = 0.22f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val shape = RoundedCornerShape(24.dp)
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .clip(shape)
+            .background(track, shape)
+            .drawBehind {
+                drawRect(fill.copy(alpha = 0.85f), size = Size(size.width * progress.value, size.height))
+            }
+            .semantics { contentDescription = "$label. ${holdMillis / 1000f}초 동안 길게 누르세요" }
+            .pointerInput(enabled) {
+                if (enabled) {
+                    detectTapGestures(
+                        onPress = {
+                            coroutineScope {
+                                val job = launch {
+                                    progress.snapTo(0f)
+                                    progress.animateTo(1f, tween(durationMillis = holdMillis, easing = LinearEasing))
+                                    latest()
+                                }
+                                tryAwaitRelease()
+                                job.cancel()
+                                progress.snapTo(0f)
+                            }
+                        },
+                    )
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+        )
+    }
+}

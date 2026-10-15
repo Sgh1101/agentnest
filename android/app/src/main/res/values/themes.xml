@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Platform theme only: the UI is Compose (edge-to-edge is enforced for targetSdk 35+, insets are handled by Scaffold). -->
+    <style name="Theme.AgentNest" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
