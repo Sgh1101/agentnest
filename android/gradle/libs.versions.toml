@@ -1,0 +1,58 @@
+[versions]
+# --- Build toolchain (docs/android.md 1.1) ---
+agp = "9.3.3"                    # only resolved when :app is included (Google Maven); never declared in the root build
+kotlin = "2.4.21"
+compileSdk = "36"
+minSdk = "26"
+targetSdk = "36"
+
+# --- AndroidX / Compose (used by :app only) ---
+composeBom = "2026.09.00"
+activity = "1.13.0"
+lifecycle = "2.11.0"
+core = "1.19.1"
+datastore = "1.2.1"
+biometric = "1.1.0"
+
+# --- Network / serialization / coroutines ---
+okhttp = "5.5.0"
+kotlinxSerialization = "1.11.0"
+kotlinxCoroutines = "1.11.0"
+
+# --- QR (UNVERIFIED (Phase 0) P3: Google Maven is unreachable from the build box) ---
+playCodeScanner = "16.1.0"
+
+[libraries]
+androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { module = "androidx.compose.ui:ui" }
+androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-service = { module = "androidx.lifecycle:lifecycle-service", version.ref = "lifecycle" }
+androidx-core = { module = "androidx.core:core", version.ref = "core" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "biometric" }
+
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-tls = { module = "com.squareup.okhttp3:okhttp-tls", version.ref = "okhttp" }
+okhttp-mockwebserver3 = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
+okhttp-mockwebserver3-junit5 = { module = "com.squareup.okhttp3:mockwebserver3-junit5", version.ref = "okhttp" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
+
+play-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "playCodeScanner" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+# kotlin-android is intentionally absent (AGP 9 built-in Kotlin)

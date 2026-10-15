@@ -34,13 +34,14 @@
 
 ```text
 android/core/src/main/kotlin/dev/agentnest/core/
-├── protocol/   Envelope, Message(sealed, classDiscriminator="type"), AgentEvent, SessionState, ApprovalRequest, Decision, ApprovalResolved, QrPayload, Codec(Json 설정)
-├── crypto/     Canonical(pair 바이트열), HmacSha256(javax.crypto.Mac), Sas, Sha256
-├── link/       LinkState(sealed), LinkStateMachine, BackoffPolicy, SeqTracker(ack/resync), HostBook(welcome/hosts_update/수동 입력 주소 보관·순회), EventsPager(events_request 페이징), WsTransport(interface), OkHttpWsTransport, ClockSkew
+├── protocol/   Ts(RFC3339, 원문 보존), Enums(UNKNOWN 폴백), Models(AgentEvent·SessionState·ApprovalRequest …), Messages(페이로드 + `ServerMessage`/`ClientMessage` sealed), Codec(봉투·Json 설정·검증), QrPayload(파서)
+├── crypto/     Canonical(pair 바이트열 + RFC 8785 canonical JSON), Sha256·HmacSha256(javax.crypto.Mac)·B64, SpkiPin, PairingCrypto(proof·SAS), PairingSecret
+├── link/       LinkState(sealed)+LinkEvent+LinkEffect, LinkStateMachine(순수: 이벤트 → 효과), BackoffPolicy, SeqTracker(ack/resync 판정), HostBook(HostBookState: welcome/hosts_update/수동 입력 주소 보관·순회), EventsPager(events_request 페이징), PairingFlow(QR 페어링·로컬 SAS), WsTransport(interface), OkHttpWsTransport, ClockSkew
 ├── tls/        SpkiPinTrustManager, PinnedClientFactory
-├── nest/       NestState, NestReducer(순수), MoodResolver(히스테리시스 포함), KongiMood, FocusSelector, ApprovalHistory(최근 50건 승인 기록 리듀서)
+├── nest/       NestState, NestReducer(순수), MoodResolver(히스테리시스 포함), KongiMood, FocusSelector, ApprovalHistory(최근 50건 승인 기록), SessionReducer(§5.4 전이표 포팅 — `state_transitions.json` 공유 검증용)
 ├── approval/   DecisionValidator(사전검사: 만료 마진·allowed_decisions·auth/extra 요구), DecisionBuilder
-└── text/       RelativeTime("3분 전"), Fallbacks
+├── text/       RelativeTime("3분 전"), Fallbacks
+└── util/       HostAddress(DNS 없는 주소 문법·사설 대역 판정), Uuid7Generator
 
 android/app/src/main/kotlin/dev/agentnest/app/
 ├── AgentNestApp.kt           Application: 알림 채널 생성, 수동 DI, NestRepository 단일 인스턴스
@@ -165,7 +166,7 @@ sealed interface LinkState {
     data class PcUnreachable(val since: Instant) : LinkState        // 연속 5회 실패 → 화면에 'IP 직접 입력'·'QR 다시 스캔(주소만 갱신)' 제공
     data class NeedsRepair(val reason: RepairReason) : LinkState    // E_AUTH_FAILED 3회 연속 / Revoked 확인 후 / PC 신원 변경 확인 → '다시 페어링' 필수
     data class Revoked(val code: String) : LinkState                // E_DEVICE_REVOKED / 4003 → 재페어링 필요, 자동 재시도 금지
-    data class Suspended(val until: Instant) : LinkState            // 핀 불일치 3회 → 1시간 + security 알림 "PC 신원이 바뀌었어요". 1시간 전에도 사용자가 **'다시 페어링'**으로 빠져나갈 수 있다(아래)
+    data class Suspended(val until: Instant) : LinkState            // 핀 불일치 3회 → 1시간 + security 알림 "PC 신원이 바뀌었어요". 1시간 전에도 사용자가 **'다시 페어링'**으로 빠져나갈 수 있다(아래). 1시간 뒤 재시도에서도 핀 불일치 3회가 반복되면 신원 변경이 확인된 것으로 보고 `NeedsRepair(IdentityChanged)`로 전이한다
     object Incompatible : LinkState                                 // 4010 → 업데이트 안내
 }
 ```
@@ -180,7 +181,7 @@ sealed interface LinkState {
 
 ### 3.3 핀닝 클라이언트 (`core/tls`, [검증: OkHttp 소스])
 
-리서치 §2.2의 `SpkiPinTrustManager`(리프 SPKI SHA-256 == 핀, `MessageDigest.isEqual`, `checkValidity()`) + `hostnameVerifier`(핀 재확인) + `CertificatePinner("sha256/<pin>")` 2중 방어 + `sslSocketFactory(factory, trustManager)` 2인자. 평문 폴백 없음, `usesCleartextTraffic` 불필요. 테스트(`mockwebserver3-junit5` + `HeldCertificate`): (a) 핀 일치 → 연결, (b) 다른 키 → `SSLPeerUnverifiedException`, (c) 만료 → 실패, (d) 같은 키 재발급(SAN 변경) → 연결.
+리서치 §2.2의 `SpkiPinTrustManager`(리프 SPKI SHA-256 == 핀, `MessageDigest.isEqual`, `checkValidity()`) + `hostnameVerifier`(핀 재확인) 2중 방어 + `sslSocketFactory(factory, trustManager)` 2인자. **`CertificatePinner`는 쓰지 않는다**: 자가서명 리프에는 OkHttp의 인증서 체인 정리기(chain cleaner)가 신뢰 루트까지 체인을 만들지 못해 모든 핸드셰이크를 `SSLPeerUnverifiedException`으로 거부한다(OkHttp 5.5.0 실측, `PinnedTransportTest`). 평문 폴백 없음(`ConnectionSpec.RESTRICTED_TLS`만), `usesCleartextTraffic` 불필요. 테스트(`mockwebserver3` + `HeldCertificate`, `SpkiPinTrustManagerTest`·`PinnedTransportTest`): (a) 핀 일치 → 연결, (b) 다른 키 → 핀 불일치(`TransportFailureKind.PIN_MISMATCH`), (c) 만료 → 실패(핀은 일치하므로 신원 변경으로 세지 않음), (d) 같은 키 재발급(SAN 변경) → 연결, (e) 인증서 없음 → 거부.
 
 ---
 

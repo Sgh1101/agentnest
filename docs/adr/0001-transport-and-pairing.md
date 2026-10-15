@@ -10,7 +10,7 @@ PRD §6은 "같은 Wi-Fi", "QR 등록", "암호화 통신", "기기 폐기 가�
 ## 결정
 
 1. **단일 WSS**(`wss://<lan-ip>:47832/v1/link`, rustls 0.23 ring, rcgen 0.14 ECDSA P-256). 평문 `ws://`·HTTP 폴링·mDNS 없음. 서버 키쌍은 재사용하고 인증서만 재발급한다.
-2. **QR에는 SPKI SHA-256 핀**(OkHttp `sha256/` 형식). 폰은 리프 SPKI가 핀과 정확히 일치할 때만 신뢰(`SpkiPinTrustManager` + `HostnameVerifier` + `CertificatePinner`).
+2. **QR에는 SPKI SHA-256 핀**(OkHttp `sha256/` 형식). 폰은 리프 SPKI가 핀과 정확히 일치할 때만 신뢰(`SpkiPinTrustManager` + 핀을 다시 확인하는 `HostnameVerifier`; `CertificatePinner`는 자가서명 리프에서 체인 정리 실패로 쓸 수 없음이 실측으로 확인되어 제외 — `android.md` §3.3).
 3. **페어링 = HMAC 소지 증명 + SAS + PC 화면 승인.** `pairing_secret`(32B, 120초, 1회, 3회 실패 소각)은 QR에만 있고 와이어에 실리지 않는다. 폰은 `HMAC-SHA256(secret, canonical_pair_bytes)`를 보내고, PC는 검증 후 6자리 SAS를 양쪽에 표시하며 사용자가 PC에서 [승인]해야 등록된다. 폰 EC P-256 공개키도 이때 등록한다.
 4. **접속 인증은 Phase 1에서 디바이스 토큰**(32B; PC는 해시만, 폰은 Keystore AES-GCM 래핑) + 연결별 `challenge` 에코. 결정 ECDSA 서명·`hello` 서명은 Phase 3 (공개키는 이미 등록되어 재페어링 불필요).
 5. 인증 전 연결은 상태기계다: `PreAuth`(서버는 `challenge` 한 프레임만, 5초 내 유효한 `pair`/`hello`가 없으면 닫힘) → 유효한 `pair` 뒤 `PairPending`(서버는 `pair_pending`/`pair_result`/`error`만, 폰은 `unpair{pairing_id}`/close만, 60초 상한, 그 밖의 폰 프레임은 4001). 인증 실패는 원인 비구분·1초 지연, IP당 5회/분 초과 시 60초 차단. 폰은 SAS를 **로컬 계산**해 표시하고 `pair_pending.sas`와 비교한다(불일치 시 중단).

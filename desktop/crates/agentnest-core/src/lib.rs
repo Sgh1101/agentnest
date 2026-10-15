@@ -9,6 +9,11 @@
 //! `approvals::broker` (`ApplyProof`), every failure path is "no decision", secrets use the `redact` newtypes and never
 //! reach logs, and `// UNVERIFIED (Phase 0)` code sits behind its feature flag.
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+// No `unwrap()` / `expect()` outside tests (CLAUDE.md). Test code is exempt through `cfg(test)`.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod adapters;
 pub mod approvals;
 pub mod audit;

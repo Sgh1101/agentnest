@@ -53,7 +53,7 @@ cd android && ./gradlew :app:assembleDebug
   - 로그에 토큰, 비밀번호, 인증서 개인키, 파일 본문 전체를 남기지 않는다. 명령/파일 경로는 길이를 제한해 기록한다.
   - 페어링 토큰은 1회용·단기 만료, 디바이스 토큰은 폐기 가능해야 한다.
 - **Rust**: `clippy -D warnings` 통과, `unwrap()` 은 테스트 코드에서만. 에러는 `thiserror` 타입으로. 공개 API 에는 doc comment.
-- **Kotlin**: `android/core` 에는 Android 의존성을 넣지 않는다(JVM 전용). 네트워크/암호화/UI 는 `app` 에만.
+- **Kotlin**: `android/core` 에는 Android 의존성을 넣지 않는다(JVM 전용: OkHttp·`java.security`·`javax.crypto` 는 허용 — WS 클라이언트·핀닝·HMAC 은 `core`). Keystore·BiometricPrompt·알림·서비스·UI 는 `app` 에만.
 - **TypeScript**: `strict: true`, `any` 금지.
 - **테스트**: 새 메시지 타입·상태 전이·위험 분류 규칙에는 반드시 단위 테스트를 붙인다. 예제 JSON(`protocol/examples`)은 Rust 와 Kotlin 양쪽에서 라운드트립 테스트한다.
 - **검증 안 된 외부 API 형태**(예: Codex app-server 메서드명)는 코드에서 `// UNVERIFIED (Phase 0)` 주석과 feature flag 뒤에 둔다.

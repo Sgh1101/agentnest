@@ -717,7 +717,7 @@ C→S ack{through_seq:1842}                   C→S ack{through_seq:1842}
 | `remote_approval` / `meta.review.state` | `unavailable`로 렌더(승인 버튼·리뷰 숫자 없음) |
 | `AgentEvent.kind` | 타임라인에 "기타"로 표시, 상태 전이 없음 |
 
-Kotlin: `Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false; classDiscriminator = "type"; coerceInputValues = true }` + 각 enum에 `UNKNOWN` 기본값. Rust: `#[serde(other)] Unknown` 변형.
+Kotlin: `Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false; coerceInputValues = true; namingStrategy = SnakeCase }` + 각 enum에 `UNKNOWN` 기본값. 메시지 종류는 봉투의 `type` 문자열이므로 `classDiscriminator`(페이로드 안의 판별자)는 쓰지 않고 `Codec`가 `type`으로 페이로드 디코더를 고른다. 폰이 **보내는** enum(`decision`, `auth.method`, `extra_confirmation.method`)은 `UNKNOWN`을 인코딩하지 못한다(직렬화 오류). Rust: `#[serde(other)] Unknown` 변형.
 
 ---
 

@@ -60,7 +60,7 @@ R1은 **문서화만으로 수용되지 않는다.** 데스크톱 첫 실행 체
 | 서버 키쌍 | rcgen 0.14.10 `KeyPair::generate()`(기본 P-256 [검증]) 1회 생성 후 **재사용**. 저장: `%LOCALAPPDATA%\AgentNest\identity\server-key.pem` — Phase 1 파일 ACL 사용자 전용(설치 시 `icacls`로 상속 제거), Phase 3 DPAPI(`windows` 0.62.2 `Win32_Security_Cryptography` — `CryptProtectData` 소속 모듈 검증 필요 (Phase 0) P0-21) |
 | 인증서 | `CertificateParams::new(sans)?.self_signed(&key)`; SAN = 현재 비루프백 IP 전부(폰은 호스트명을 검증하지 않고 SPKI 핀만 본다. PC에 mDNS 응답기가 없고 Android가 `.local`을 일반 DNS로 풀지 못하므로 `agentnest.local`은 넣지 않는다); `not_before = now − 1h`(시계 오차), `not_after = now + 2y`(`time::OffsetDateTime` [검증]). IP 변경·만료 30일 전 자동 재발급(**같은 키쌍** → 핀 불변; 재페어링은 필요 없으나 **폰이 새 주소를 아는 경로는 §3.2**) |
 | 핀 | QR의 `spki_pin` = `base64(SHA-256(DER(SubjectPublicKeyInfo)))` — OkHttp `sha256/` 핀 형식과 동일 [검증]. 인증서 전체 지문이 아니라 **키 지문**이므로 재발급에 영향 없음 |
-| 폰 검증 | `SpkiPinTrustManager`: 리프 SPKI 해시 == 핀 (상수시간 비교) + `checkValidity()`; 체인/CA/호스트명 무시; `HostnameVerifier`도 핀 재확인; `CertificatePinner` 2중 방어; 평문 폴백 없음 [검증: Android는 `sslSocketFactory(factory, trustManager)` 필수] |
+| 폰 검증 | `SpkiPinTrustManager`: 리프 SPKI 해시 == 핀 (상수시간 비교) + `checkValidity()`; 체인/CA/호스트명 무시; `HostnameVerifier`도 핀 재확인(2중 방어; OkHttp `CertificatePinner`는 자가서명 리프의 체인 정리 실패로 모든 핸드셰이크를 거부하므로 쓰지 않는다 — `android.md` §3.3); 평문 폴백 없음 [검증: Android는 `sslSocketFactory(factory, trustManager)` 필수] |
 | TLS 버전 | 1.3 우선, 1.2 허용. 클라이언트 인증서 없음(인증은 앱 계층) |
 | 바인드 | WSS `0.0.0.0:47832`는 **아니라** 설정에서 선택한 LAN 인터페이스 주소(기본: QR 생성 시점의 주 인터페이스; DHCP 변경 시 재바인드 + 인증서 SAN 재발급). Phase 3 전까지 사설 대역 소스 IP만 수락(기본 on). **Windows 방화벽·네트워크 프로필은 §3.1** |
 | MITM(A1) | 공격자는 핀과 일치하는 키를 갖지 못하므로 핸드셰이크 실패. 트래픽 분석으로 얻는 것은 프레임 길이뿐(키 파일 유출 시는 §1.3 R1) |
@@ -190,7 +190,7 @@ PC(데스크톱)                                                   폰
 5. `tool_input_sha256`이 일치 (`INPUT_HASH_MISMATCH`)
 6. 서버 시계로 `now < expires_at`(`EXPIRED`, 동시에 `expired` 전이) **그리고** `decided_at` 창 (`CLOCK_SKEW`)
 7. `decision ∈ allowed_decisions` (`NOT_ALLOWED`)
-8. `decision ∈ auth_required_for`이면 `auth.method ∈ {biometric, device_credential}`(`AUTH_REQUIRED`) **그리고 인증 신선도**: `authenticated_at ≥ created_at − 5s`(요청 이전의 인증 재사용 금지)·`authenticated_at ≤ decided_at + 5s`(미래 시각 금지) 위반은 `CLOCK_SKEW`, `decided_at − authenticated_at ≤ 60s` 위반은 `AUTH_REQUIRED`(재인증 필요). 시각은 `decided_at`과 같은 skew 보정값. `risk.extra_confirmation != none`이면 `extra_confirmation.completed && method ≥ 요구`(`EXTRA_CONFIRMATION_REQUIRED`). **이 신선도 검사도 폰의 주장에 대한 것이며 Phase 3 서명 전까지 암호학적 증명이 아니다**(§6.4)
+8. `decision ∈ auth_required_for`이면 `auth.method ∈ {biometric, device_credential}`(`AUTH_REQUIRED`) **그리고 인증 신선도**: `authenticated_at ≥ created_at − 5s`(요청 이전의 인증 재사용 금지)·`authenticated_at ≤ decided_at + 5s`(미래 시각 금지) 위반은 `CLOCK_SKEW`, `decided_at − authenticated_at ≤ 60s` 위반은 `AUTH_REQUIRED`(재인증 필요). 시각은 `decided_at`과 같은 skew 보정값. `risk.extra_confirmation != none`이면 **`auth_required_for`에 속한 결정(allow 계열)에 한해** `extra_confirmation.completed && method ≥ 요구`(`EXTRA_CONFIRMATION_REQUIRED`). 단순 `deny`는 안전한 방향이므로 위험 등급과 무관하게 추가 확인·길게 누르기를 요구하지 않는다(`deny_requires_auth` 설정이 켜진 경우의 인증만 예외). **이 신선도 검사도 폰의 주장에 대한 것이며 Phase 3 서명 전까지 암호학적 증명이 아니다**(§6.4)
 9. 원격 승인 일시정지 아님 (`PAUSED`)
 
 10. 적용: **단일 트랜잭션**에서 `UPDATE approvals SET status=…, resolved_by=…, … WHERE request_id=? AND status='pending' AND expires_at > ?`(영향 행 0이면 `ALREADY_RESOLVED`) → `decisions` INSERT → `approval_audit` INSERT → 커밋 → 그 **다음에야** `responder.respond(…)`. 허용이면 이 성공 분기에서 `ApplyProof::mint()`로 만든 증명으로 `ApprovalReply::allow(proof)`를, 거부면 `ApprovalReply::deny(message, interrupt)`를 만든다(다른 어느 곳도 `ApplyProof::mint`를 호출하지 않는다). `decision_result{APPLIED}` + `approval_resolved{seq}`.
@@ -208,7 +208,7 @@ PC(데스크톱)                                                   폰
 | 5 `tool_input_sha256` | **에코 확인**: 커맨드 인자 `tool_input_sha256`(카드가 가진 값)이 저장값과 같아야 함 — 사용자가 본 카드와 결정 대상이 같음을 보장 | `INPUT_HASH_MISMATCH` |
 | 6 만료 | **필수**(서버 시계 `now < expires_at`만; `decided_at` 창은 해당 없음) | `EXPIRED` |
 | 7 `decision ∈ allowed_decisions` | **필수** | `NOT_ALLOWED` |
-| 8 `auth`/`extra_confirmation` | 생체는 해당 없음(OS 로그인 사용자의 물리 접근). **`risk.extra_confirmation != none`이면 `confirm_ack == true` 필수** — `high`: 1.5초 길게 누르기, `critical`: 명령 전체 재표시 + 체크박스를 UI가 거친 뒤에만 `true` | `EXTRA_CONFIRMATION_REQUIRED` |
+| 8 `auth`/`extra_confirmation` | 생체는 해당 없음(OS 로그인 사용자의 물리 접근). **`risk.extra_confirmation != none`이고 결정이 allow 계열이면 `confirm_ack == true` 필수(deny 는 면제)** — `high`: 1.5초 길게 누르기, `critical`: 명령 전체 재표시 + 체크박스를 UI가 거친 뒤에만 `true` | `EXTRA_CONFIRMATION_REQUIRED` |
 | 9 원격 승인 일시정지 | 해당 없음(일시정지는 원격 경로만 막는다) | |
 | 10 조건부 UPDATE + `decisions`(`actor='desktop'`)·`approval_audit` | **필수**, `resolved_by=desktop` | `ALREADY_RESOLVED` |
 
