@@ -4,11 +4,17 @@
     "replacement": "<redacted>",
     "cmd_preview_replacement": "***",
     "known_limitations": [
-      "keyword_assignment consumes only the first token after ':' or '=', so 'Authorization: Bearer <opaque>' leaves '<opaque>' unmasked unless another pattern catches it (the JWT / 40+ char patterns do).",
-      "long_token_40 also matches long path-like strings that consist only of [A-Za-z0-9+/_-] (over-masking is the safe direction)."
+      "keyword_assignment consumes only the first token after ':' or '=' (so 'Authorization: Bearer <opaque>' would leave '<opaque>'); the earlier auth_header rule masks the value after the scheme first, and keyword_assignment then masks 'Authorization: Bearer' (hence '<redacted> <redacted>').",
+      "long_token_40 also matches long path-like strings that consist only of [A-Za-z0-9+/_-] (over-masking is the safe direction).",
+      "Patterns with a named group 'pre' and/or 'post' keep those groups and replace only the rest of the match (replacement = pre + replacement + post); patterns without them are replaced as a whole. Group names are the only extension of plain `regex.replace_all`; both Rust `regex` and java.util.regex accept `(?<name>...)`.",
+      "credential_flag / mysql_password_flag / user_flag / env_secret favour over-masking for the flag and identifier forms they name; unrelated ordinary text must stay unchanged (see the negative cases)."
     ]
   },
   "patterns": [
+    {
+      "name": "auth_header",
+      "regex": "(?i)(?<pre>\\b(?:proxy-)?authorization[\"']?\\s*[:=]\\s*[\"']?(?:bearer|basic|token|digest|negotiate)\\s+)[^\\s\"']+"
+    },
     {
       "name": "keyword_assignment",
       "regex": "(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\\s*[:=]\\s*\\S+"
@@ -26,12 +32,48 @@
       "regex": "sk-[A-Za-z0-9]{20,}"
     },
     {
+      "name": "vendor_token",
+      "regex": "\\b(?:xox[abprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}|SG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}|ya29\\.[A-Za-z0-9_-]{20,})"
+    },
+    {
       "name": "private_key_block",
       "regex": "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"
     },
     {
       "name": "jwt",
       "regex": "eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+    },
+    {
+      "name": "url_userinfo",
+      "regex": "(?i)(?<pre>\\b[a-z][a-z0-9+.-]*://[^\\s/@:\"']+:)[^\\s/@\"']+(?<post>@)"
+    },
+    {
+      "name": "credential_flag",
+      "regex": "(?i)(?<pre>\\B--?(?:password|passwd|pass|token|secret|api-?key|apikey|access-?token|auth-?token|client-?secret|oauth2-bearer)(?:\\s+|=))[^\\s\"'-][^\\s\"']*"
+    },
+    {
+      "name": "user_flag",
+      "regex": "(?i)(?<pre>(?:\\B--(?:proxy-)?user|\\b(?:curl|wget)\\b[^\\n|;&]*?\\s-u)\\s+[^\\s:@\"']+:)[^\\s\"']*[^\\s\"'\\d][^\\s\"']*"
+    },
+    {
+      "name": "mysql_password_flag",
+      "regex": "(?i)(?<pre>\\b(?:mysql(?:dump|admin|import|check|pump|show|slap)?|mariadb(?:-dump|-admin|-import|-check|-show)?)\\b[^\\n|;&]*?\\s(?-i:-p))[^\\s\"'-]\\S*"
+    },
+    {
+      "name": "npm_auth",
+      "regex": "(?i)(?<pre>_auth(?:token|password)?\\s*[=\\s]\\s*)[^\\s\"']+"
+    },
+    {
+      "name": "query_secret",
+      "regex": "(?i)(?<pre>[?&](?:key|token|api_?key|apikey|access_token|auth|sig|signature|secret|password|passwd|client_secret)=)[^&\\s\"'#]+"
+    },
+    {
+      "name": "aws_secret",
+      "regex": "(?i)(?<pre>\\baws[_-]?(?:secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token)[\"']?\\s*(?:=|:|\\s)\\s*[\"']?)[^\\s\"',;&]+"
+    },
+    {
+      "name": "env_secret",
+      "regex": "(?i)\\b[a-z0-9_.-]*(?:secret|passw(?:or)?d|token|credentials?|(?:api|private|access|auth|signing|encryption|ssh|master)[_-]?key|_key)[a-z0-9_.-]*[\"']?\\s*[=:]\\s*[\"']?[^\\s\"',;&]+"
     },
     {
       "name": "long_token_40",
@@ -318,6 +360,336 @@
         "output": "eyJhbGciOiJIUzI1NiJ9 only header",
         "redacted": false
       }
+    },
+    {
+      "name": "auth_header_bearer_opaque",
+      "rule": "auth_header",
+      "polarity": "positive",
+      "input": "curl -H 'Authorization: Bearer abc123SECRETvalue' https://api.example.com",
+      "expect": {
+        "output": "curl -H '<redacted> <redacted>' https://api.example.com",
+        "redacted": true
+      }
+    },
+    {
+      "name": "auth_header_basic",
+      "rule": "auth_header",
+      "polarity": "positive",
+      "input": "curl -H \"Authorization: Basic dXNlcjpwYXNzd29yZA==\" https://x",
+      "expect": {
+        "output": "curl -H \"<redacted> <redacted>\" https://x",
+        "redacted": true
+      }
+    },
+    {
+      "name": "auth_header_proxy_token_scheme",
+      "rule": "auth_header",
+      "polarity": "positive",
+      "input": "wget --header='Authorization: token ghp_short' x",
+      "expect": {
+        "output": "wget --header='<redacted> <redacted>' x",
+        "redacted": true
+      }
+    },
+    {
+      "name": "auth_header_word_without_scheme",
+      "rule": "auth_header",
+      "polarity": "negative",
+      "input": "Authorization header is required for this API",
+      "expect": {
+        "output": "Authorization header is required for this API",
+        "redacted": false
+      }
+    },
+    {
+      "name": "vendor_slack_token",
+      "rule": "vendor_token",
+      "polarity": "positive",
+      "input": "echo xoxb-test-fake-value-0000",
+      "expect": {
+        "output": "echo <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "vendor_github_fine_grained_pat",
+      "rule": "vendor_token",
+      "polarity": "positive",
+      "input": "gh auth login --with-token <<< github_pat_11ABCDEFG0abcdefghijkl_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstu",
+      "expect": {
+        "output": "gh auth login --with-token <<< <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "vendor_stripe_live_key",
+      "rule": "vendor_token",
+      "polarity": "positive",
+      "input": "stripe sk_live_abcdefghijklmnop1234",
+      "expect": {
+        "output": "stripe <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "vendor_npm_config_env_is_not_a_token",
+      "rule": "vendor_token",
+      "polarity": "negative",
+      "input": "set npm_config_cache=/tmp/cache and npm_short",
+      "expect": {
+        "output": "set npm_config_cache=/tmp/cache and npm_short",
+        "redacted": false
+      }
+    },
+    {
+      "name": "url_userinfo_git_clone",
+      "rule": "url_userinfo",
+      "polarity": "positive",
+      "input": "git clone https://user:hunter2@github.com/o/r.git",
+      "expect": {
+        "output": "git clone https://user:<redacted>@github.com/o/r.git",
+        "redacted": true
+      }
+    },
+    {
+      "name": "url_userinfo_percent_encoded_and_port",
+      "rule": "url_userinfo",
+      "polarity": "positive",
+      "input": "psql postgres://app:s3cr3t@db.internal:5432/app",
+      "expect": {
+        "output": "psql postgres://app:<redacted>@db.internal:5432/app",
+        "redacted": true
+      }
+    },
+    {
+      "name": "url_without_password_is_unchanged",
+      "rule": "url_userinfo",
+      "polarity": "negative",
+      "input": "ssh://git@github.com:org/repo.git and http://localhost:8080/path",
+      "expect": {
+        "output": "ssh://git@github.com:org/repo.git and http://localhost:8080/path",
+        "redacted": false
+      }
+    },
+    {
+      "name": "credential_flag_password_space",
+      "rule": "credential_flag",
+      "polarity": "positive",
+      "input": "mysql --password hunter2 db",
+      "expect": {
+        "output": "mysql --password <redacted> db",
+        "redacted": true
+      }
+    },
+    {
+      "name": "credential_flag_api_key_space",
+      "rule": "credential_flag",
+      "polarity": "positive",
+      "input": "tool --api-key abc123 run",
+      "expect": {
+        "output": "tool --api-key <redacted> run",
+        "redacted": true
+      }
+    },
+    {
+      "name": "credential_flag_password_stdin_is_not_a_value",
+      "rule": "credential_flag",
+      "polarity": "negative",
+      "input": "cargo build -p agentnest-core --password-stdin",
+      "expect": {
+        "output": "cargo build -p agentnest-core --password-stdin",
+        "redacted": false
+      }
+    },
+    {
+      "name": "user_flag_curl_user_colon",
+      "rule": "user_flag",
+      "polarity": "positive",
+      "input": "curl --user admin:hunter2 https://x",
+      "expect": {
+        "output": "curl --user admin:<redacted> https://x",
+        "redacted": true
+      }
+    },
+    {
+      "name": "user_flag_curl_dash_u",
+      "rule": "user_flag",
+      "polarity": "positive",
+      "input": "curl -u admin:hunter2 https://x",
+      "expect": {
+        "output": "curl -u admin:<redacted> https://x",
+        "redacted": true
+      }
+    },
+    {
+      "name": "user_flag_docker_uid_gid_is_not_a_secret",
+      "rule": "user_flag",
+      "polarity": "negative",
+      "input": "docker run -p 8080:80 --user 1000:1000 nginx",
+      "expect": {
+        "output": "docker run -p 8080:80 --user 1000:1000 nginx",
+        "redacted": false
+      }
+    },
+    {
+      "name": "user_flag_curl_user_without_password",
+      "rule": "user_flag",
+      "polarity": "negative",
+      "input": "curl -u admin https://x && docker run --user www-data nginx",
+      "expect": {
+        "output": "curl -u admin https://x && docker run --user www-data nginx",
+        "redacted": false
+      }
+    },
+    {
+      "name": "mysql_password_attached",
+      "rule": "mysql_password_flag",
+      "polarity": "positive",
+      "input": "mysql -u root -phunter2 db",
+      "expect": {
+        "output": "mysql -u root -p<redacted> db",
+        "redacted": true
+      }
+    },
+    {
+      "name": "mysqldump_password_attached",
+      "rule": "mysql_password_flag",
+      "polarity": "positive",
+      "input": "mysqldump -h db -u root -pS3cret! shop > dump.sql",
+      "expect": {
+        "output": "mysqldump -h db -u root -p<redacted> shop > dump.sql",
+        "redacted": true
+      }
+    },
+    {
+      "name": "mysql_prompt_flag_is_not_a_value",
+      "rule": "mysql_password_flag",
+      "polarity": "negative",
+      "input": "mysql -u root -p mydb",
+      "expect": {
+        "output": "mysql -u root -p mydb",
+        "redacted": false
+      }
+    },
+    {
+      "name": "docker_publish_port_is_not_a_password",
+      "rule": "mysql_password_flag",
+      "polarity": "negative",
+      "input": "docker run -p8080:80 nginx",
+      "expect": {
+        "output": "docker run -p8080:80 nginx",
+        "redacted": false
+      }
+    },
+    {
+      "name": "npm_auth_token_line",
+      "rule": "npm_auth",
+      "polarity": "positive",
+      "input": "npm config set //registry.npmjs.org/:_authToken npm_abcdefghijklmnopqrstuvwxyz0123456789",
+      "expect": {
+        "output": "npm config set //registry.npmjs.org/:_authToken <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "npm_auth_word_prefix_is_not_a_setting",
+      "rule": "npm_auth",
+      "polarity": "negative",
+      "input": "echo author=me _author name",
+      "expect": {
+        "output": "echo author=me _author name",
+        "redacted": false
+      }
+    },
+    {
+      "name": "query_secret_key_param",
+      "rule": "query_secret",
+      "polarity": "positive",
+      "input": "curl 'https://x/?key=AIzaSyA1234567890abcdefghijklmnopqrstuv'",
+      "expect": {
+        "output": "curl 'https://x/?key=<redacted>'",
+        "redacted": true
+      }
+    },
+    {
+      "name": "query_secret_sig_param",
+      "rule": "query_secret",
+      "polarity": "positive",
+      "input": "curl https://api.example.com/v1/items?page=2&sig=deadbeef0123&sort=name",
+      "expect": {
+        "output": "curl https://api.example.com/v1/items?page=2&sig=<redacted>&sort=name",
+        "redacted": true
+      }
+    },
+    {
+      "name": "query_ordinary_params_are_unchanged",
+      "rule": "query_secret",
+      "polarity": "negative",
+      "input": "open http://localhost:8080/path?page=2&sort=name&keyword=rust",
+      "expect": {
+        "output": "open http://localhost:8080/path?page=2&sort=name&keyword=rust",
+        "redacted": false
+      }
+    },
+    {
+      "name": "aws_secret_access_key_space",
+      "rule": "aws_secret",
+      "polarity": "positive",
+      "input": "aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG",
+      "expect": {
+        "output": "aws configure set aws_secret_access_key <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "aws_other_settings_are_unchanged",
+      "rule": "aws_secret",
+      "polarity": "negative",
+      "input": "aws configure set region us-east-1",
+      "expect": {
+        "output": "aws configure set region us-east-1",
+        "redacted": false
+      }
+    },
+    {
+      "name": "env_secret_compound_name",
+      "rule": "env_secret",
+      "polarity": "positive",
+      "input": "export MY_SECRET_KEY=hunter2hunter2",
+      "expect": {
+        "output": "export <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "env_secret_ssh_key",
+      "rule": "env_secret",
+      "polarity": "positive",
+      "input": "export SSH_KEY=abc",
+      "expect": {
+        "output": "export <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "env_secret_json_client_secret",
+      "rule": "env_secret",
+      "polarity": "positive",
+      "input": "{\"client_secret\": \"abc123\"}",
+      "expect": {
+        "output": "{\"<redacted>\"}",
+        "redacted": true
+      }
+    },
+    {
+      "name": "env_secret_ordinary_words_are_unchanged",
+      "rule": "env_secret",
+      "polarity": "negative",
+      "input": "the primary key: id and the monkey=banana keyboard",
+      "expect": {
+        "output": "the primary key: id and the monkey=banana keyboard",
+        "redacted": false
+      }
     }
   ],
   "cmd_preview_cases": [
@@ -340,6 +712,13 @@
       "input": "cargo build --release",
       "expect": {
         "output": "cargo build --release"
+      }
+    },
+    {
+      "name": "auth_header_bearer",
+      "input": "curl -H 'Authorization: Bearer abc123SECRETvalue' https://x",
+      "expect": {
+        "output": "curl -H '*** ***' https://x"
       }
     }
   ]

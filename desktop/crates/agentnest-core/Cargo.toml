@@ -51,6 +51,7 @@ tracing-appender = { workspace = true }
 futures-util = { workspace = true }
 directories = { workspace = true }
 local-ip-address = { workspace = true }
+unicode-normalization = { workspace = true }
 
 [dev-dependencies]
 ureq = { workspace = true }

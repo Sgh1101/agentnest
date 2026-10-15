@@ -328,11 +328,9 @@ async fn five_failed_authentications_block_the_address_even_for_valid_credential
         .await;
         assert_eq!(ws.expect_close().await, 4002);
     }
-    // blocked: no challenge, just the close
-    let mut ws = Phone::connect(e.link_addr(), &e.dm.spki_pin())
-        .await
-        .unwrap();
-    assert_eq!(ws.expect_silent_close().await, 4005);
+    // blocked: refused at the TCP accept, before any TLS byte (no challenge, no close frame - nothing to answer)
+    let blocked = Phone::connect(e.link_addr(), &e.dm.spki_pin()).await;
+    assert!(blocked.is_err(), "a blocked address never gets a handshake");
     let _ = paired;
 }
 
@@ -707,7 +705,7 @@ async fn a_decision_flood_is_rate_limited_and_unknown_requests_are_refused() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
-async fn the_connection_caps_answer_1013_four_pre_auth_per_address_and_sixteen_in_total() {
+async fn the_connection_caps_refuse_at_accept_four_per_address_and_sixteen_in_total() {
     use tokio::net::TcpSocket;
     let e = E2e::start_with(|o, _| {
         o.timing.preauth_ms = 20_000;
@@ -722,15 +720,14 @@ async fn the_connection_caps_answer_1013_four_pre_auth_per_address_and_sixteen_i
         let tcp = sock.connect(addr).await.map_err(|e| e.to_string())?;
         Phone::over_tcp(tcp, addr, pin).await
     }
-    // per address: the fifth pre-auth connection gets 1013 and no frame
+    // per address: the fifth pre-auth connection is closed at the TCP accept (no TLS, no frame)
     let mut held = Vec::new();
     for _ in 0..4 {
         let mut p = open_from("127.0.0.2", addr, &pin).await.unwrap();
         p.expect_challenge().await;
         held.push(p);
     }
-    let mut fifth = open_from("127.0.0.2", addr, &pin).await.unwrap();
-    assert_eq!(fifth.expect_silent_close().await, 1013);
+    assert!(open_from("127.0.0.2", addr, &pin).await.is_err(), "fifth connection of one address");
     // total: three more addresses with four each make 16; the next address is over the cap
     for src in ["127.0.0.3", "127.0.0.4", "127.0.0.5"] {
         for _ in 0..4 {
@@ -740,8 +737,7 @@ async fn the_connection_caps_answer_1013_four_pre_auth_per_address_and_sixteen_i
         }
     }
     assert_eq!(held.len(), 16);
-    let mut over = open_from("127.0.0.6", addr, &pin).await.unwrap();
-    assert_eq!(over.expect_silent_close().await, 1013);
+    assert!(open_from("127.0.0.6", addr, &pin).await.is_err(), "the 17th connection");
     // closing one frees a slot
     held.pop().unwrap().close().await;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -839,4 +835,139 @@ async fn an_unknown_decision_value_is_e_bad_message_and_nothing_else_happens() {
         unreachable!()
     };
     assert_eq!(err.code, ErrorCode::BadMessage);
+}
+
+// ---- pre-authentication admission at accept time (review PoC 1 / 1b) --------------------------------------------------
+
+/// Review PoC 1: connections that finish TLS but never send the HTTP upgrade used to bypass every pre-auth limit (16
+/// total / 4 per address / 5 s) and stayed open for ever. They are now capped at accept and closed with the window.
+#[tokio::test(flavor = "multi_thread")]
+async fn idle_tls_connections_are_capped_per_address_and_closed_at_the_pre_auth_window() {
+    use tokio::io::AsyncReadExt;
+    let e = E2e::start_with(|o, _| {
+        o.timing.preauth_ms = 800;
+    })
+    .await;
+    let addr = e.link_addr();
+    let pin = e.dm.spki_pin();
+    let mut open = Vec::new();
+    let mut refused = 0;
+    for _ in 0..64 {
+        match connect_tls(addr, &pin, None).await {
+            Ok(tls) => open.push(tls),
+            Err(_) => refused += 1,
+        }
+    }
+    assert!(
+        open.len() <= 4,
+        "at most 4 pre-auth connections per address, got {} (64 attempted)",
+        open.len()
+    );
+    assert!(refused >= 60, "the rest was refused at accept: {refused}");
+    // the window ends: the server closes every idle connection (EOF or an error, not a timeout of our own)
+    let began = Instant::now();
+    for tls in open.iter_mut() {
+        let mut b = [0u8; 1];
+        match tokio::time::timeout(Duration::from_secs(5), tls.read(&mut b)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => {}
+            Ok(Ok(_)) => panic!("the server sent data to an unauthenticated idle connection"),
+            Err(_) => panic!("an idle TLS connection was still open 5 s after the 0.8 s window"),
+        }
+    }
+    assert!(began.elapsed() < Duration::from_secs(5));
+    drop(open);
+    // a legitimate phone is served right after: nothing was left behind in the counters
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut ws = Phone::connect(addr, &pin).await.unwrap();
+    ws.expect_challenge().await;
+}
+
+/// Review PoC 1b: a half-written HTTP request (slowloris) was never timed out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_half_written_http_request_is_closed_at_the_pre_auth_window() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let e = E2e::start_with(|o, _| {
+        o.timing.preauth_ms = 800;
+    })
+    .await;
+    let mut tls = connect_tls(e.link_addr(), &e.dm.spki_pin(), None).await.unwrap();
+    tls.write_all(b"GET /v1/link HTTP/1.1\r\nHost: x\r\nX-A: ").await.unwrap();
+    let began = Instant::now();
+    let mut b = [0u8; 16];
+    match tokio::time::timeout(Duration::from_secs(5), tls.read(&mut b)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(n)) => {
+            // a 408/400 style answer is fine, but the connection must then be gone
+            assert!(n > 0);
+            let r = tokio::time::timeout(Duration::from_secs(3), tls.read(&mut b)).await;
+            assert!(matches!(r, Ok(Ok(0)) | Ok(Err(_))), "{r:?}");
+        }
+        Err(_) => panic!("the half-written request was still open after 5 s"),
+    }
+    assert!(
+        began.elapsed() < Duration::from_secs(4),
+        "closed by the 0.8 s window, not by luck: {:?}",
+        began.elapsed()
+    );
+}
+
+/// A client that connects and never starts the TLS handshake is dropped at the window as well.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tcp_connection_without_a_tls_handshake_is_closed_at_the_pre_auth_window() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let e = E2e::start_with(|o, _| {
+        o.timing.preauth_ms = 800;
+    })
+    .await;
+    let mut tcp = tokio::net::TcpStream::connect(e.link_addr()).await.unwrap();
+    // a few bytes of a ClientHello that never completes
+    tcp.write_all(&[0x16, 0x03, 0x01, 0x02, 0x00, 0x01]).await.unwrap();
+    let began = Instant::now();
+    let mut b = [0u8; 64];
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), tcp.read(&mut b)).await {
+            Ok(Ok(0)) | Ok(Err(_)) => break,
+            Ok(Ok(_)) => continue, // a TLS alert is allowed, then EOF
+            Err(_) => panic!("the stalled handshake was still open after 5 s"),
+        }
+    }
+    assert!(began.elapsed() < Duration::from_secs(4), "{:?}", began.elapsed());
+}
+
+/// The 5 s authentication deadline counts from the TCP accept: a slow client does not get the full window again after
+/// its TLS handshake and upgrade.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_authentication_deadline_is_measured_from_the_tcp_accept() {
+    let e = E2e::start_with(|o, _| {
+        o.timing.preauth_ms = 1_500;
+    })
+    .await;
+    let addr = e.link_addr();
+    let began = Instant::now();
+    let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(700)).await; // a slow start of the handshake
+    let mut ws = Phone::over_tcp(tcp, addr, &e.dm.spki_pin()).await.unwrap();
+    ws.expect_challenge().await;
+    assert_eq!(ws.expect_close().await, 4001);
+    assert!(
+        began.elapsed() < Duration::from_millis(2_000),
+        "4001 at 1.5 s after the accept, not 1.5 s after the upgrade: {:?}",
+        began.elapsed()
+    );
+}
+
+/// The window only covers the time until the upgrade: an authenticated phone is not cut off by it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_authenticated_session_outlives_the_pre_auth_window() {
+    let e = E2e::start_with(|o, _| {
+        o.timing.preauth_ms = 800;
+        o.timing.auth_fail_delay_ms = 20;
+    })
+    .await;
+    let (_p, mut ws) = e.pair_ready("Pixel").await;
+    tokio::time::sleep(Duration::from_millis(1_800)).await;
+    let id = ws.send(Message::Ping(PingPayload { sent_at: now_iso() })).await;
+    let f = ws.recv_type("pong").await;
+    let Message::Pong(p) = f.message else { unreachable!() };
+    assert_eq!(p.in_reply_to, id);
 }

@@ -47,8 +47,8 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::approvals::card::{
-    build_details, decision_result_message_ko, deny_message, purpose, resolved_message_ko,
-    risk_level_str,
+    build_details, decision_result_message_ko, deny_message, display_project, display_tool_name,
+    purpose, resolved_message_ko, risk_level_str,
 };
 use crate::approvals::correlator::{Correlator, HookPhase, Observation, TrackedOutcome};
 use crate::approvals::validator::{
@@ -592,13 +592,14 @@ impl Broker {
         if self.deps.settings.deny_requires_auth() {
             auth_required.push(Decision::Deny);
         }
-        let project = draft.project.clone().unwrap_or_else(|| ProjectRef {
+        // name, branch and path come from the working tree: made printable and bounded like every card string
+        let project = display_project(draft.project.clone().unwrap_or_else(|| ProjectRef {
             project_key: "unknown".to_owned(),
             name: "알 수 없음".to_owned(),
             path_hint: None,
             repo: None,
             branch: None,
-        });
+        }));
         let created_ms = now_ms;
         let expires_ms = now_ms + ttl_ms;
         let card = ApprovalRequest {
@@ -612,7 +613,7 @@ impl Broker {
             created_at: format_ms(created_ms),
             expires_at: format_ms(expires_ms),
             ttl_seconds: u32::try_from(ttl_ms / 1000).unwrap_or(120),
-            tool_name: draft.tool_name.clone(),
+            tool_name: display_tool_name(&draft.tool_name),
             title: summary.title.clone(),
             purpose: purpose(draft.agent_description.as_deref()),
             details,

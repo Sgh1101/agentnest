@@ -221,13 +221,23 @@ pub struct Masked {
 }
 
 /// One named masking pattern (names follow `protocol/fixtures/redact_cases.json`).
+///
+/// A pattern may name two capture groups, `pre` and `post`: they are **kept** and only the rest of the match is replaced
+/// (`Authorization: Bearer <redacted>`, `-p<redacted>`, `https://user:<redacted>@host`). A pattern without them is
+/// replaced as a whole.
 struct Pattern {
     name: &'static str,
     regex: Regex,
+    keeps_context: bool,
 }
 
-/// The masking patterns of security.md 8.3, in fixture order.
-const PATTERN_SOURCES: [(&str, &str); 7] = [
+/// The masking patterns of security.md 8.3, in fixture order (order matters: the generic keyword rule runs second, so
+/// the header rule before it can still see `Authorization: Bearer <value>` as a whole).
+const PATTERN_SOURCES: [(&str, &str); 17] = [
+    (
+        "auth_header",
+        r#"(?i)(?<pre>\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token|digest|negotiate)\s+)[^\s"']+"#,
+    ),
     (
         "keyword_assignment",
         r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\s*[:=]\s*\S+",
@@ -236,6 +246,10 @@ const PATTERN_SOURCES: [(&str, &str); 7] = [
     ("github_token", r"gh[pousr]_[A-Za-z0-9]{36,}"),
     ("sk_token", r"sk-[A-Za-z0-9]{20,}"),
     (
+        "vendor_token",
+        r"\b(?:xox[abprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,})",
+    ),
+    (
         "private_key_block",
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
     ),
@@ -243,18 +257,54 @@ const PATTERN_SOURCES: [(&str, &str); 7] = [
         "jwt",
         r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
     ),
+    (
+        "url_userinfo",
+        r#"(?i)(?<pre>\b[a-z][a-z0-9+.-]*://[^\s/@:"']+:)[^\s/@"']+(?<post>@)"#,
+    ),
+    (
+        "credential_flag",
+        r#"(?i)(?<pre>\B--?(?:password|passwd|pass|token|secret|api-?key|apikey|access-?token|auth-?token|client-?secret|oauth2-bearer)(?:\s+|=))[^\s"'-][^\s"']*"#,
+    ),
+    (
+        "user_flag",
+        r#"(?i)(?<pre>(?:\B--(?:proxy-)?user|\b(?:curl|wget)\b[^\n|;&]*?\s-u)\s+[^\s:@"']+:)[^\s"']*[^\s"'\d][^\s"']*"#,
+    ),
+    (
+        "mysql_password_flag",
+        r#"(?i)(?<pre>\b(?:mysql(?:dump|admin|import|check|pump|show|slap)?|mariadb(?:-dump|-admin|-import|-check|-show)?)\b[^\n|;&]*?\s(?-i:-p))[^\s"'-]\S*"#,
+    ),
+    (
+        "npm_auth",
+        r#"(?i)(?<pre>_auth(?:token|password)?\s*[=\s]\s*)[^\s"']+"#,
+    ),
+    (
+        "query_secret",
+        r#"(?i)(?<pre>[?&](?:key|token|api_?key|apikey|access_token|auth|sig|signature|secret|password|passwd|client_secret)=)[^&\s"'#]+"#,
+    ),
+    (
+        "aws_secret",
+        r#"(?i)(?<pre>\baws[_-]?(?:secret[_-]?access[_-]?key|secret[_-]?key|session[_-]?token)["']?\s*(?:=|:|\s)\s*["']?)[^\s"',;&]+"#,
+    ),
+    (
+        "env_secret",
+        r#"(?i)\b[a-z0-9_.-]*(?:secret|passw(?:or)?d|token|credentials?|(?:api|private|access|auth|signing|encryption|ssh|master)[_-]?key|_key)[a-z0-9_.-]*["']?\s*[=:]\s*["']?[^\s"',;&]+"#,
+    ),
     ("long_token_40", r"[A-Za-z0-9+/_-]{40,}={0,2}"),
 ];
 
-/// Patterns that are safe to apply to **file paths**: everything except the keyword rule (a path such as
+/// Patterns that are safe to apply to **file paths**: everything except the keyword-ish rules (a path such as
 /// `docs/token-rotation.md` is not an assignment) and the 40+ character rule (long POSIX paths are not secrets).
-const PATH_SAFE_PATTERNS: [&str; 5] = [
+const PATH_SAFE_PATTERNS: [&str; 6] = [
     "aws_access_key",
     "github_token",
     "sk_token",
+    "vendor_token",
     "private_key_block",
     "jwt",
 ];
+
+/// The rules [`mask_keep_long_tokens`] skips.
+const LONG_TOKEN_PATTERN: &str = "long_token_40";
 
 fn patterns() -> Option<&'static Vec<Pattern>> {
     static PATTERNS: OnceLock<Option<Vec<Pattern>>> = OnceLock::new();
@@ -263,7 +313,17 @@ fn patterns() -> Option<&'static Vec<Pattern>> {
             let mut out = Vec::with_capacity(PATTERN_SOURCES.len());
             for (name, src) in PATTERN_SOURCES {
                 match Regex::new(src) {
-                    Ok(regex) => out.push(Pattern { name, regex }),
+                    Ok(regex) => {
+                        let keeps_context = regex
+                            .capture_names()
+                            .flatten()
+                            .any(|n| n == "pre" || n == "post");
+                        out.push(Pattern {
+                            name,
+                            regex,
+                            keeps_context,
+                        });
+                    }
                     Err(_) => return None,
                 }
             }
@@ -272,7 +332,7 @@ fn patterns() -> Option<&'static Vec<Pattern>> {
         .as_ref()
 }
 
-fn apply_patterns(input: &str, replacement: &str, only: Option<&[&str]>) -> Masked {
+fn apply_patterns(input: &str, replacement: &str, use_pattern: impl Fn(&str) -> bool) -> Masked {
     let Some(pats) = patterns() else {
         // Fail closed: a broken pattern table must never turn masking into a no-op.
         return Masked {
@@ -284,16 +344,22 @@ fn apply_patterns(input: &str, replacement: &str, only: Option<&[&str]>) -> Mask
     let mut text = input.to_owned();
     let mut redacted = false;
     for p in pats {
-        if let Some(only) = only {
-            if !only.contains(&p.name) {
-                continue;
-            }
+        if !use_pattern(p.name) {
+            continue;
         }
-        // `replace_all` with a closure-free string: `$` in the replacement would be interpreted, so use a NoExpand.
-        let replaced = p
-            .regex
-            .replace_all(&text, regex::NoExpand(replacement))
-            .into_owned();
+        let replaced = if p.keeps_context {
+            p.regex
+                .replace_all(&text, |c: &regex::Captures<'_>| {
+                    let keep = |g: &str| c.name(g).map_or("", |m| m.as_str());
+                    format!("{}{replacement}{}", keep("pre"), keep("post"))
+                })
+                .into_owned()
+        } else {
+            // a closure-free string would interpret `$`, so use a NoExpand
+            p.regex
+                .replace_all(&text, regex::NoExpand(replacement))
+                .into_owned()
+        };
         if replaced != text {
             redacted = true;
             text = replaced;
@@ -317,35 +383,24 @@ fn clip_input(input: &str) -> &str {
 ///
 /// Input longer than [`MASK_INPUT_MAX_CHARS`] bytes is cut first (nothing downstream keeps that much anyway).
 pub fn mask(input: &str) -> Masked {
-    apply_patterns(input, REDACTED, None)
+    apply_patterns(input, REDACTED, |_| true)
 }
 
 /// Masks secrets with `***` for the `{cmd60}` command preview of the summary templates (protocol.md 7).
 pub fn mask_cmd_preview(input: &str) -> Masked {
-    apply_patterns(input, CMD_MASK, None)
+    apply_patterns(input, CMD_MASK, |_| true)
 }
 
 /// Masks secrets like [`mask`] but without the 40+ character rule. For text that a template clips afterwards (the final
 /// summary is masked again with [`mask`] by the post-processing, see `normalize`): the long-token rule would also turn
 /// a long identifier or hash in agent prose into `<redacted>` before the template could show a prefix of it.
 pub fn mask_keep_long_tokens(input: &str) -> Masked {
-    apply_patterns(
-        input,
-        REDACTED,
-        Some(&[
-            "keyword_assignment",
-            "aws_access_key",
-            "github_token",
-            "sk_token",
-            "private_key_block",
-            "jwt",
-        ]),
-    )
+    apply_patterns(input, REDACTED, |name| name != LONG_TOKEN_PATTERN)
 }
 
 /// Masks secrets in a **file path** (no keyword and no 40+ character rule; see [`PATH_SAFE_PATTERNS`]).
 pub fn mask_path(input: &str) -> Masked {
-    apply_patterns(input, REDACTED, Some(&PATH_SAFE_PATTERNS))
+    apply_patterns(input, REDACTED, |name| PATH_SAFE_PATTERNS.contains(&name))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -427,6 +482,85 @@ pub fn sanitize_display_text(input: &str) -> String {
         out.push(c);
     }
     out.trim().to_owned()
+}
+
+/// `true` for the characters that change what a human reads without being visible themselves: bidirectional controls,
+/// zero-width and other invisible format characters, line / paragraph separators, ESC and every other control character
+/// (except the layout characters `\n` and `\t`, which [`escape_display_text`] treats separately).
+fn is_invisible_or_control(c: char) -> bool {
+    c.is_control()
+        || is_bidi_control(c)
+        || matches!(
+            c,
+            '\u{00AD}'                 // soft hyphen
+            | '\u{180E}'               // Mongolian vowel separator
+            | '\u{200B}'..='\u{200D}' // zero-width space / non-joiner / joiner
+            | '\u{2028}' | '\u{2029}' // line / paragraph separator
+            | '\u{2060}'..='\u{2064}' // word joiner, invisible operators
+            | '\u{FEFF}'               // zero-width no-break space / BOM
+            | '\u{FFF9}'..='\u{FFFB}' // interlinear annotation
+            | '\u{E0000}'..='\u{E007F}' // tag characters
+        )
+}
+
+/// Removes the characters of [`is_invisible_or_control`] except `\n` and `\t`. Used **only to make masking robust**: a
+/// zero-width character inside `pass\u{200B}word=hunter2` must not keep the keyword rule from matching.
+fn without_invisibles(input: &str) -> std::borrow::Cow<'_, str> {
+    if !input.chars().any(|c| is_invisible_or_control(c) && c != '\n' && c != '\t') {
+        return std::borrow::Cow::Borrowed(input);
+    }
+    std::borrow::Cow::Owned(
+        input
+            .chars()
+            .filter(|c| !is_invisible_or_control(*c) || *c == '\n' || *c == '\t')
+            .collect(),
+    )
+}
+
+/// Makes text safe to **show** on a card (security.md 8.2, claude-code.md 5): every character that could make the
+/// displayed text differ from what is really there becomes a **visible escape** instead of being dropped or acted upon:
+///
+/// * ESC and every other control character (`\x1b[2K` cursor tricks), CR (`\r` rewrites the line in a terminal), bidi
+///   controls (`U+202E` reverses what follows), zero-width and other format characters, line / paragraph separators:
+///   `\r` for CR, `\u{202e}` style for the rest;
+/// * `\n` and `\t` stay (a command may be several lines) unless `single_line` is set (then `\n` is a space and `\t` a
+///   space, so a name or a path cannot fake a second line).
+///
+/// The result is plain printable text; escaping is idempotent for text that has nothing to escape.
+pub fn escape_display_text(input: &str, single_line: bool) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '\n' if single_line => out.push(' '),
+            '\t' if single_line => out.push(' '),
+            '\n' | '\t' => out.push(c),
+            '\r' => out.push_str("\\r"),
+            c if is_invisible_or_control(c) => {
+                out.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Masks `input` for display ([`mask`]) and then makes it printable ([`escape_display_text`]). Masking sees the text
+/// **without** invisible characters, so a zero-width character cannot hide a secret from it; if something was masked the
+/// invisible characters are gone from the result, otherwise they are shown as escapes.
+pub fn mask_for_display(input: &str, single_line: bool) -> Masked {
+    let stripped = without_invisibles(input);
+    let masked = mask(&stripped);
+    if masked.redacted {
+        Masked {
+            text: escape_display_text(&masked.text, single_line),
+            redacted: true,
+        }
+    } else {
+        Masked {
+            text: escape_display_text(input, single_line),
+            redacted: false,
+        }
+    }
 }
 
 fn is_bidi_control(c: char) -> bool {
@@ -699,6 +833,54 @@ mod tests {
         }
     }
 
+    /// Review PoC 3: every one of these used to leave the secret in the card / event text.
+    #[test]
+    fn the_review_leaks_are_masked_in_every_variant() {
+        let cases: [(&str, &str); 14] = [
+            ("curl -H 'Authorization: Bearer abc123SECRETvalue' https://api.example.com", "abc123SECRETvalue"),
+            ("curl -H \"Authorization: Basic dXNlcjpwYXNzd29yZA==\" https://x", "dXNlcjpwYXNzd29yZA"),
+            ("export MY_SECRET_KEY=hunter2hunter2", "hunter2hunter2"),
+            ("mysql -u root -phunter2 db", "hunter2"),
+            ("mysql --password hunter2 db", "hunter2"),
+            ("git clone https://user:hunter2@github.com/o/r.git", "hunter2"),
+            ("curl --user admin:hunter2 https://x", "hunter2"),
+            ("npm config set //registry.npmjs.org/:_authToken npm_abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnopqrstuvwxyz0123456789"),
+            ("echo xoxb-test-fake-value-0000", "fake-value-0000"),
+            ("curl 'https://x/?key=AIzaSyA1234567890abcdefghijklmnopqrstuv'", "AIzaSyA1234567890"),
+            ("ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz"),
+            ("gh auth login --with-token <<< github_pat_11ABCDEFG0abcdefghijkl_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstu", "11ABCDEFG0"),
+            ("curl -d 'client_secret=abc123' https://x", "abc123"),
+            ("aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG", "wJalrXUtnFEMI"),
+        ];
+        for (input, secret) in cases {
+            for (label, got) in [
+                ("mask", mask(input)),
+                ("cmd_preview", mask_cmd_preview(input)),
+                ("keep_long", mask_keep_long_tokens(input)),
+            ] {
+                assert!(got.redacted, "{label}: {input}");
+                assert!(!got.text.contains(secret), "{label} leaked {secret:?}: {}", got.text);
+            }
+        }
+        // the readable part of the command survives where the rule keeps context
+        assert_eq!(mask("mysql -u root -phunter2 db").text, "mysql -u root -p<redacted> db");
+        assert_eq!(
+            mask("git clone https://user:hunter2@github.com/o/r.git").text,
+            "git clone https://user:<redacted>@github.com/o/r.git"
+        );
+        // and ordinary text is not over-masked
+        for ok in [
+            "docker run -p 8080:80 --user 1000:1000 nginx",
+            "mysql -u root -p mydb",
+            "cargo test -p agentnest-core --all-targets",
+            "git clone https://github.com/org/repo.git",
+            "open http://localhost:8080/path?page=2&sort=name",
+        ] {
+            assert_eq!(mask(ok).text, ok);
+            assert!(!mask(ok).redacted);
+        }
+    }
+
     #[test]
     fn cmd_preview_cases_golden() {
         let f = fixture();
@@ -805,6 +987,39 @@ mod tests {
         let _ = bound_detail(&mut deep);
         let mut odd = serde_json::json!({"command": "\u{0}\u{202e}weird", "file_path": ""});
         let _ = bound_detail(&mut odd);
+    }
+
+    #[test]
+    fn escape_display_text_makes_every_deceptive_character_visible() {
+        // bidi override, zero width, ESC + cursor control, CR: all printable now
+        let tricky = "echo safe \u{202e}fdsa\u{200b}\u{1b}[2K\rrm -rf x";
+        let shown = escape_display_text(tricky, false);
+        assert_eq!(shown, "echo safe \\u{202e}fdsa\\u{200b}\\u{1b}[2K\\rrm -rf x");
+        for c in shown.chars() {
+            assert!(!c.is_control() || c == '\n' || c == '\t', "{c:?}");
+            assert!(!is_bidi_control(c));
+        }
+        // layout characters stay in a command, not in a name
+        assert_eq!(escape_display_text("a\n\tb", false), "a\n\tb");
+        assert_eq!(escape_display_text("a\n\tb", true), "a  b");
+        // plain text (incl. Korean, emoji, normal punctuation) is untouched
+        for ok in ["cargo test -p agentnest-core", "한글 명령 😀", "C:\\dev\\x y"] {
+            assert_eq!(escape_display_text(ok, false), ok);
+        }
+        // other format characters and the C1 range
+        assert_eq!(escape_display_text("\u{feff}x\u{85}y\u{2028}", true), "\\u{feff}x\\u{85}y\\u{2028}");
+    }
+
+    #[test]
+    fn mask_for_display_masks_through_zero_width_tricks_and_shows_the_rest_escaped() {
+        // the keyword rule must still see `password=` although a zero-width character splits it
+        let m = mask_for_display("login pass\u{200b}word=hunter2hunter2 now", false);
+        assert!(m.redacted);
+        assert!(!m.text.contains("hunter2"), "{}", m.text);
+        // without a secret the invisible character is made visible
+        let m = mask_for_display("echo a\u{200b}b", false);
+        assert!(!m.redacted);
+        assert_eq!(m.text, "echo a\\u{200b}b");
     }
 
     #[test]

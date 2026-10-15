@@ -24,6 +24,7 @@ pub mod events;
 pub mod http;
 pub mod identity;
 pub mod link;
+pub mod logging;
 pub mod normalize;
 pub mod pipeline;
 pub mod ratelimit;

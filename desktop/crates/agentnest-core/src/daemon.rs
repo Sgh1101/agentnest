@@ -135,7 +135,8 @@ pub struct DaemonOptions {
     pub ttl_override_ms: Option<i64>,
     /// Overrides the reconnect grace in milliseconds (tests).
     pub grace_override_ms: Option<i64>,
-    /// Install the file logger (production only; tests and the Tauri shell may do their own).
+    /// Install the daily rolling, redacting file logger of [`crate::logging`] (production default). The Tauri shell
+    /// installs its own subscriber and sets this to `false`; tests leave it off.
     pub init_logging: bool,
 }
 
@@ -928,6 +929,8 @@ pub struct DaemonHandle {
     inner: Arc<Inner>,
     handle: tokio::runtime::Handle,
     _runtime: Arc<RuntimeOwner>,
+    /// Keeps the file logger's background writer alive (`DaemonOptions::init_logging`).
+    _log_guard: Option<crate::logging::LogGuard>,
 }
 
 impl std::fmt::Debug for DaemonHandle {
@@ -956,6 +959,12 @@ impl Daemon {
         config.validate()?;
         install_crypto_provider();
         options.paths.ensure_dirs()?;
+        // The file logger (security.md 8.2). Another global subscriber (the desktop shell's) is not an error.
+        let log_guard = if options.init_logging {
+            crate::logging::init_file_logging(&options.paths.logs_dir, config.log_level).ok()
+        } else {
+            None
+        };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
             .thread_name("agentnest-core")
@@ -978,6 +987,7 @@ impl Daemon {
             inner,
             handle: runtime_handle,
             _runtime: owner,
+            _log_guard: log_guard,
         })
     }
 

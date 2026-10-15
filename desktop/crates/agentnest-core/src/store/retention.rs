@@ -15,6 +15,14 @@
 //! | `review_findings` | 180 days |
 //! | `pairings` | 24 hours after expiry |
 //! | `devices` | 365 days after revocation (unless still referenced) |
+//!
+//! **Clock-jump guard.** Every age rule compares stored timestamps with "now". A system clock that jumps forward (a wrong
+//! RTC, a manual change, a VM resume) would make everything look ancient and delete the evidence of what was approved.
+//! The job therefore never uses a "now" later than **the newest timestamp already stored plus
+//! [`RetentionConfig::max_clock_advance_days`]** (2 days): a ten-year jump deletes what a two-day advance would, which is
+//! nothing the normal schedule would not delete anyway. When data really stops arriving (the app idle for weeks) the
+//! cleanup simply waits; the first new row brings it up to date. Limit: rows stamped *by* a wrong clock raise the
+//! "newest" themselves - this guard bounds a single jump, it cannot recognise a clock that has been wrong from the start.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
@@ -61,6 +69,9 @@ pub struct RetentionConfig {
     pub auto_revoke_inactive_days: Option<i64>,
     /// Above this database size the oldest `events` are deleted in addition (bytes in use).
     pub db_max_bytes: i64,
+    /// The job never works with a "now" later than the newest stored timestamp plus this many days (clock-jump guard,
+    /// see the module docs).
+    pub max_clock_advance_days: i64,
 }
 
 impl Default for RetentionConfig {
@@ -82,6 +93,7 @@ impl Default for RetentionConfig {
             devices_revoked_days: 365,
             auto_revoke_inactive_days: None,
             db_max_bytes: 500 * 1024 * 1024,
+            max_clock_advance_days: 2,
         }
     }
 }
@@ -126,6 +138,30 @@ impl RetentionReport {
     }
 }
 
+/// The newest timestamp (ms) stored anywhere that records when something happened; `None` for an empty database.
+fn newest_timestamp_ms(tx: &rusqlite::Transaction<'_>) -> Result<Option<i64>, StoreError> {
+    const SOURCES: [(&str, &str); 9] = [
+        ("events", "ts"),
+        ("stream", "ts"),
+        ("audit_log", "ts"),
+        ("approval_audit", "ts"),
+        ("decisions", "received_at"),
+        ("approvals", "created_at"),
+        ("sessions", "started_at"),
+        ("pairings", "created_at"),
+        ("devices", "paired_at"),
+    ];
+    let mut newest: Option<i64> = None;
+    for (table, column) in SOURCES {
+        let max: Option<String> =
+            tx.query_row(&format!("SELECT MAX({column}) FROM {table}"), [], |r| r.get(0))?;
+        if let Some(ms) = max.as_deref().and_then(crate::state::timers::parse_ms) {
+            newest = Some(newest.map_or(ms, |n| n.max(ms)));
+        }
+    }
+    Ok(newest)
+}
+
 /// Applies every retention rule at `now_ms` in one transaction and records `audit_log(retention_pruned)` if anything
 /// changed. Time is a parameter so tests can move it by days.
 pub fn run(
@@ -135,6 +171,21 @@ pub fn run(
 ) -> Result<RetentionReport, StoreError> {
     let tx = conn.transaction()?;
     let mut rep = RetentionReport::default();
+    // clock-jump guard: the age rules never see a "now" far beyond the newest thing that was ever stored
+    let real_now_ms = now_ms;
+    let now_ms = match newest_timestamp_ms(&tx)? {
+        Some(newest) => {
+            let cap = newest.saturating_add(cfg.max_clock_advance_days.saturating_mul(DAY_MS));
+            if now_ms > cap {
+                tracing::warn!(
+                    jump_days = (now_ms - newest) / DAY_MS,
+                    "retention: the clock is far ahead of the newest stored data; using a bounded time"
+                );
+            }
+            now_ms.min(cap)
+        }
+        None => now_ms,
+    };
     let at = |ms: i64| format_ms(now_ms - ms);
 
     // events: age (kind dependent) except the newest N per session
@@ -227,7 +278,7 @@ pub fn run(
         rep.devices_auto_revoked = tx.execute(
             "UPDATE devices SET revoked_at=?1, revoked_reason='inactive_90d' \
              WHERE revoked_at IS NULL AND COALESCE(last_seen_at, paired_at) < ?2",
-            params![format_ms(now_ms), at(days * DAY_MS)],
+            params![format_ms(real_now_ms), at(days * DAY_MS)],
         )?;
     }
     rep.devices_deleted = tx.execute(
@@ -261,7 +312,7 @@ pub fn run(
         insert_audit_log_tx(
             &tx,
             &NewAuditLog {
-                ts: format_ms(now_ms),
+                ts: format_ms(real_now_ms),
                 actor: "system".to_owned(),
                 action: "retention_pruned".to_owned(),
                 target: None,
@@ -311,6 +362,14 @@ mod tests {
 
     const T0: i64 = 1_760_000_000_000;
 
+    /// The documented numbers without the clock-jump guard: these tests move "now" by days on purpose.
+    fn unguarded() -> RetentionConfig {
+        RetentionConfig {
+            max_clock_advance_days: 1_000_000,
+            ..RetentionConfig::default()
+        }
+    }
+
     fn count(s: &Store, table: &str) -> i64 {
         let sql = format!("SELECT COUNT(*) FROM {table}");
         s.run(move |c| Ok(c.query_row(&sql, [], |r| r.get(0))?))
@@ -338,7 +397,7 @@ mod tests {
     #[test]
     fn retention_regression_sessions_go_but_evidence_stays() {
         let s = Store::open_in_memory().unwrap();
-        let cfg = RetentionConfig::default();
+        let cfg = unguarded();
         // a session that ended at T0 with one resolved approval, its decision, audit rows, a review finding and an event
         s.upsert_session(session_record("claude_code:s1", Some(T0)), None)
             .unwrap();
@@ -447,7 +506,7 @@ mod tests {
         s.insert_approval(new_approval("ar_p", "s", T0, 120_000), 0)
             .unwrap();
         let r = s
-            .run_retention(T0 + 400 * DAY_MS, &RetentionConfig::default())
+            .run_retention(T0 + 400 * DAY_MS, &unguarded())
             .unwrap();
         assert_eq!(r.approvals_deleted, 0);
         assert_eq!(r.approval_details_cleared, 0);
@@ -459,7 +518,7 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         let cfg = RetentionConfig {
             events_keep_per_session: 2,
-            ..Default::default()
+            ..unguarded()
         };
         // session A: 4 old ordinary events; session B: 1 old ordinary event
         for i in 1..=4 {
@@ -490,7 +549,7 @@ mod tests {
         let cfg = RetentionConfig {
             events_max_rows: 5,
             events_keep_per_session: 1,
-            ..Default::default()
+            ..unguarded()
         };
         for i in 1..=8 {
             append_event_at(&s, i, "A", "tool_started", T0);
@@ -516,7 +575,7 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         let cfg = RetentionConfig {
             stream_min_rows: 5,
-            ..Default::default()
+            ..unguarded()
         };
         // 8 rows at T0, older than 48 h when retention runs
         for _ in 0..8 {
@@ -542,7 +601,7 @@ mod tests {
             s2.stream_append(stream_message(T0, 10)).unwrap();
         }
         let r = s2
-            .run_retention(T0 + 500 * HOUR_MS, &RetentionConfig::default())
+            .run_retention(T0 + 500 * HOUR_MS, &unguarded())
             .unwrap();
         assert_eq!(r.stream_deleted, 0);
     }
@@ -552,7 +611,7 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         let cfg = RetentionConfig {
             stream_max_bytes: 2_000,
-            ..Default::default()
+            ..unguarded()
         };
         for _ in 0..10 {
             s.stream_append(stream_message(T0, 500)).unwrap();
@@ -605,7 +664,7 @@ mod tests {
         s.resolve_approval_conditional(req).unwrap();
         let cfg = RetentionConfig {
             auto_revoke_inactive_days: Some(90),
-            ..Default::default()
+            ..unguarded()
         };
         let r = s.run_retention(T0 + 366 * DAY_MS + 5_000, &cfg).unwrap();
         assert_eq!(r.pairings_deleted, 1);
@@ -639,10 +698,57 @@ mod tests {
         assert_eq!(reason, "inactive_90d");
     }
 
+    /// Review finding: a system clock that jumps forward made every row look ancient.
+    #[test]
+    fn a_ten_year_clock_jump_deletes_nothing_the_normal_schedule_would_keep() {
+        let s = Store::open_in_memory().unwrap();
+        let day = |d: i64| T0 + d * DAY_MS;
+        // data of the last ten days (all of it inside every retention window) at "real" now = day(10)
+        for d in 0..10 {
+            let id = format!("ar_{d}");
+            let sk = format!("claude_code:s{d}");
+            s.insert_approval(new_approval(&id, &sk, day(d), 120_000), 0).unwrap();
+            s.resolve_approval_conditional(resolve_request(&id, &format!("d{d}"), day(d) + 5_000))
+                .unwrap();
+            append_event_at(&s, d as u32 + 1, &sk, "command_started", day(d));
+            s.stream_append(stream_message(day(d), 10)).unwrap();
+        }
+        let before = (
+            count(&s, "approvals"),
+            count(&s, "decisions"),
+            count(&s, "approval_audit"),
+            count(&s, "events"),
+            count(&s, "stream"),
+        );
+        assert!(before.0 == 10 && before.1 == 10 && before.3 == 10 && before.4 >= 10, "{before:?}");
+        // the clock jumps +10 years
+        let jumped = day(10) + 10 * 365 * DAY_MS;
+        let r = s
+            .run_retention(jumped, &RetentionConfig::default())
+            .unwrap();
+        let after = (
+            count(&s, "approvals"),
+            count(&s, "decisions"),
+            count(&s, "approval_audit"),
+            count(&s, "events"),
+            count(&s, "stream"),
+        );
+        assert_eq!(after, before, "nothing was deleted: {r:?}");
+        assert_eq!(r.approvals_deleted + r.decisions_deleted + r.events_deleted + r.stream_deleted, 0);
+        // the same data at a plausible later date is cleaned by the normal rules (the guard is not a no-op switch)
+        let r = s
+            .run_retention(day(10) + 2 * DAY_MS, &RetentionConfig::default())
+            .unwrap();
+        assert_eq!(r.approvals_deleted, 0, "still inside every window: {r:?}");
+        // and an empty database has nothing to guard
+        let empty = Store::open_in_memory().unwrap();
+        empty.run_retention(jumped, &RetentionConfig::default()).unwrap();
+    }
+
     #[test]
     fn nothing_to_do_writes_no_audit_row() {
         let s = Store::open_in_memory().unwrap();
-        let r = s.run_retention(T0, &RetentionConfig::default()).unwrap();
+        let r = s.run_retention(T0, &unguarded()).unwrap();
         assert_eq!(r, RetentionReport::default());
         assert_eq!(r.total(), 0);
         assert!(s.list_audit_log(5).unwrap().is_empty());

@@ -158,6 +158,10 @@ impl E2e {
         tweak: Tweak,
     ) -> PairAttempt {
         let payload = started.payload.clone();
+        // Subscribe to the daemon events BEFORE the `pair` frame goes out: the PC modal event (`ConfirmRequested`)
+        // is emitted as soon as the daemon has seen the frame, and a receiver created afterwards misses it (that race
+        // made `pairing_happy_path_sas_agrees...` flaky).
+        let dm_events = self.dm.subscribe();
         let mut ws = Phone::connect(self.link_addr(), &payload.spki_pin)
             .await
             .expect("tls");
@@ -198,7 +202,7 @@ impl E2e {
             pairing_id: payload.pairing_id.clone(),
             want_sas,
             started: Some(started),
-            dm_events: self.dm.subscribe(),
+            dm_events,
             pin: payload.spki_pin.clone(),
             addr: self.link_addr(),
             name,
@@ -425,6 +429,25 @@ fn client_config(pin: &str) -> Arc<rustls::ClientConfig> {
         }))
         .with_no_client_auth();
     Arc::new(cfg)
+}
+
+/// A pinned TLS connection WITHOUT the WebSocket upgrade (pre-authentication limit tests), optionally from a chosen
+/// loopback source address (`127.0.0.N`; Linux accepts any of them).
+pub async fn connect_tls(addr: SocketAddr, pin: &str, source: Option<&str>) -> Result<Tls, String> {
+    let tcp = match source {
+        Some(src) => {
+            let sock = tokio::net::TcpSocket::new_v4().map_err(|e| e.to_string())?;
+            sock.bind(format!("{src}:0").parse().map_err(|_| "bad source".to_owned())?)
+                .map_err(|e| e.to_string())?;
+            sock.connect(addr).await.map_err(|e| e.to_string())?
+        }
+        None => TcpStream::connect(addr).await.map_err(|e| e.to_string())?,
+    };
+    let connector = tokio_rustls::TlsConnector::from(client_config(pin));
+    connector
+        .connect(ServerName::IpAddress(addr.ip().into()), tcp)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 impl Phone {

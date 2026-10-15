@@ -400,31 +400,76 @@ impl IdentityStore {
     }
 }
 
-/// The current LAN addresses: every non-loopback, non-link-local, non-unspecified interface address, IPv4 first.
+/// The current LAN addresses worth advertising and binding to, best first (see [`select_lan_addresses`]).
+///
+/// The preferred address is the one the operating system would use to reach the outside world (the interface that
+/// holds the default route), found without sending a packet: a UDP socket "connected" to a documentation address only
+/// asks the routing table for the source address.
 pub fn lan_addresses() -> Vec<IpAddr> {
-    let mut v: Vec<IpAddr> = local_ip_address::list_afinet_netifas()
-        .map(|list| list.into_iter().map(|(_, ip)| ip).collect())
-        .unwrap_or_default();
-    v.retain(|ip| is_usable_lan_address(*ip));
-    v.sort_by_key(|ip| (ip.is_ipv6(), ip.to_string()));
-    v.dedup();
-    v
+    let ifaces = local_ip_address::list_afinet_netifas().unwrap_or_default();
+    select_lan_addresses(&ifaces, default_route_source())
 }
 
-/// `true` for an address that may be advertised to a phone (not loopback, unspecified, multicast or link-local).
+/// The local address the routing table picks for an outside destination, `None` without a default route. No packet
+/// is sent (a UDP `connect` only selects the route).
+fn default_route_source() -> Option<IpAddr> {
+    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    // TEST-NET-3 (RFC 5737): never routed anywhere, only used to ask for the route
+    socket.connect(("203.0.113.1", 9)).ok()?;
+    socket.local_addr().ok().map(|a| a.ip())
+}
+
+/// `true` for an address that may be advertised to a phone: **private** space only - RFC 1918 IPv4 (`10/8`,
+/// `172.16/12`, `192.168/16`) and IPv6 unique-local (`fc00::/7`). Loopback, unspecified, multicast, link-local
+/// (a phone cannot choose the zone), CGNAT (`100.64/10`, typically a VPN) and public addresses are not.
 pub fn is_usable_lan_address(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            !(v4.is_loopback() || v4.is_unspecified() || v4.is_multicast() || v4.is_link_local())
-        }
-        IpAddr::V6(v6) => {
-            let seg0 = v6.segments()[0];
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (seg0 & 0xffc0) == 0xfe80)
+        IpAddr::V4(v4) => v4.is_private(),
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+/// An interface that looks virtual (container bridges, WSL / Hyper-V switches, VM host-only adapters, VPN tunnels). Such
+/// an address is still advertised, but **after** the physical ones: the PC's `link.bind_addr` default is the first
+/// entry, and a phone cannot reach a WSL or Docker address anyway. This is a name heuristic and deliberately only
+/// reorders, it never hides an address.
+fn looks_virtual(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    const PREFIXES: [&str; 14] = [
+        "veth", "docker", "br-", "virbr", "vboxnet", "vmnet", "lxc", "podman", "cni", "flannel", "tun", "tap",
+        "utun", "wg",
+    ];
+    const CONTAINS: [&str; 8] = [
+        "wsl", "vethernet", "hyper-v", "vmware", "virtualbox", "tailscale", "zerotier", "loopback",
+    ];
+    PREFIXES.iter().any(|p| n.starts_with(p)) || CONTAINS.iter().any(|c| n.contains(c))
+}
+
+/// Picks and orders the addresses of `ifaces` (`(interface name, address)`): only [`is_usable_lan_address`] ones, the
+/// address of the default-route interface (`default_route`) first, then the addresses of physical-looking interfaces
+/// before virtual ones, IPv4 before IPv6, each group sorted **numerically** (`10.0.0.9` before `10.0.0.10`).
+/// Duplicates are removed.
+pub fn select_lan_addresses(ifaces: &[(String, IpAddr)], default_route: Option<IpAddr>) -> Vec<IpAddr> {
+    let mut v: Vec<(bool, bool, bool, IpAddr)> = ifaces
+        .iter()
+        .filter(|(_, ip)| is_usable_lan_address(*ip))
+        .map(|(name, ip)| {
+            (
+                Some(*ip) != default_route, // the default route's address first (false sorts first)
+                looks_virtual(name),
+                ip.is_ipv6(),
+                *ip,
+            )
+        })
+        .collect();
+    v.sort();
+    let mut out: Vec<IpAddr> = Vec::new();
+    for (_, _, _, ip) in v {
+        if !out.contains(&ip) {
+            out.push(ip);
         }
     }
+    out
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -639,16 +684,61 @@ mod tests {
     }
 
     #[test]
-    fn usable_lan_addresses_exclude_loopback_and_link_local() {
-        assert!(!is_usable_lan_address(IpAddr::V4(Ipv4Addr::LOCALHOST)));
-        assert!(!is_usable_lan_address("169.254.1.1".parse().unwrap()));
-        assert!(!is_usable_lan_address("fe80::1".parse().unwrap()));
-        assert!(!is_usable_lan_address("::1".parse().unwrap()));
-        assert!(is_usable_lan_address("192.168.0.10".parse().unwrap()));
-        assert!(is_usable_lan_address("fd00::5".parse().unwrap()));
+    fn usable_lan_addresses_are_private_space_only() {
+        for ok in ["192.168.0.10", "10.1.2.3", "172.16.0.1", "172.31.255.254", "fd00::5", "fc00::1"] {
+            assert!(is_usable_lan_address(ok.parse().unwrap()), "{ok}");
+        }
+        for bad in [
+            "127.0.0.1", "0.0.0.0", "169.254.1.1", "224.0.0.1", "100.64.0.1", "8.8.8.8", "172.32.0.1",
+            "172.15.0.1", "fe80::1", "::1", "::", "ff02::1", "2001:4860:4860::8888",
+        ] {
+            assert!(!is_usable_lan_address(bad.parse().unwrap()), "{bad}");
+        }
         for ip in lan_addresses() {
             assert!(is_usable_lan_address(ip));
         }
+    }
+
+    fn nic(name: &str, ip: &str) -> (String, IpAddr) {
+        (name.to_owned(), ip.parse().unwrap())
+    }
+
+    /// Review finding: addresses were sorted as strings (`10.0.0.10` before `10.0.0.9`), any non-loopback address
+    /// (public, CGNAT) was accepted and the first entry - the default bind address - was arbitrary.
+    #[test]
+    fn lan_address_selection_is_numeric_private_only_and_prefers_the_default_route() {
+        let ifaces = vec![
+            nic("vEthernet (WSL)", "172.28.0.1"),
+            nic("Ethernet", "192.168.0.10"),
+            nic("Ethernet", "10.0.0.10"),
+            nic("Ethernet", "10.0.0.9"),
+            nic("Wi-Fi", "192.168.1.5"),
+            nic("Wi-Fi", "fd12:3456::7"),
+            nic("Wi-Fi", "fe80::1"),
+            nic("Tailscale", "100.101.102.103"),
+            nic("Ethernet 2", "203.0.113.7"),
+            nic("lo", "127.0.0.1"),
+            nic("docker0", "172.17.0.1"),
+            nic("Ethernet", "192.168.0.10"), // duplicate
+        ];
+        // without a default route: physical before virtual, IPv4 before IPv6, numeric order inside a group
+        assert_eq!(
+            select_lan_addresses(&ifaces, None),
+            ips(&["10.0.0.9", "10.0.0.10", "192.168.0.10", "192.168.1.5", "fd12:3456::7", "172.17.0.1", "172.28.0.1"])
+        );
+        // the default route's address comes first whatever its number is
+        assert_eq!(
+            select_lan_addresses(&ifaces, Some("192.168.1.5".parse().unwrap()))[0],
+            "192.168.1.5".parse::<IpAddr>().unwrap()
+        );
+        // even when it is on a "virtual looking" interface name the OS chose it: it wins
+        assert_eq!(
+            select_lan_addresses(&ifaces, Some("172.28.0.1".parse().unwrap()))[0],
+            "172.28.0.1".parse::<IpAddr>().unwrap()
+        );
+        assert!(select_lan_addresses(&[], None).is_empty());
+        assert!(!looks_virtual("Ethernet") && !looks_virtual("Wi-Fi") && !looks_virtual("eth0"));
+        assert!(looks_virtual("vEthernet (WSL)") && looks_virtual("docker0") && looks_virtual("tun0"));
     }
 
     #[test]

@@ -1,13 +1,15 @@
 //! The per-connection state machine (docs/protocol.md 1, 3, 4, 8, 9; docs/security.md 4, 5, 11, I1, I6, I7).
 //!
 //! ```text
-//! connect --admission--> PreAuth --valid hello--> Authenticated
-//!   (16 total / 4 per IP / blocked IP)   |--valid pair--> PairPending --PC user approves--> Authenticated
+//! accept --admission--> TLS --upgrade--> PreAuth --valid hello--> Authenticated
+//!  (16 total / 4 per IP / blocked IP,          |--valid pair--> PairPending --PC user approves--> Authenticated
+//!   all before TLS: link/mod.rs)
 //! ```
 //!
 //! **PreAuth (I1):** the server sends the `challenge` frame and nothing else. The phone may send exactly one valid `pair`
 //! or `hello`; anything else (a `ping`, an unknown type, binary data, garbage) closes the connection with **4001** and not
-//! a byte of PC data leaves. The 5 s timer covers the wait for that first valid frame.
+//! a byte of PC data leaves. The 5 s timer covers the wait for that first valid frame and is measured **from the TCP
+//! accept** (the TLS handshake and the HTTP upgrade count against it too).
 //!
 //! **PairPending (I1, I7):** after a valid `pair` the server may send `pair_pending`, `pair_result` and `error` only; the
 //! phone may send `unpair{pairing_id}` or close; any other phone frame is **4001**; the PC user has 60 s (**4002**).
@@ -45,21 +47,17 @@ use tokio::time::Instant;
 use crate::approvals::broker::DecisionOutcome;
 use crate::approvals::validator::{DecisionInput, DecisionSource};
 use crate::audit::{actions, device_actor};
-use crate::auth::challenge::{Admission, Challenge, Rejection};
+use crate::auth::challenge::{Admission, Challenge};
 use crate::auth::devices::{AuthOutcome, IssuedDevice};
 use crate::auth::pairing::{ConfirmDecision, PairFailure, PendingConfirmation};
-use crate::events::{DaemonEvent, DeviceUiEvent, LinkUiEvent};
-use crate::link::registry::{ConnCommand, Published};
+use crate::events::{DaemonEvent, DeviceUiEvent};
+use crate::link::registry::{ConnCommand, DeviceLimiter, Published, MAX_RATE_STRIKES};
 use crate::link::snapshot::{self, SnapshotInputs};
 use crate::link::LinkContext;
-use crate::ratelimit::SlidingWindow;
 use crate::redact::mask_ip;
 use crate::state::timers::format_ms;
 use crate::store::{ApprovalReplayState, EventsQuery, ResyncPlan};
 
-const MINUTE_MS: i64 = 60_000;
-/// Rate-limit strikes before the connection is closed with 4005.
-const MAX_RATE_STRIKES: u32 = 3;
 /// Malformed frames before the connection is closed with 4004.
 const MAX_BAD_MESSAGES: u32 = 3;
 /// Replay rows read at once.
@@ -97,39 +95,38 @@ struct AuthState {
     live: broadcast::Receiver<Arc<Published>>,
     sent_up_to: i64,
     acks: HashMap<String, AckTrack>,
-    decision_rl: SlidingWindow,
-    ping_rl: SlidingWindow,
-    snapshot_rl: SlidingWindow,
-    events_rl: SlidingWindow,
-    strikes: u32,
+    /// The device's limits, shared by all its connections (they survive a reconnect).
+    limits: Arc<std::sync::Mutex<DeviceLimiter>>,
+    /// Highest `through_seq` already written to the database.
+    last_acked_written: i64,
     bad_messages: u32,
     last_rx: Instant,
 }
 
-/// Runs one WebSocket connection to its end.
-pub async fn run(socket: WebSocket, ctx: Arc<LinkContext>, ip: IpAddr) {
+impl AuthState {
+    /// Runs `f` on the device's limiter.
+    fn limit<T>(&self, f: impl FnOnce(&mut DeviceLimiter) -> T) -> T {
+        let mut g = self.limits.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut g)
+    }
+}
+
+/// Runs one WebSocket connection to its end. `admission` is the connection slot taken when the TCP connection was
+/// accepted (caps and address filter already passed); `accepted_at` is the instant the 5 s authentication deadline
+/// counts from.
+pub async fn run(
+    socket: WebSocket,
+    ctx: Arc<LinkContext>,
+    ip: IpAddr,
+    admission: Admission,
+    accepted_at: Instant,
+) {
     let mut conn = Conn {
         ws: socket,
-        ctx: ctx.clone(),
+        ctx,
         ip,
     };
-    let admission = match ctx.admission.admit(ip) {
-        Ok(a) => a,
-        Err(Rejection::ConnectionCap) | Err(Rejection::TooManyPreAuth) => {
-            // 1013: no frame at all, just the close
-            conn.close(1013).await;
-            return;
-        }
-        Err(Rejection::IpBlocked) => {
-            conn.close(4005).await;
-            return;
-        }
-    };
-    ctx.bus.emit(DaemonEvent::Link(LinkUiEvent::PreAuthAttempt {
-        ip_masked: mask_ip(&ip.to_string()),
-        at: format_ms(ctx.clock.now_ms()),
-    }));
-    conn.serve(admission).await;
+    conn.serve(admission, accepted_at).await;
 }
 
 impl Conn {
@@ -241,7 +238,7 @@ impl Conn {
     // PreAuth
     // -----------------------------------------------------------------------------------------------------------------
 
-    async fn serve(&mut self, mut admission: Admission) {
+    async fn serve(&mut self, mut admission: Admission, accepted_at: Instant) {
         let Some(challenge) = Challenge::generate() else {
             self.close(1011).await;
             return;
@@ -264,7 +261,7 @@ impl Conn {
         if !self.send_text(text).await {
             return;
         }
-        let deadline = Instant::now() + Duration::from_millis(self.ctx.timing.preauth_ms);
+        let deadline = accepted_at + Duration::from_millis(self.ctx.timing.preauth_ms);
         let first = match self.recv(Some(deadline)).await {
             Recv::Text(t) => t,
             Recv::Timeout => return self.close(4001).await,
@@ -586,11 +583,8 @@ impl Conn {
             live,
             sent_up_to: entry.last_seq.max(0),
             acks: HashMap::new(),
-            decision_rl: SlidingWindow::new(10, MINUTE_MS),
-            ping_rl: SlidingWindow::new(6, MINUTE_MS),
-            snapshot_rl: SlidingWindow::new(6, MINUTE_MS),
-            events_rl: SlidingWindow::new(12, MINUTE_MS),
-            strikes: 0,
+            limits: ctx.registry.limiter(&device_id),
+            last_acked_written: 0,
             bad_messages: 0,
             last_rx: Instant::now(),
         };
@@ -950,8 +944,8 @@ impl Conn {
     // -----------------------------------------------------------------------------------------------------------------
 
     async fn strike(&mut self, st: &mut AuthState, in_reply_to: Option<String>) -> Flow {
-        st.strikes += 1;
-        if st.strikes >= MAX_RATE_STRIKES {
+        let now = self.now_ms();
+        if st.limit(|l| l.strike(now)) >= MAX_RATE_STRIKES {
             self.send_error(
                 ErrorCode::RateLimited,
                 "too many requests",
@@ -1027,7 +1021,13 @@ impl Conn {
         let now = self.now_ms();
         match frame.message {
             Message::Ack(ack) => {
-                if let Some(seq) = ack.through_seq {
+                // the database write is monotonic and rate limited; the ack itself is always honoured
+                let write_ack = ack
+                    .through_seq
+                    .filter(|seq| *seq > st.last_acked_written)
+                    .filter(|_| st.limit(|l| l.ack_writes.try_acquire(now)));
+                if let Some(seq) = write_ack {
+                    st.last_acked_written = seq;
                     let devices = self.ctx.devices.clone();
                     let id = st.device_id.clone();
                     let _ =
@@ -1045,7 +1045,7 @@ impl Conn {
                 Flow::Continue
             }
             Message::Ping(_) => {
-                if !st.ping_rl.try_acquire(now) {
+                if !st.limit(|l| l.ping.try_acquire(now)) {
                     return self.strike(st, Some(frame_id)).await;
                 }
                 let pong = Message::Pong(PongPayload {
@@ -1059,7 +1059,7 @@ impl Conn {
                 }
             }
             Message::SnapshotRequest(_) => {
-                if !st.snapshot_rl.try_acquire(now) {
+                if !st.limit(|l| l.snapshot.try_acquire(now)) {
                     return self.strike(st, Some(frame_id)).await;
                 }
                 if self.send_snapshot(st).await {
@@ -1069,7 +1069,7 @@ impl Conn {
                 }
             }
             Message::EventsRequest(req) => {
-                if !st.events_rl.try_acquire(now) {
+                if !st.limit(|l| l.events.try_acquire(now)) {
                     return self.strike(st, Some(frame_id)).await;
                 }
                 if self.handle_events_request(&frame_id, req).await {
@@ -1079,7 +1079,7 @@ impl Conn {
                 }
             }
             Message::Decision(d) => {
-                if !st.decision_rl.try_acquire(now) {
+                if !st.limit(|l| l.decision.try_acquire(now)) {
                     return self.strike(st, Some(frame_id)).await;
                 }
                 if self.handle_decision(st, &frame_id, d).await {

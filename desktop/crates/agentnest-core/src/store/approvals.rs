@@ -1152,17 +1152,26 @@ mod tests {
                 .as_deref(),
             Some("d1")
         );
-        // idempotency lookup
+        // idempotency lookup: only an APPLIED decision of the same id, request and actor is a replay
         assert_eq!(
             s.decision_verify_result("d1").unwrap().as_deref(),
             Some("APPLIED")
         );
         assert_eq!(s.decision_verify_result("nope").unwrap(), None);
-        // re-sending the same envelope id violates the primary key and changes nothing
-        assert!(s
+        let actor = resolve_request("ar_1", "d1", 0).actor;
+        assert!(s.decision_applied_replay("d1", "ar_1", &actor).unwrap());
+        assert!(!s.decision_applied_replay("d1", "ar_2", &actor).unwrap(), "another request");
+        assert!(!s.decision_applied_replay("d1", "ar_1", "device:other").unwrap(), "another actor");
+        assert!(!s.decision_applied_replay("nope", "ar_1", &actor).unwrap());
+        // re-sending the same envelope id is just another recorded attempt (stored under a derived id, the original
+        // row stays): the request is already resolved, nothing changes in `approvals`
+        let again = s
             .resolve_approval_conditional(resolve_request("ar_1", "d1", T0 + 12_000))
-            .is_err());
-        assert_eq!(s.list_decisions("ar_1").unwrap().len(), 2);
+            .unwrap();
+        assert_eq!(again, ResolveOutcome::NotApplied(NotApplied::AlreadyResolved));
+        assert_eq!(s.list_decisions("ar_1").unwrap().len(), 3);
+        assert_eq!(s.decision_verify_result("d1").unwrap().as_deref(), Some("APPLIED"));
+        assert_eq!(s.decision_verify_result("d1#1").unwrap().as_deref(), Some("ALREADY_RESOLVED"));
     }
 
     #[test]

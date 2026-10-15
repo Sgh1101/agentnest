@@ -1293,3 +1293,42 @@ async fn cancelling_open_never_leaves_a_zombie_pending_row() {
     );
     assert_eq!(rows, 1, "the request itself was completed");
 }
+
+/// Review PoC 4 (card fidelity): the card shows printable text only, but the hash that binds the decision is still
+/// computed from the ORIGINAL `tool_input` (display-only sanitising must never change what is approved).
+#[tokio::test]
+async fn card_strings_are_printable_while_the_binding_hash_stays_the_originals() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let input = json!({"command": "echo safe \u{202e}fdsa\u{200b}\u{1b}[2K\rrm -rf x"});
+    let mut draft = h.draft("Bash", input.clone());
+    draft.project = Some(agentnest_protocol::ProjectRef {
+        project_key: "c:/dev/agentnest".into(),
+        name: "agent\u{202e}nest".into(),
+        path_hint: None,
+        repo: None,
+        branch: Some("ma\u{1b}[2Kin".into()),
+    });
+    let (out, rx) = h.open(draft).await;
+    let OpenOutcome::Opened { request_id } = out else {
+        panic!("{out:?}")
+    };
+    let card = h.broker.pending_card(&request_id).await.unwrap();
+    assert_eq!(
+        card.tool_input_sha256,
+        tool_input_sha256(&input),
+        "the hash is the original's"
+    );
+    let shown = card.details.command.as_deref().unwrap();
+    assert!(shown.contains("\\u{202e}") && shown.contains("\\r"), "{shown}");
+    assert!(!shown.chars().any(|c| c.is_control() && c != '\n' && c != '\t'));
+    assert!(!card.project.name.contains('\u{202e}'));
+    assert!(!card.project.branch.as_deref().unwrap().contains('\u{1b}'));
+    // and a decision bound to that hash is applied
+    let d = h.phone_decision(&card, &phone.device_id, Decision::Deny);
+    assert!(h.broker.apply_decision(d).await.accepted);
+    assert!(matches!(rx.await.unwrap(), Seen::Deny { .. }));
+    // the stored row shows the same printable details
+    let stored = h.row(&request_id).details_json.unwrap();
+    assert!(!stored.contains('\u{202e}'));
+}

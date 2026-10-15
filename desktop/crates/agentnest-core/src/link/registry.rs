@@ -17,6 +17,52 @@ use agentnest_protocol::{ByeReason, Message};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::ratelimit::SlidingWindow;
+
+const MINUTE_MS: i64 = 60_000;
+/// Rate-limit strikes (within [`STRIKE_WINDOW_MS`]) before a connection is closed with 4005.
+pub const MAX_RATE_STRIKES: usize = 3;
+/// How long a strike counts.
+pub const STRIKE_WINDOW_MS: i64 = 10 * MINUTE_MS;
+
+/// The per-**device** message limits of security.md 11 (10 decisions, 6 pings, 6 snapshot requests, 12 events requests
+/// per minute) and the strike counter. They belong to the device, not to a connection: reconnecting does not reset them
+/// (a flooding phone used to get a fresh budget with every new socket).
+#[derive(Debug)]
+pub struct DeviceLimiter {
+    /// `decision` frames.
+    pub decision: SlidingWindow,
+    /// `ping` frames.
+    pub ping: SlidingWindow,
+    /// `snapshot_request` frames.
+    pub snapshot: SlidingWindow,
+    /// `events_request` frames.
+    pub events: SlidingWindow,
+    /// Database writes caused by `ack` frames (the `last_acked_seq` update); acks themselves are never refused.
+    pub ack_writes: SlidingWindow,
+    strikes: SlidingWindow,
+}
+
+impl Default for DeviceLimiter {
+    fn default() -> Self {
+        Self {
+            decision: SlidingWindow::new(10, MINUTE_MS),
+            ping: SlidingWindow::new(6, MINUTE_MS),
+            snapshot: SlidingWindow::new(6, MINUTE_MS),
+            events: SlidingWindow::new(12, MINUTE_MS),
+            ack_writes: SlidingWindow::new(60, MINUTE_MS),
+            strikes: SlidingWindow::new(MAX_RATE_STRIKES, STRIKE_WINDOW_MS),
+        }
+    }
+}
+
+impl DeviceLimiter {
+    /// Records a rate-limit strike and returns how many strikes the device has within the window.
+    pub fn strike(&mut self, now_ms: i64) -> usize {
+        self.strikes.record(now_ms)
+    }
+}
+
 /// A replayable message that was appended to the stream and is now being broadcast.
 #[derive(Clone, Debug)]
 pub struct Published {
@@ -64,6 +110,7 @@ pub struct Registry {
     conns: Mutex<HashMap<String, ConnEntry>>,
     online_tx: watch::Sender<usize>,
     next_conn_id: AtomicU64,
+    limiters: Mutex<HashMap<String, Arc<Mutex<DeviceLimiter>>>>,
 }
 
 impl std::fmt::Debug for Registry {
@@ -90,7 +137,14 @@ impl Registry {
             conns: Mutex::new(HashMap::new()),
             online_tx,
             next_conn_id: AtomicU64::new(1),
+            limiters: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The rate limiter of a device; the same instance for every connection of that device.
+    pub fn limiter(&self, device_id: &str) -> Arc<Mutex<DeviceLimiter>> {
+        let mut g = self.limiters.lock().unwrap_or_else(|e| e.into_inner());
+        g.entry(device_id.to_owned()).or_default().clone()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, ConnEntry>> {
