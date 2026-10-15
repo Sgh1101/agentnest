@@ -571,7 +571,32 @@ impl Conn {
         // subscribe BEFORE the resync plan so no message published in between can be missed
         let live = ctx.registry.subscribe();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        if ctx.timing.post_auth_delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(ctx.timing.post_auth_delay_ms)).await;
+        }
         let conn_id = ctx.registry.register(&device_id, cmd_tx);
+        // I6: a revocation that happened after the authentication but before this registration kicked nobody (the
+        // connection was not in the registry yet). Look again now that it is registered: a revoked device never
+        // becomes online.
+        let devices = ctx.devices.clone();
+        let id = device_id.clone();
+        let active = tokio::task::spawn_blocking(move || devices.is_active(&id))
+            .await
+            .unwrap_or(false);
+        if !active {
+            let was_current = ctx.registry.unregister(&device_id, conn_id);
+            self.send(Message::Bye(ByePayload {
+                reason: ByeReason::DeviceRevoked,
+                reconnect: false,
+                message_ko: Some("PC에서 이 기기의 연결을 해제했어요.".to_owned()),
+            }))
+            .await;
+            self.close(4003).await;
+            if was_current {
+                ctx.broker.device_disconnected().await;
+            }
+            return;
+        }
         ctx.broker.device_connected().await;
         ctx.bus.emit(DaemonEvent::Device(DeviceUiEvent::Online {
             device_id: device_id.clone(),

@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | A1 | **같은 Wi-Fi의 낯선 사람** | LAN 스니핑, 포트 스캔, 임의 TCP/TLS/WS 연결, ARP 스푸핑/MITM, QR 미보유 | 상태 엿보기, 승인 위조, 데몬 DoS | I1(인증 전 무출력), I2(SPKI 핀), §7 레이트리밋 |
 | A2 | **분실/도난 휴대폰** | 잠금 전: 앱 데이터 복사 시도(비루팅 가정) / 잠금 후: 앱 실행 | 위험 명령 승인 | I6(즉시 폐기), 토큰 Keystore 래핑, 승인 생체 게이트, `allowBackup=false` |
-| A3 | **PC 위의 악의적 로컬 프로세스**(에이전트가 실행한 스크립트 등) | `127.0.0.1` 훅 포트에 POST, 같은 사용자 파일 읽기 | 가짜 승인 카드, 실제 요청과 혼동, 데몬 교란 | I8(훅 HTTP 가드), 단일 승인 경로(I5), 감사 |
+| A3 | **PC 위의 악의적 로컬 프로세스**(에이전트가 실행한 스크립트 등) | `127.0.0.1` 훅 포트에 POST, **훅 포트 선점(squat)**, 같은 사용자 파일 읽기 | 가짜 승인 카드, 실제 요청과 혼동, 데몬 교란, **Claude Code에 위조 `allow` 응답**(§1.2) | I8(훅 HTTP 가드), 단일 승인 경로(I5), 감사, **CLI 훅의 응답 서명(§1.2)**, 포트 불일치 시 HTTP 승인 차단 |
 | A4 | **QR을 어깨너머로 촬영한 사람** | QR 전체 페이로드 보유, 같은 LAN | 사용자보다 먼저 페어링 | I7(소지 증명 + **PC 화면 확인 + SAS**) |
 | A5 | **PC 디스크/백업을 복사한 사람** | SQLite·설정 파일 오프라인 읽기 | 기기 자격 증명 재사용 | 디바이스 토큰은 **해시만** 저장, 비밀 파일은 사용자 ACL(→ Phase 3 DPAPI) |
 
@@ -22,13 +22,26 @@ Phase 1 범위 밖(명시적 비목표): 루팅된 폰, PC 관리자 권한 탈�
 
 ### 1.2 A3 한계 명시
 
-같은 사용자 권한의 프로세스는 `settings.json`의 훅 토큰을 읽을 수 있다. 토큰이 막는 것은 **우발적 POST**(브라우저, curl 예시)이다. 토큰을 훔친 A3는 가짜 `PermissionRequest`를 데몬에 넣어 폰에 가짜 카드를 띄울 수 있지만, 데몬의 응답은 **그 가짜 HTTP 요청으로만** 돌아가므로 실제 Claude Code 프로세스에는 아무 영향이 없다. A3가 얻는 것은 사용자 혼란이지 명령 실행이 아니다. 완화: 승인 카드에 `origin`과 프로젝트·세션을 표시하고, 같은 `(session_key, agent_id, tool_name, tool_input_sha256)`이 **2초 안에** 다시 도착한 중복 훅만 카드 1장으로 합친다(`agent_id`가 다르거나 2초가 지나면 별도 카드 — 병렬 서브에이전트의 같은 명령이 한 번의 승인으로 두 번 실행되지 않게 함, `integrations/claude-code.md` §6).
+같은 사용자 권한의 프로세스는 `settings.json`의 훅 토큰을 읽을 수 있다. 이 절은 A3가 할 수 있는 일과 **없는 일**을 정직하게 적는다.
+
+**(a) 가짜 요청 넣기(토큰 탈취).** 토큰을 가진 A3는 가짜 `PermissionRequest`를 데몬에 넣어 폰에 가짜 카드를 띄울 수 있다. 데몬의 응답은 그 가짜 HTTP 요청으로만 돌아가므로 *이 경로로는* 실제 Claude Code 프로세스에 영향이 없다(사용자 혼란). 완화: 카드에 `origin`·프로젝트·세션 표시, 그리고 같은 `(session_key, agent_id, tool_name, tool_input_sha256)`이 **2초 안에** 다시 도착한 중복 훅만 카드 1장으로 합친다 — **`agent_id`가 있을 때만**(없으면 병합 창 0: 한 번의 승인이 서로 다른 두 훅을 허용하지 않는다, `integrations/claude-code.md` §6).
+
+**(b) 훅 포트 선점(squat) — 데몬의 응답이 "그 가짜 요청으로만 돌아간다"는 보장은 이 경우에 성립하지 않는다.** Claude Code의 `type: "http"` 훅은 **응답을 검증할 수 없다**(서버 신원 확인·서명 없음). 데몬이 뜨기 전에(또는 포트를 놓친 뒤에) 같은 사용자의 다른 프로세스가 `127.0.0.1:47831`을 먼저 열어 두면, Claude Code는 `settings.json`의 URL대로 그 프로세스에 `PermissionRequest`를 보내고, 그 프로세스는 `{"behavior":"allow"}`를 돌려줄 수 있다. 데몬의 어떤 검증도 이 경로에 개입하지 못한다. 이 잔여 위험은 HTTP 훅 방식에서는 **제거할 수 없고 줄일 수만 있다**:
+
+| 방어 | 효과 | 한계 |
+| --- | --- | --- |
+| 포트를 **배타적으로** 바인드하고 폴백 시 즉시 알림 | 데몬이 먼저 떠 있으면 후발 프로세스는 같은 포트를 열 수 없다(Unix: 리스닝 소켓 중복 불가). 데몬이 기본 포트를 못 얻으면 `DaemonEvent::Error("hook_port_unavailable: …")`, 감사 `hook_port_unavailable`, `DaemonHandle::hook_port_problem()`, `HooksReport` 경고 | **Windows**: `SO_EXCLUSIVEADDRUSE`를 쓰지 못한다 — `agentnest-core`가 `#![forbid(unsafe_code)]`이고 `socket2`에 해당 옵션이 없다. 데몬이 이미 떠 있는 동안 `SO_REUSEADDR`로 같은 포트를 뺏는 프로세스는 막지 못한다(Phase 3: 별도 크레이트에서 `SO_EXCLUSIVEADDRUSE` 적용). 데몬 시작 전에 선점된 경우는 바인드 실패로 탐지된다 |
+| 설치된 HTTP 훅이 가리키는 포트 ≠ 수집기 포트이면 **HTTP 채널 `PermissionRequest`에 응답하지 않는다**(`HttpSettings::http_approvals_enabled`, 항상 204) | 설정에 없는 포트로 온 승인 요청에 `allow`를 만들지 않는다 | 선점된 포트로 가는 Claude Code 요청은 데몬에 도달하지 않으므로 이 차단은 *데몬 쪽 불일치*만 막는다 |
+| 옵트인 `hooks.auto_reinstall_on_port_change` | 폴백 포트로 HTTP 훅을 자동 재설치(감사 `hooks_repointed`). 기본 off — 사용자 동의 없이 `settings.json`을 바꾸지 않는다 | 재설치 전까지 이전 포트의 훅은 선점자에게 간다 |
+| **명령(CLI) 훅 사용 권장** (`agentnest-hook claude-code`) | CLI는 토큰을 **보내지 않고**(일회용 증명 `X-AgentNest-Proof`, 데몬은 nonce를 한 번만 받는다) 데몬의 응답에 붙은 `X-AgentNest-Sig = HMAC-SHA256(키(토큰), "resp"‖nonce‖status‖body)`가 검증될 때만 출력한다. 서명 없는/틀린 응답은 아무것도 출력하지 않고 exit 0(= 결정 없음). 선점자는 토큰을 모르므로 위조할 수 없다(`agentnest-protocol::hook_auth`) | 훅 프로세스 기동 비용, Windows 경로·`allowedHttpHookUrls` 정책 대응 필요. HTTP 훅과 달리 **settings.json에 토큰이 없다** |
+
+따라서 **선점 위험을 감수할 수 없는 사용자는 명령(CLI) 훅을 설치해야 한다**(데스크톱 설정 → 훅 → '명령 훅'). HTTP 훅은 편의 경로이며 같은 PC의 악의적 프로세스(A3)에 대한 승인 위조 방어를 제공하지 않는다. 데스크톱은 `hook_port_unavailable` 이벤트와 훅 상태 경고(`HooksReport.warnings`)로 이 상태를 알린다.
 
 ### 1.3 수용된 위험 (사용자 확인이 필요한 PRD 편차)
 
 | ID | 위험 | 내용 · 영향 | 완화 | 종료 조건 |
 | --- | --- | --- | --- | --- |
-| R1 | **PC 측 비밀이 DPAPI가 아닌 ACL 파일** (PRD §6 "인증 정보는 가능한 한 PC의 안전한 저장소에 보관"에 대한 Phase 1 편차) | 서버 TLS 개인키(`identity\server-key.pem`)와 훅 토큰(`daemon.json`)은 사용자 전용 ACL 파일(설치 시 `icacls`로 상속 제거)에 **평문**으로 있다. 같은 사용자 권한의 프로세스(A3)나 디스크·백업을 복사한 사람(A5)이 읽을 수 있다. 영향: TLS 키가 새면 같은 LAN의 공격자가 이 PC로 가장해(핀이 일치) 폰이 `hello`로 보내는 **디바이스 토큰을 받을 수 있다**(Phase 3 결정 서명 전까지 토큰은 베어러). 훅 토큰이 새면 §1.2의 가짜 카드 | 사용자 전용 ACL, 디바이스 토큰은 PC에 해시만, "PC 신원 재생성"(§10)·기기 폐기로 즉시 무효화, 로그·DB에 키 미기록 | Phase 3 DPAPI 키 래핑(Phase 0 P12) + `hello` 서명 |
+| R1 | **PC 측 비밀이 DPAPI가 아닌 ACL 파일** (PRD §6 "인증 정보는 가능한 한 PC의 안전한 저장소에 보관"에 대한 Phase 1 편차) | 서버 TLS 개인키(`identity\server-key.pem`)와 훅 토큰(`daemon.json`)은 사용자 전용 ACL 파일(설치 시 `icacls`로 상속 제거)에 **평문**으로 있다. 같은 사용자 권한의 프로세스(A3)나 디스크·백업을 복사한 사람(A5)이 읽을 수 있다. 영향: TLS 키가 새면 같은 LAN의 공격자가 이 PC로 가장해(핀이 일치) 폰이 `hello`로 보내는 **디바이스 토큰을 받을 수 있다**(Phase 3 결정 서명 전까지 토큰은 베어러). 훅 토큰이 새면 §1.2의 가짜 카드 | 사용자 전용 ACL(Unix: 데이터 디렉터리 `0700`, `agentnest.db`·`-wal`·`-shm`·`daemon.json`·키 `0600`), 디바이스 토큰은 PC에 해시만, "PC 신원 재생성"(§10)·기기 폐기로 즉시 무효화, 로그·DB에 키 미기록 | Phase 3 DPAPI 키 래핑(Phase 0 P12) + `hello` 서명 |
 
 R1은 **문서화만으로 수용되지 않는다.** 데스크톱 첫 실행 체크리스트(`desktop.md` §6.1)에서 사용자가 이 편차를 읽고 명시적으로 확인해야 하며, 확인은 `audit_log(action=risk_accepted, target=R1)`로 기록된다. 확인 전에는 '기기 추가'(페어링)를 시작할 수 없다. `ADR-0001` 결과에도 같은 내용을 기록한다. `decision.auth`가 폰의 주장이라는 한계(§6.4)는 별도의 문서화된 Phase 1 한계다.
 
@@ -45,7 +58,7 @@ R1은 **문서화만으로 수용되지 않는다.** 데스크톱 첫 실행 체
 | I5 | 만료·끊김·폰 미응답·데몬 오류·재시작·검증 실패·알 수 없는 상태의 결과는 항상 **"결정 없음"**(Claude: 빈 2xx / Codex: 무응답). 허용 응답은 **불투명 타입**으로만 만들 수 있다 — `ApprovalReply`는 내부 enum이 비공개인 구조체이고 허용 값은 `ApprovalReply::allow(ApplyProof)`로만 생성되며, `ApplyProof::mint()`는 `apply_decision` 성공 분기 **한 곳**에서만 호출된다(데스크톱 로컬 결정도 같은 분기를 지난다). 응답자는 `ReplyKind` 읽기 전용 뷰(`as_wire()`)만 본다 | `approvals::Broker`, `agentnest-adapter-api` | `compile_fail` doctest(공개 허용 생성자·내부 enum 리터럴 불가) + **`ApplyProof::mint` 호출 위치 1곳 grep** + fail-closed 매트릭스 | 1 |
 | I6 | 기기 폐기는 즉시 효력: 활성 연결에 `bye{device_revoked}` 후 4003, 그 기기의 진행 중 결정 무효, 이후 `hello` 거부. **되돌리기 없음** | `devices.revoked_at`, `link::Registry::kick` | 폐기 3종 | 8 |
 | I7 | 페어링은 (1) QR 비밀 소지 증명(HMAC) **그리고** (2) **PC 화면에서 사용자의 명시적 승인(SAS 표시)** 두 가지가 모두 있어야 완료. QR은 120초·1회용·3회 실패 시 소각 | `auth::pairing` | HMAC/SAS/거절/만료 | 3 |
-| I8 | 훅 수집 HTTP는 `127.0.0.1`(+`[::1]`)에만 바인드(설정으로도 변경 불가), `Origin`/`Sec-Fetch-Site` 헤더가 있으면 403, 토큰 상수시간 비교 실패 401, 본문 1 MiB 초과 413 | `http::guard` | hooks_http 5종 | 4 |
+| I8 | 훅 수집 HTTP는 `127.0.0.1`(+`[::1]`)에만 바인드(설정으로도 변경 불가), `Origin`/`Sec-Fetch-Site` 헤더가 있으면 403(`Host`는 포트만 허용 — `127.0.0.1:1@evil.com` 같은 userinfo 형태 403), 토큰 상수시간 비교 **또는 CLI 일회용 증명(nonce 1회·시계 오차 ±120초)** 실패 401, 본문 1 MiB 초과 413. 증명된 요청의 응답은 `X-AgentNest-Sig`로 서명(§1.2) | `http::guard` | hooks_http 5종 | 4 |
 | I9 | 로그·감사·DB·폰 전송 어디에도 토큰/키/nonce/서명/파일 본문/stdout 전체/프롬프트 원문을 남기지 않는다. 원시 훅 본문은 **디스크에 쓰지 않는다** | `redact` 뉴타입 + 3-싱크 정책 | 로그 grep 테스트, `payload ≤ 8 KiB` | 5 |
 | I10 | 위험 규칙은 코드 상수이며 설정으로 **완화할 수 없고 강화만** 가능. 설정 스키마에 §9의 금지 필드가 존재하지 않는다. 분류 실패 → `critical` | `risk`, `config.rs` | 규칙 테이블, 금지 필드 컴파일 테스트 | 6 |
 | I11 | 범위 확장 결정(`allow_for_session`, Claude `updatedPermissions`/`updatedInput`, Codex `acceptForSession`/`acceptWithExecpolicyAmendment`/`applyNetworkPolicyAmendment`)은 v1 스키마·어댑터 응답·설정 어디에도 **존재하지 않는다**("예약·거부"도 금지) | `protocol` enum, 어댑터 응답 생성기 | 스키마 invalid 예제, 응답 JSON 골든 | 1, 7 |
@@ -147,7 +160,7 @@ PC(데스크톱)                                                   폰
 
 ### 4.3 A4(QR 촬영) 분석
 
-촬영자가 먼저 `pair`를 보내면 PC 모달이 뜬다. 사용자는 (a) 자기 폰이 아직 SAS를 표시하지 않았거나 (b) 숫자가 다르면 [거절]한다. 사용자 폰은 `E_PAIR_BUSY`를 받고 "PC에서 낯선 요청을 거절한 뒤 다시 스캔"을 안내한다. 남는 위험은 사용자가 모달을 보지 않고 승인하는 경우뿐이며, 모달에는 기기 이름·모델과 SAS를 크게 표시하고 승인 버튼은 2초 후 활성화한다. `retype_sas`(폰에서 SAS 입력) 모드는 설정으로 **강화**만 가능.
+촬영자가 먼저 `pair`를 보내면 PC 모달이 뜬다. 사용자는 (a) 자기 폰이 아직 SAS를 표시하지 않았거나 (b) 숫자가 다르면 [거절]한다. 사용자 폰은 `E_PAIR_BUSY`를 받고 "PC에서 낯선 요청을 거절한 뒤 다시 스캔"을 안내한다. 남는 위험은 사용자가 모달을 보지 않고 승인하는 경우뿐이며, 모달에는 기기 이름·모델과 SAS를 크게 표시하고 승인 버튼은 2초 후 활성화한다. `retype_sas`(폰에서 SAS 입력) 모드는 설정 이름만 예약돼 있고 **Phase 1에는 구현되어 있지 않다**: `pairing.confirm_mode`에 `sas_display` 외의 값을 쓰면 `AppConfig::validate()`가 거부한다(아무 동작도 하지 않는 보안 설정이 보호를 주장하지 않도록). 구현되면 이 항목과 §9를 함께 갱신한다.
 
 ---
 
@@ -220,7 +233,7 @@ PC(데스크톱)                                                   폰
 
 | 공격 | 멈추는 단계 |
 | --- | --- |
-| 같은 `decision` 재전송 | 3 (또는 같은 `decision.id` → 멱등 `APPLIED` 응답, 재적용 없음) |
+| 같은 `decision` 재전송 | 3 (또는 같은 `decision.id`·같은 `request_id`·같은 기기로 **이미 `APPLIED`** 된 결정 → 멱등 `APPLIED` 응답, 재적용 없음. 거부된 시도의 id는 재사용 시 다시 평가하고, 다른 요청에 적용된 id·폐기된 기기의 재전송은 멱등 응답을 받지 못한다(폐기 검사가 먼저, `DEVICE_REVOKED`)) |
 | 다른 요청에 붙이기 | 4·5(nonce·해시가 요청별) |
 | 만료 후 전송 | 6 |
 | 데몬 재시작 후 과거 결정 | 2 또는 3(상태는 SQLite에 영속). **재시작 시 `pending` 전부 `expired`로 전이**(HTTP 핸들이 사라졌으므로 적용할 곳이 없음) |
@@ -279,7 +292,7 @@ PC(데스크톱)                                                   폰
 
 | 싱크 | 포함 | 제외/마스킹 |
 | --- | --- | --- |
-| `tracing` 로그(파일 롤링 일 단위, 7일, 10 MiB×5, 기본 `info`) | 이벤트 kind, `session_key` 앞 12자, `request_id`, 도구명, 위험 등급, 길이·해시 요약, 오류 코드 | 토큰·키·nonce·서명(값 전부), 명령(`len=42 sha256=9f86…` 형태만), 경로(마지막 2 세그먼트), 프롬프트/stdout/파일 본문(없음), IP 마지막 옥텟 마스킹, 요청 본문 전체(디버그 레벨에서도 금지) |
+| `tracing` 로그(`agentnest-core::logging`: 일 단위 롤링 파일 `agentnest.<날짜>.log`, 최근 7개 보존, 기본 `info`. 파일 크기 상한은 아직 없음 — 날짜 단위 롤링만. **모든 줄이 기록 전에 `redact::mask`를 통과**하는 리댁션 writer) | 이벤트 kind, `session_key` 앞 12자, `request_id`, 도구명, 위험 등급, 길이·해시 요약, 오류 코드 | 토큰·키·nonce·서명(값 전부), 명령(`len=42 sha256=9f86…` 형태만), 경로(마지막 2 세그먼트), 프롬프트/stdout/파일 본문(없음), IP 마지막 옥텟 마스킹, 요청 본문 전체(디버그 레벨에서도 금지) |
 | `approval_audit`/`audit_log` | 누가(device_id/desktop)·언제·무엇(request_id, decision, risk)·결과·사유 | 명령·diff 원문 없음(`approvals` 참조) |
 | `approvals.details_json`, `events.detail_json`(DB·폰 전송) | 명령 2,000자, diff 4 KiB, 경로 50개, stdout 꼬리 1 KiB, 프롬프트 200자 — 모두 패턴 마스킹 후 | `tool_input.content` 전체, `old_string/new_string` 전체, stdout 전체, 원시 훅 본문(**처음부터 저장하지 않음**). `approvals.details_json`은 7일 후 NULL |
 | 폰 로컬 로그 | 릴리스 빌드에서 페이로드 no-op(메시지 타입·길이만) | — |
@@ -287,7 +300,29 @@ PC(데스크톱)                                                   폰
 
 ### 8.3 패턴 마스킹(`redact::mask`, 픽스처 `protocol/fixtures/redact_cases.json`)
 
-`(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\s*[:=]\s*\S+` → `<redacted>`; `AKIA[0-9A-Z]{16}`; `gh[pousr]_[A-Za-z0-9]{36,}`; `sk-[A-Za-z0-9]{20,}`; `-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END`; JWT `eyJ[A-Za-z0-9_-]+\.eyJ…`; 40자 이상 hex/base64 토큰. 마스킹된 이벤트는 `redacted: true`.
+패턴 목록·순서·정규식의 규범은 픽스처(양성·음성 케이스 포함)이며 `redact::PATTERN_SOURCES`와 바이트 단위로 같아야 한다(테스트가 비교). 순서대로 적용한다:
+
+| 이름 | 마스킹 대상 |
+| --- | --- |
+| `auth_header` | `Authorization: Bearer\|Basic\|Token\|Digest <값>` (`Proxy-` 포함)의 **값**(스킴·헤더 이름은 남김) |
+| `keyword_assignment` | `(?i)(api[_-]?key\|token\|secret\|password\|passwd\|authorization\|bearer)\s*[:=]\s*\S+` |
+| `agentnest_token`, `aws_access_key`, `github_token`, `sk_token`, `vendor_token` | `an_hk_…`, `AKIA…`, `gh[pousr]_…`, `sk-…`, Slack `xox*-`, npm `npm_…`, `github_pat_`, `glpat-`, Google API 키, Stripe `sk_/rk_/pk_(live\|test)_`, SendGrid, `ya29.` |
+| `private_key_block`, `jwt` | PEM 개인키 블록, JWT |
+| `url_userinfo` | `scheme://user:<비밀번호>@host` 의 비밀번호 |
+| `credential_flag` | `--password\|--passwd\|--token\|--secret\|--api-key\|…` 뒤의 값(공백 또는 `=`). `--password-stdin` 같은 접미 플래그는 제외 |
+| `user_flag` | `--user\|--proxy-user a:<비밀번호>`, `curl\|wget … -u a:<비밀번호>` (`docker --user 1000:1000` 같은 숫자 쌍은 제외) |
+| `mysql_password_flag` | `mysql*\|mariadb* … -p<비밀번호>` (붙여 쓴 형태만; `-p`+공백은 프롬프트라 제외) |
+| `npm_auth` | `_authToken`/`_auth`/`_authPassword` 뒤의 값 |
+| `query_secret` | URL 쿼리의 `?key=\|token=\|api_key=\|access_token=\|sig=\|signature=\|secret=\|password=…` 값 |
+| `aws_secret` | `aws_secret_access_key\|aws_session_token` 뒤의 값(공백/`=`/`:`) |
+| `env_secret` | `MY_SECRET_KEY=값`, `SSH_KEY=값` 같은 환경변수·복합 식별자(`secret\|password\|token\|credential\|…_key` 포함) + `=`/`:` |
+| `long_token_40` | 40자 이상 `[A-Za-z0-9+/_-]` 연속(hex/base64 토큰) |
+
+규칙 이름에 `pre`/`post` 그룹이 있는 패턴은 그 그룹을 **남기고** 나머지만 `<redacted>`로 바꾼다(`mysql -u root -p<redacted> db`, `https://user:<redacted>@host`). 마스킹된 이벤트는 `redacted: true`. 카드 표시 문자열은 마스킹 뒤 **보이는 이스케이프**(`\u{202e}`, `\r`, `\u{1b}`)로 바꾼다: 양방향 제어·제로폭·ESC·CR·기타 제어 문자(§8.4). 알려진 한계: 일반 단어와 겹치는 플래그·식별자 규칙(`--token-file=…` 등)은 과마스킹 쪽으로 기운다.
+
+### 8.4 카드 표시 충실도
+
+카드(`approval_request.details`, DB `details_json`)에 들어가는 **모든** 문자열(명령, 경로, diff·내용 줄, 프로젝트 이름·브랜치·repo, 도구 이름, MCP 서버, MCP/알 수 없는 도구의 인자 요약, `purpose`·`reason`)은 `redact::mask_for_display`를 통과한다: 마스킹(제로폭 문자로 키워드를 쪼개 우회할 수 없도록 보이지 않는 문자를 제거한 사본에 적용) 후 제어·양방향·제로폭 문자를 **보이는 이스케이프**로 바꾼다(명령·diff는 `\n`·`\t` 유지, 이름·경로는 한 줄). 화면 표시만 바뀌며 바인딩 해시 `tool_input_sha256`은 **원본 `tool_input`** 에서 계산한다. 잘림이 있으면(diff·미리보기 줄 초과, `MultiEdit` 편집 5개 초과, 경로 50개 초과, 명령 2,000자 초과, 미리보기 삭제) `details.truncated = true`. MCP·알 수 없는 도구는 `details.command`에 상한 600자·키 12개의 마스킹된 인자 요약(`target="prod-db", force=true`)을 싣는다.
 
 ---
 
@@ -302,7 +337,8 @@ PC(데스크톱)                                                   폰
 | `approval.deny_requires_auth` | false | true로만. **소유자는 PC 설정**이며 `welcome.policy.deny_requires_auth`로 폰에 전달된다(폰 로컬 토글 없음, 폰 설정 화면은 읽기 전용 표시) |
 | `approval.daemon_down_deny`(`onFailure:"block"`) | false | true로만(옵트인) |
 | `approval.reconnect_grace_s` | 10 | 0~10 |
-| `pairing.confirm_mode` | `sas_display` | `sas_display` \| `retype_sas` |
+| `pairing.confirm_mode` | `sas_display` | `sas_display` (`retype_sas`는 **미구현 — 거부**, §4.3) |
+| `hooks.auto_reinstall_on_port_change` | false | true로 켜면 수집기가 폴백 포트를 쓸 때 HTTP 훅을 새 포트로 자동 재설치(옵트인, §1.2) |
 | `risk.force_ask_on_critical` | true | true \| false(PreToolUse `ask` 강제 여부 — 끄면 로컬 프롬프트 강제만 사라짐, 분류는 그대로) |
 | `link.bind_addr` | 주 인터페이스 | LAN 인터페이스 주소 중 선택(`0.0.0.0` 거부) |
 | `link.private_sources_only` | true | Phase 3 전까지 false 불가 |
@@ -321,16 +357,16 @@ PC(데스크톱)                                                   폰
 - **폰 연결 해제**: `unpair` 전송(응답 무관) → 로컬 토큰·핀·pc_id 삭제 + Keystore `deleteEntry`.
 - **잃어버린 폰**: 트레이 → 기기 → 폐기. 폐기 뒤 그 폰은 TLS는 성공(공개 핀)하지만 `hello`가 4003. 폰에 남은 비밀은 래핑된 토큰뿐이며 PC에서 무효.
 - **PC 신원 재생성**(키 유출 의심): 새 키쌍 → 새 SPKI → 모든 기기 재페어링(경고 모달 2단계).
-- **훅 토큰 재발급**: `daemon.json` + settings.json 재병합.
+- **훅 토큰 재발급**: settings.json의 HTTP 훅을 **먼저** 새 토큰으로 재병합하고(병합이 실패하면 옛 토큰을 유지하고 오류를 반환 — 죽은 토큰이 `onFailure:block`과 만나 전체 거부가 되는 것을 막는다), 그 다음 데몬의 검증기와 `daemon.json`을 바꾼다. CLI 훅에는 토큰이 없으므로 settings.json을 건드리지 않는다. `daemon.json`에는 포트·토큰 외에 **유효 승인 TTL(`approval_ttl_s`)** 이 들어 있어 CLI가 `ttl + 28초`를 기다린다.
 - **보존**: `decisions`/`audit_log` 365일, `approvals` 90일(details 7일 후 NULL) — `storage.md`.
 
 ---
 
 ## 11. 인증 전 방어·레이트리밋
 
-- 연결당 `PreAuth` 5초(유효한 `pair`/`hello` 수신까지)·`PairPending` 60초, IP당 동시 인증 전 연결(`PreAuth`+`PairPending`) 4개, **IP당 인증 실패 5회/분** 초과 시 60초 차단(§5와 같은 값 — 레이트리밋 테스트의 기준), 전체 동시 연결 16(초과 즉시 1013 close, 어떤 프레임도 보내지 않음 — `protocol.md` §9.3).
+- **인증 전 제한은 TCP accept 시점에 적용**된다(WebSocket 업그레이드 이후가 아니라): 소스 IP 사설 대역 필터(`link.private_sources_only`), 전체 동시 연결 16, IP당 동시 인증 전 연결 4, 차단된 IP — 위반하면 TLS 핸드셰이크 없이 **즉시 TCP를 닫는다**(바이트 0, CPU 소모 없음; 이전의 "1013 close 프레임"은 핸드셰이크 뒤에만 보낼 수 있어 폐기). TLS 핸드셰이크 5초, 업그레이드 전에는 **accept로부터 5초** 안에 요청이 끝나야 하며(유휴 TLS 연결·절반만 쓴 HTTP 요청은 그 시점에 닫힘), 세션의 `PreAuth` 5초(유효한 `pair`/`hello` 수신까지)도 같은 accept 시각부터 센다. `PairPending`은 60초. **IP당 인증 실패 5회/분** 초과 시 60초 차단(§5와 같은 값 — 레이트리밋 테스트의 기준).
 - 인증 실패는 1초 지연 후 닫는다. 어떤 실패도 "기기 없음"과 "토큰 오류"를 구분하지 않는다.
-- 인증 후: 기기당 `decision` 10건/분, `ping` 6건/분, `snapshot_request` 6건/분, `events_request` 12건/분 초과 시 `E_RATE_LIMITED`(3회 누적 시 4005).
+- 인증 후: 기기당 `decision` 10건/분, `ping` 6건/분, `snapshot_request` 6건/분, `events_request` 12건/분 초과 시 `E_RATE_LIMITED`(10분 안에 3회 누적 시 4005). **한도와 strike는 연결이 아니라 `device_id` 단위**라 재접속해도 초기화되지 않는다. `ack`는 거부하지 않지만 `last_acked_seq` DB 쓰기는 단조 증가일 때만, 기기당 60회/분까지 한다. 동시에 보류할 수 있는 승인은 64건(초과 요청은 DB에 쓰지 않고 "결정 없음"), 한 카드에 붙는 HTTP 핸들은 8개.
 - 훅 HTTP: 관찰 이벤트 초당 200건 초과 시 429(`PermissionRequest`는 제외).
 
 ---

@@ -17,6 +17,10 @@ serde_json = { workspace = true }
 clap = { workspace = true }
 ureq = { workspace = true }
 thiserror = { workspace = true }
+ring = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# the real-daemon tests (response authentication, statusLine, TTL) run the CLI against `agentnest-core`
+agentnest-core = { path = "../agentnest-core" }
+tokio = { workspace = true }

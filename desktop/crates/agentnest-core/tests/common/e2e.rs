@@ -414,6 +414,9 @@ pub struct Phone {
     pub closed: Option<u16>,
     /// Raw texts received so far (for the "no secret" greps).
     pub raw: Vec<String>,
+    /// Frames `recv_type` skipped while waiting for another type: a later `recv_type` of their type finds them here (a
+    /// frame that arrives before the one a test waits for must not be lost - that made some tests flaky).
+    stash: std::collections::VecDeque<Frame>,
 }
 
 fn client_config(pin: &str) -> Arc<rustls::ClientConfig> {
@@ -437,8 +440,12 @@ pub async fn connect_tls(addr: SocketAddr, pin: &str, source: Option<&str>) -> R
     let tcp = match source {
         Some(src) => {
             let sock = tokio::net::TcpSocket::new_v4().map_err(|e| e.to_string())?;
-            sock.bind(format!("{src}:0").parse().map_err(|_| "bad source".to_owned())?)
-                .map_err(|e| e.to_string())?;
+            sock.bind(
+                format!("{src}:0")
+                    .parse()
+                    .map_err(|_| "bad source".to_owned())?,
+            )
+            .map_err(|e| e.to_string())?;
             sock.connect(addr).await.map_err(|e| e.to_string())?
         }
         None => TcpStream::connect(addr).await.map_err(|e| e.to_string())?,
@@ -501,6 +508,7 @@ impl Phone {
             ws,
             closed: None,
             raw: Vec::new(),
+            stash: std::collections::VecDeque::new(),
         })
     }
 
@@ -576,12 +584,20 @@ impl Phone {
 
     /// The next frame whose type is `t`; frames of other types are skipped. Panics on close/timeout.
     pub async fn recv_type(&mut self, t: &str) -> Frame {
+        if let Some(i) = self.stash.iter().position(|f| f.message.type_name() == t) {
+            if let Some(f) = self.stash.remove(i) {
+                return f;
+            }
+        }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
         loop {
             let left = deadline.saturating_duration_since(tokio::time::Instant::now());
             match self.next(left).await {
                 Got::Frame(f) if f.message.type_name() == t => return f,
-                Got::Frame(_) => continue,
+                Got::Frame(f) => {
+                    self.stash.push_back(f);
+                    continue;
+                }
                 other => panic!("waiting for {t}: {other:?}"),
             }
         }

@@ -576,7 +576,7 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
 | `nonce_b64` | 16바이트 CSPRNG, 요청별 |
 | `tool_input_sha256` | `SHA-256(canonical JSON(tool_input))` 소문자 hex — **PC만 계산**. 폰은 에코만. 표시 축약(`details`)이 바인딩을 약화시키지 않게 함. **canonical JSON = RFC 8785(JCS)**: 객체 키를 UTF-16 코드 유닛 순으로 정렬, 공백 없음, 문자열은 `"` `\` 와 U+0020 미만 제어 문자만 이스케이프(`\b \t \n \f \r`, 나머지는 `\u00xx` 소문자 hex; 그 외 문자는 UTF-8 원문), 모든 숫자는 IEEE-754 double 의 ECMAScript `Number::toString`(`-0`→`0`, `1.0`→`1`, `1e21`→`1e+21`, 2^53 초과 정수는 double 로 반올림), 중복 키는 마지막 값. 바이트 단위 벡터: `protocol/vectors/tool_input_sha256.json` |
 | `details.kind` | `command` \| `file_write` \| `file_edit` \| `file_read` \| `mcp_tool` \| `web` \| `agent` \| `file_change`(Codex) \| `permissions`(Codex) \| `other` |
-| `details.*` | 표시용 상한: `command` 2,000자, `diff_preview` 4 KiB, `content_preview`(Write 신규 첫 20줄, 마스킹), `file_paths` 50개. 전체 파일 본문은 없음 |
+| `details.*` | 표시용 상한: `command` 2,000자, `diff_preview` 4 KiB, `content_preview`(Write 신규 첫 20줄, 마스킹), `file_paths` 50개. 전체 파일 본문은 없음. 모든 문자열은 마스킹되고 제어·양방향·제로폭 문자는 보이는 이스케이프(`\u{202e}`)다. **무엇이든 잘리면 `truncated = true`**(diff 줄 40개/편집 5개 초과, 경로 50개 초과, 명령·패턴·URL 상한). `mcp_tool`과 알 수 없는 도구는 `command`에 마스킹된 인자 요약(`target="prod-db", force=true`, 600자·키 12개 상한)을 싣는다(`security.md` §8.4) |
 | `title` / `purpose` | `title`은 도구별 고정 한국어(§7). **`purpose`는 에이전트가 쓴 `description`이라 에이전트(또는 공격자) 통제 문자열이며 검증되지 않는다**(없으면 null). PC가 제어 문자·양방향 제어를 제거하고 200자로 절단한다. 폰·데스크톱은 이를 **"에이전트가 한 말 (검증 안 됨)"** 으로 라벨링해 실제 명령·위험 등급보다 시각적으로 낮은 위치·작은 글씨로 표시한다(`android.md` §2.2, `desktop.md` §6) |
 | `risk.level` | `low` \| `medium` \| `high` \| `critical`. `extra_confirmation`: `none` \| `hold`(1.5초 길게 누르기) \| `hold_and_reconfirm`(길게 누르기 + 재확인 시트(명령 전체 재표시 + 체크박스)). 생체 프롬프트의 `setConfirmationRequired`는 얼굴·홍채 같은 수동 생체에만 영향을 주는 시스템 힌트라 **보안 게이트로 세지 않는다**(`android.md` §4.2) — 실제 게이트는 길게 누르기와 재확인 시트이며 서버는 `extra_confirmation.completed`로 검사한다 |
 | `allowed_decisions` | Codex `availableDecisions`와 교집합. `decline`이 없으면 `deny`를 제외하고 카드에 "거부 = 중단" 표기. **`origin == codex.hook.cli`이면 `deny_and_stop`을 항상 제외**한다(hooks 출력의 `interrupt`는 결정 전체를 무효화하므로 구현할 수 없다). 카드는 "거부만 가능 (Codex hooks는 작업을 멈출 수 없어요)"를 표시한다 — 사후에 조용히 `deny`로 강등하지 않는다 |
@@ -585,7 +585,7 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
 
 ### 6.2 결정 검증 순서 (`security.md` §6.2가 규범, 여기서는 요약)
 
-1 인증된 연결 → 2 `request_id` 존재 → 3 `status == pending` → 4 `session_key`·`nonce` 일치 → 5 `tool_input_sha256` 일치 → 6 `now < expires_at` 및 `decided_at` 창 → 7 `decision ∈ allowed_decisions` → 8 `auth`(**`authenticated_at` 신선도 포함**)/`extra_confirmation` 충족 → 9 원격 승인 일시정지 아님. 데스크톱(`actor=desktop`) 경로는 2·3·5(카드 해시 에코)·6(만료만)·7과 8의 데스크톱 판(`confirm_ack`)이 필수이고 1·4·9는 해당 없음이다(`security.md` §6.2.1). 전부 통과 시 **단일 조건부 UPDATE**(`WHERE status='pending' AND expires_at > now`) 후에만 어댑터에 전달. 같은 `decision.id` 재수신은 `decision_result{APPLIED}` 멱등 응답.
+1 인증된 연결 → 2 `request_id` 존재 → 3 `status == pending` → 4 `session_key`·`nonce` 일치 → 5 `tool_input_sha256` 일치 → 6 `now < expires_at` 및 `decided_at` 창 → 7 `decision ∈ allowed_decisions` → 8 `auth`(**`authenticated_at` 신선도 포함**)/`extra_confirmation` 충족 → 9 원격 승인 일시정지 아님. 데스크톱(`actor=desktop`) 경로는 2·3·5(카드 해시 에코)·6(만료만)·7과 8의 데스크톱 판(`confirm_ack`)이 필수이고 1·4·9는 해당 없음이다(`security.md` §6.2.1). 전부 통과 시 **단일 조건부 UPDATE**(`WHERE status='pending' AND expires_at > now`) 후에만 어댑터에 전달. 같은 `decision.id`·같은 `request_id`·같은 기기의 결정이 **이미 적용(`APPLIED`)** 된 경우에만 `decision_result{APPLIED}` 멱등 응답이다. 거부된 시도의 id를 다시 보내면 새로 평가하고, 다른 요청에 적용된 id는 이 요청의 결과가 아니며, 폐기된 기기는 항상 `DEVICE_REVOKED`다.
 
 ---
 
@@ -700,7 +700,7 @@ C→S ack{through_seq:1842}                   C→S ack{through_seq:1842}
 | 4009 | 같은 기기의 새 연결로 대체됨 |
 | 4010 | 프로토콜 버전 비호환 |
 | 1003 / 1009 / 1012 | 바이너리 프레임 / 프레임 과대 / 서버 재시작 |
-| 1013 | 전체 동시 연결 한도(16) 초과 — 인증 전에 즉시 거절(`security.md` §11). 폰은 백오프 후 재시도 |
+| 1013 | (예약) 연결 한도 초과. **Phase 1 데몬은 한도(전체 16 / IP당 4 / 차단 IP / 비사설 소스)를 TCP accept 시점에 검사해 TLS 핸드셰이크 없이 연결을 바로 닫는다**(`security.md` §11) — 폰에는 접속 실패(연결 거부/핸드셰이크 실패)로 보이며 close 프레임은 없다. 폰은 백오프 후 재시도 |
 
 ---
 

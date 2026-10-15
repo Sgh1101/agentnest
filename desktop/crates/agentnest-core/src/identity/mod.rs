@@ -436,11 +436,18 @@ pub fn is_usable_lan_address(ip: IpAddr) -> bool {
 fn looks_virtual(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     const PREFIXES: [&str; 14] = [
-        "veth", "docker", "br-", "virbr", "vboxnet", "vmnet", "lxc", "podman", "cni", "flannel", "tun", "tap",
-        "utun", "wg",
+        "veth", "docker", "br-", "virbr", "vboxnet", "vmnet", "lxc", "podman", "cni", "flannel",
+        "tun", "tap", "utun", "wg",
     ];
     const CONTAINS: [&str; 8] = [
-        "wsl", "vethernet", "hyper-v", "vmware", "virtualbox", "tailscale", "zerotier", "loopback",
+        "wsl",
+        "vethernet",
+        "hyper-v",
+        "vmware",
+        "virtualbox",
+        "tailscale",
+        "zerotier",
+        "loopback",
     ];
     PREFIXES.iter().any(|p| n.starts_with(p)) || CONTAINS.iter().any(|c| n.contains(c))
 }
@@ -449,7 +456,10 @@ fn looks_virtual(name: &str) -> bool {
 /// address of the default-route interface (`default_route`) first, then the addresses of physical-looking interfaces
 /// before virtual ones, IPv4 before IPv6, each group sorted **numerically** (`10.0.0.9` before `10.0.0.10`).
 /// Duplicates are removed.
-pub fn select_lan_addresses(ifaces: &[(String, IpAddr)], default_route: Option<IpAddr>) -> Vec<IpAddr> {
+pub fn select_lan_addresses(
+    ifaces: &[(String, IpAddr)],
+    default_route: Option<IpAddr>,
+) -> Vec<IpAddr> {
     let mut v: Vec<(bool, bool, bool, IpAddr)> = ifaces
         .iter()
         .filter(|(_, ip)| is_usable_lan_address(*ip))
@@ -543,7 +553,6 @@ pub fn spki_from_cert_der(cert: &[u8]) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use agentnest_protocol::canonical::sha256;
-    use std::net::Ipv4Addr;
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-10-15T09:12:33Z")
@@ -685,12 +694,30 @@ mod tests {
 
     #[test]
     fn usable_lan_addresses_are_private_space_only() {
-        for ok in ["192.168.0.10", "10.1.2.3", "172.16.0.1", "172.31.255.254", "fd00::5", "fc00::1"] {
+        for ok in [
+            "192.168.0.10",
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.254",
+            "fd00::5",
+            "fc00::1",
+        ] {
             assert!(is_usable_lan_address(ok.parse().unwrap()), "{ok}");
         }
         for bad in [
-            "127.0.0.1", "0.0.0.0", "169.254.1.1", "224.0.0.1", "100.64.0.1", "8.8.8.8", "172.32.0.1",
-            "172.15.0.1", "fe80::1", "::1", "::", "ff02::1", "2001:4860:4860::8888",
+            "127.0.0.1",
+            "0.0.0.0",
+            "169.254.1.1",
+            "224.0.0.1",
+            "100.64.0.1",
+            "8.8.8.8",
+            "172.32.0.1",
+            "172.15.0.1",
+            "fe80::1",
+            "::1",
+            "::",
+            "ff02::1",
+            "2001:4860:4860::8888",
         ] {
             assert!(!is_usable_lan_address(bad.parse().unwrap()), "{bad}");
         }
@@ -724,7 +751,15 @@ mod tests {
         // without a default route: physical before virtual, IPv4 before IPv6, numeric order inside a group
         assert_eq!(
             select_lan_addresses(&ifaces, None),
-            ips(&["10.0.0.9", "10.0.0.10", "192.168.0.10", "192.168.1.5", "fd12:3456::7", "172.17.0.1", "172.28.0.1"])
+            ips(&[
+                "10.0.0.9",
+                "10.0.0.10",
+                "192.168.0.10",
+                "192.168.1.5",
+                "fd12:3456::7",
+                "172.17.0.1",
+                "172.28.0.1"
+            ])
         );
         // the default route's address comes first whatever its number is
         assert_eq!(
@@ -738,7 +773,9 @@ mod tests {
         );
         assert!(select_lan_addresses(&[], None).is_empty());
         assert!(!looks_virtual("Ethernet") && !looks_virtual("Wi-Fi") && !looks_virtual("eth0"));
-        assert!(looks_virtual("vEthernet (WSL)") && looks_virtual("docker0") && looks_virtual("tun0"));
+        assert!(
+            looks_virtual("vEthernet (WSL)") && looks_virtual("docker0") && looks_virtual("tun0")
+        );
     }
 
     #[test]

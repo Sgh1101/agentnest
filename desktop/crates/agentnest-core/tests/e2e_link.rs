@@ -727,7 +727,10 @@ async fn the_connection_caps_refuse_at_accept_four_per_address_and_sixteen_in_to
         p.expect_challenge().await;
         held.push(p);
     }
-    assert!(open_from("127.0.0.2", addr, &pin).await.is_err(), "fifth connection of one address");
+    assert!(
+        open_from("127.0.0.2", addr, &pin).await.is_err(),
+        "fifth connection of one address"
+    );
     // total: three more addresses with four each make 16; the next address is over the cap
     for src in ["127.0.0.3", "127.0.0.4", "127.0.0.5"] {
         for _ in 0..4 {
@@ -737,7 +740,10 @@ async fn the_connection_caps_refuse_at_accept_four_per_address_and_sixteen_in_to
         }
     }
     assert_eq!(held.len(), 16);
-    assert!(open_from("127.0.0.6", addr, &pin).await.is_err(), "the 17th connection");
+    assert!(
+        open_from("127.0.0.6", addr, &pin).await.is_err(),
+        "the 17th connection"
+    );
     // closing one frees a slot
     held.pop().unwrap().close().await;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -890,8 +896,12 @@ async fn a_half_written_http_request_is_closed_at_the_pre_auth_window() {
         o.timing.preauth_ms = 800;
     })
     .await;
-    let mut tls = connect_tls(e.link_addr(), &e.dm.spki_pin(), None).await.unwrap();
-    tls.write_all(b"GET /v1/link HTTP/1.1\r\nHost: x\r\nX-A: ").await.unwrap();
+    let mut tls = connect_tls(e.link_addr(), &e.dm.spki_pin(), None)
+        .await
+        .unwrap();
+    tls.write_all(b"GET /v1/link HTTP/1.1\r\nHost: x\r\nX-A: ")
+        .await
+        .unwrap();
     let began = Instant::now();
     let mut b = [0u8; 16];
     match tokio::time::timeout(Duration::from_secs(5), tls.read(&mut b)).await {
@@ -921,7 +931,9 @@ async fn a_tcp_connection_without_a_tls_handshake_is_closed_at_the_pre_auth_wind
     .await;
     let mut tcp = tokio::net::TcpStream::connect(e.link_addr()).await.unwrap();
     // a few bytes of a ClientHello that never completes
-    tcp.write_all(&[0x16, 0x03, 0x01, 0x02, 0x00, 0x01]).await.unwrap();
+    tcp.write_all(&[0x16, 0x03, 0x01, 0x02, 0x00, 0x01])
+        .await
+        .unwrap();
     let began = Instant::now();
     let mut b = [0u8; 64];
     loop {
@@ -931,7 +943,11 @@ async fn a_tcp_connection_without_a_tls_handshake_is_closed_at_the_pre_auth_wind
             Err(_) => panic!("the stalled handshake was still open after 5 s"),
         }
     }
-    assert!(began.elapsed() < Duration::from_secs(4), "{:?}", began.elapsed());
+    assert!(
+        began.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        began.elapsed()
+    );
 }
 
 /// The 5 s authentication deadline counts from the TCP accept: a slow client does not get the full window again after
@@ -966,8 +982,150 @@ async fn an_authenticated_session_outlives_the_pre_auth_window() {
     .await;
     let (_p, mut ws) = e.pair_ready("Pixel").await;
     tokio::time::sleep(Duration::from_millis(1_800)).await;
-    let id = ws.send(Message::Ping(PingPayload { sent_at: now_iso() })).await;
+    let id = ws
+        .send(Message::Ping(PingPayload { sent_at: now_iso() }))
+        .await;
     let f = ws.recv_type("pong").await;
-    let Message::Pong(p) = f.message else { unreachable!() };
+    let Message::Pong(p) = f.message else {
+        unreachable!()
+    };
     assert_eq!(p.in_reply_to, id);
+}
+
+// ---- limits belong to the device, not the connection (review PoC 7) ----------------------------------------------------
+
+/// Review PoC 7: the 10-decisions-per-minute limit and the three strikes were per CONNECTION, so reconnecting reset them.
+#[tokio::test(flavor = "multi_thread")]
+async fn decision_rate_limit_and_strikes_survive_a_reconnect() {
+    let e = E2e::start_with(|o, _| {
+        o.timing.auth_fail_delay_ms = 20;
+    })
+    .await;
+    let (paired, mut ws) = e.pair_ready("Pixel").await;
+    e.wait_online(1).await;
+    let fake = |n: usize| agentnest_protocol::DecisionPayload {
+        request_id: format!("ar_unknown_{n}"),
+        session_key: "claude_code:x".into(),
+        nonce_b64: agentnest_protocol::Secret::new(agentnest_protocol::qr::b64_encode(&[1u8; 16])),
+        tool_input_sha256: "0".repeat(64),
+        decision: agentnest_protocol::Decision::Deny,
+        reason: None,
+        decided_at: now_iso(),
+        auth: None,
+        extra_confirmation: None,
+        signature_b64: None,
+    };
+    // round 1: 10 decisions are evaluated, then rate limit errors until the third strike closes with 4005
+    let mut evaluated = 0;
+    let mut closed = None;
+    for n in 0..16 {
+        ws.send(Message::Decision(fake(n))).await;
+        match ws.next(Duration::from_millis(800)).await {
+            Got::Frame(f) => match f.message {
+                Message::DecisionResult(_) => evaluated += 1,
+                Message::Error(er) => assert_eq!(er.code, ErrorCode::RateLimited),
+                _ => {}
+            },
+            Got::Closed(c) => {
+                closed = c;
+                break;
+            }
+            Got::Timeout => {}
+        }
+    }
+    assert_eq!(evaluated, 10);
+    assert_eq!(closed, Some(4005));
+    // round 2 and 3: a fresh connection of the same device gets NO new budget
+    for round in 2..=3 {
+        let mut ws = e.connect_ready(&paired).await;
+        e.wait_online(1).await;
+        ws.send(Message::Decision(fake(100 + round))).await;
+        let mut got_result = false;
+        while let Got::Frame(f) = ws.next(Duration::from_millis(800)).await {
+            match f.message {
+                Message::DecisionResult(_) => got_result = true,
+                Message::Error(er) => {
+                    assert_eq!(er.code, ErrorCode::RateLimited, "round {round}")
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            !got_result,
+            "round {round}: no decision may be evaluated after a reconnect"
+        );
+    }
+}
+
+// ---- a revocation between authentication and registration (review finding) ------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_revoked_between_authentication_and_registration_never_becomes_online() {
+    let e = E2e::start_with(|o, _| {
+        o.timing.post_auth_delay_ms = 700;
+    })
+    .await;
+    let (paired, ws) = e.pair_ready("Pixel").await;
+    drop(ws);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // authenticates (hello is valid), then the daemon pauses before registering the connection
+    let mut ws = e.hello(&paired, 0, true).await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let name = paired.name.clone();
+    e.dm.device_revoke(&paired.device_id, &name).await.unwrap();
+    let mut types = Vec::new();
+    let code = loop {
+        match ws.next(Duration::from_secs(5)).await {
+            Got::Frame(f) => types.push(f.message.type_name().to_owned()),
+            Got::Closed(c) => break c,
+            Got::Timeout => panic!("no close"),
+        }
+    };
+    assert_eq!(code, Some(4003), "{types:?}");
+    assert!(
+        !types.iter().any(|t| t == "welcome" || t == "snapshot"),
+        "{types:?}"
+    );
+    assert!(types.contains(&"bye".to_owned()), "{types:?}");
+    assert!(e.dm.debug_online_devices().is_empty());
+}
+
+// ---- ack frames cannot be used to hammer the database (review item 9) -----------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ack_database_writes_are_bounded_per_device_and_acks_are_never_refused() {
+    let e = E2e::start_with(fast).await;
+    let (paired, mut ws) = e.pair_ready("Pixel").await;
+    e.wait_online(1).await;
+    for seq in 1..=100 {
+        ws.send(Message::Ack(agentnest_protocol::AckPayload {
+            through_seq: Some(seq),
+            approval_ids: vec![],
+        }))
+        .await;
+    }
+    // acks get no reply and are not strikes: the connection is still healthy
+    let id = ws
+        .send(Message::Ping(PingPayload { sent_at: now_iso() }))
+        .await;
+    let f = ws.recv_type("pong").await;
+    let Message::Pong(p) = f.message else {
+        unreachable!()
+    };
+    assert_eq!(p.in_reply_to, id);
+    let device_id = paired.device_id.clone();
+    let acked: i64 =
+        e.dm.store()
+            .read(move |c| {
+                Ok(c.query_row(
+                    "SELECT last_acked_seq FROM devices WHERE device_id=?1",
+                    [device_id],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+    assert!(
+        (1..100).contains(&acked),
+        "writes stop at the per-minute budget (60): last_acked_seq = {acked}"
+    );
 }

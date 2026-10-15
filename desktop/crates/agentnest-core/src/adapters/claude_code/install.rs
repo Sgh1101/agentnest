@@ -15,11 +15,17 @@
 //! * `PermissionRequest.timeout = approval.ttl_s + 30` so the daemon always answers before Claude Code gives up; the other
 //!   hooks use 5 s, `SessionEnd` 1 s.
 //! * `statusLine` is installed only when the user has none; an existing one is reported, never replaced.
-//! * The write is atomic (temporary file in the same directory, renamed over the original) after a one-time backup
-//!   `settings.json.agentnest-backup-<timestamp>`.
+//! * The write is atomic (temporary file in the same directory, renamed over the original) after a backup
+//!   `settings.json.agentnest-backup-<timestamp>`. A backup **never overwrites** an existing one (a name that is taken
+//!   gets `-1`, `-2`, ...), so the first backup - the file as the user wrote it - survives every later install. If
+//!   `settings.json` is a **symbolic link** (dotfile managers), the link is kept and the linked file is replaced; the
+//!   file's permissions are carried over to the new file.
 //!
 //! The merged file is re-serialised with two-space indentation and sorted keys (`serde_json` without `preserve_order`);
-//! the **content** of unrelated settings is preserved exactly, the key order and whitespace of the file are not.
+//! the **content** of unrelated settings is preserved, the key order and whitespace of the file are not. Two things the
+//! re-serialisation can change are detected beforehand and reported as warnings
+//! ([`InstallWarning::DuplicateKeys`], [`InstallWarning::LargeNumbers`]): a key that appears twice in one object keeps only
+//! its last value, and an integer too large for a double loses precision. The backup holds the original either way.
 
 use std::path::{Path, PathBuf};
 
@@ -113,6 +119,10 @@ pub enum InstallWarning {
     StatusLineExists,
     /// `allowedHttpHookUrls` is set and does not allow the collector URL: HTTP hooks are blocked by policy.
     AllowedHttpHookUrlsMissing,
+    /// The file has an object with the same key twice; re-serialising keeps only the last value of each.
+    DuplicateKeys,
+    /// The file has an integer with 16 or more digits; re-serialising may round it (it is stored as a double).
+    LargeNumbers,
 }
 
 impl InstallWarning {
@@ -126,6 +136,14 @@ impl InstallWarning {
             InstallWarning::AllowedHttpHookUrlsMissing => format!(
                 "allowedHttpHookUrls 에 http://127.0.0.1:{port}/* 를 추가해야 HTTP 훅이 동작해요."
             ),
+            InstallWarning::DuplicateKeys => {
+                "settings.json 에 같은 키가 두 번 나오는 객체가 있어, 저장하면 마지막 값만 남아요. 원본은 백업 파일에 있어요."
+                    .to_owned()
+            }
+            InstallWarning::LargeNumbers => {
+                "settings.json 에 16자리 이상의 정수가 있어, 저장하면 반올림될 수 있어요. 원본은 백업 파일에 있어요."
+                    .to_owned()
+            }
         }
     }
 }
@@ -353,30 +371,161 @@ fn remove_ours(hooks: &mut Map<String, Value>) -> Result<usize, InstallError> {
     Ok(removed)
 }
 
+/// Rejects (by flagging) JSON objects that repeat a key: `serde_json::Value` would silently keep the last value.
+struct NoDuplicateKeys(bool);
+
+impl<'de> serde::Deserialize<'de> for NoDuplicateKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::{MapAccess, SeqAccess, Visitor};
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = bool;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("any JSON value")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<bool, A::Error> {
+                let mut seen = std::collections::HashSet::new();
+                let mut dup = false;
+                while let Some(k) = m.next_key::<String>()? {
+                    dup |= !seen.insert(k);
+                    dup |= m.next_value::<NoDuplicateKeys>()?.0;
+                }
+                Ok(dup)
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> Result<bool, A::Error> {
+                let mut dup = false;
+                while let Some(v) = s.next_element::<NoDuplicateKeys>()? {
+                    dup |= v.0;
+                }
+                Ok(dup)
+            }
+            fn visit_bool<E>(self, _: bool) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_i64<E>(self, _: i64) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_u64<E>(self, _: u64) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_f64<E>(self, _: f64) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_str<E>(self, _: &str) -> Result<bool, E> {
+                Ok(false)
+            }
+            fn visit_unit<E>(self) -> Result<bool, E> {
+                Ok(false)
+            }
+        }
+        d.deserialize_any(V).map(NoDuplicateKeys)
+    }
+}
+
+/// What re-serialising `text` would change silently (see the module docs).
+fn lossy_reserialisation_warnings(text: &str) -> Vec<InstallWarning> {
+    let mut w = Vec::new();
+    if serde_json::from_str::<NoDuplicateKeys>(text).is_ok_and(|d| d.0) {
+        w.push(InstallWarning::DuplicateKeys);
+    }
+    // a run of 16+ digits that is not part of a longer word or a fraction: an integer a double cannot hold exactly
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    let mut large = false;
+    let mut in_string = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            // digits inside a string are text, not numbers
+            if b == b'\\' {
+                i += 1;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            i += 1;
+        } else if b == b'"' {
+            in_string = true;
+            i += 1;
+        } else if b.is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let before_ok = start == 0 || !matches!(bytes[start - 1], b'.' | b'e' | b'E');
+            let after_ok = i >= bytes.len() || !matches!(bytes[i], b'.' | b'e' | b'E');
+            if i - start >= 16 && before_ok && after_ok {
+                large = true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    if large {
+        w.push(InstallWarning::LargeNumbers);
+    }
+    w
+}
+
+/// Writes `root` atomically. A symbolic link is followed (the linked file is replaced, the link stays), the permissions
+/// of the existing file carry over to the new one, and the temporary file lives next to the real target.
 fn write_atomic(path: &Path, root: &Map<String, Value>) -> Result<(), InstallError> {
-    if let Some(parent) = path.parent() {
+    // follow a symlink so that `rename` replaces the file it points to, not the link itself
+    let target = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path)?,
+        _ => path.to_owned(),
+    };
+    if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let mut text = serde_json::to_string_pretty(&Value::Object(root.clone()))
         .map_err(|_| InstallError::UnexpectedStructure("not serialisable"))?;
     text.push('\n');
-    let mut tmp = path.as_os_str().to_owned();
+    let mut tmp = target.as_os_str().to_owned();
     tmp.push(".agentnest-tmp");
     let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)?;
+    if let Ok(meta) = std::fs::metadata(&target) {
+        // keep the mode of the original (a 0600 settings file must not become 0644)
+        if let Err(e) = std::fs::set_permissions(&tmp, meta.permissions()) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 
+/// Copies `path` to `<path>.agentnest-backup-<stamp>`; a name that exists is never overwritten (`-1`, `-2`, ...).
 fn backup(path: &Path, stamp: &str) -> Result<Option<PathBuf>, InstallError> {
     if !path.exists() {
         return Ok(None);
     }
-    let mut name = path.as_os_str().to_owned();
-    name.push(format!(".agentnest-backup-{stamp}"));
-    let dest = PathBuf::from(name);
-    std::fs::copy(path, &dest)?;
-    Ok(Some(dest))
+    for n in 0..1000u32 {
+        let mut name = path.as_os_str().to_owned();
+        if n == 0 {
+            name.push(format!(".agentnest-backup-{stamp}"));
+        } else {
+            name.push(format!(".agentnest-backup-{stamp}-{n}"));
+        }
+        let dest = PathBuf::from(name);
+        let created = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest);
+        match created {
+            Ok(mut out) => {
+                let mut src = std::fs::File::open(path)?;
+                std::io::copy(&mut src, &mut out)?;
+                return Ok(Some(dest));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Err(InstallError::UnexpectedStructure("too many backup files"))
 }
 
 /// Installs (or re-installs) the hooks into `settings_path`.
@@ -386,7 +535,10 @@ pub fn install(
 ) -> Result<InstallReport, InstallError> {
     let existing = read_settings(settings_path)?;
     let mut root = existing.clone().unwrap_or_default();
-    let mut warnings = Vec::new();
+    let mut warnings = match std::fs::read_to_string(settings_path) {
+        Ok(text) => lossy_reserialisation_warnings(&text),
+        Err(_) => Vec::new(),
+    };
 
     let hooks_value = root
         .entry("hooks".to_owned())
@@ -918,5 +1070,109 @@ mod tests {
         let i = inspect(&bad);
         assert!(i.exists && !i.parsed);
         assert_eq!(i.permission_request_timeout_s, None);
+    }
+
+    // -- review item 13: symlinks, modes, backups, lossy re-serialisation ---------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_settings_file_stays_a_link_and_its_target_is_updated_with_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("dotfiles").join("claude-settings.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, r#"{"model":"opus"}"#).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.path().join("settings.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        install(&link, &opts()).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link is still a link"
+        );
+        assert_eq!(read(&real)["model"], "opus");
+        assert!(
+            inspect(&real).fully_installed(),
+            "the linked file got the hooks"
+        );
+        assert_eq!(
+            std::fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the mode of the original is kept"
+        );
+        // uninstall goes through the link as well
+        uninstall(&link).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!inspect(&real).exists || inspect(&real).installed_events.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_mode_of_an_existing_settings_file_is_kept() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        install(&path, &opts()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn backups_never_overwrite_each_other_and_the_first_one_is_the_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"model":"pristine"}"#).unwrap();
+        // the same timestamp three times (a 1 s resolution used to collide)
+        let first = install(&path, &opts()).unwrap().backup.unwrap();
+        let second = install(&path, &opts()).unwrap().backup.unwrap();
+        let third = install(&path, &opts()).unwrap().backup.unwrap();
+        assert_ne!(first, second);
+        assert_ne!(second, third);
+        assert!(first
+            .to_string_lossy()
+            .ends_with(".agentnest-backup-20261015T091233Z"));
+        assert!(second.to_string_lossy().ends_with("-1"));
+        assert_eq!(
+            std::fs::read_to_string(&first).unwrap(),
+            r#"{"model":"pristine"}"#,
+            "the pristine original survives later installs"
+        );
+        assert!(std::fs::read_to_string(&second)
+            .unwrap()
+            .contains("agentnest"));
+    }
+
+    #[test]
+    fn lossy_reserialisation_is_reported_as_a_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"a":1,"a":2,"nested":{"x":1,"x":3},"big":12345678901234567890123}"#,
+        )
+        .unwrap();
+        let w = install(&path, &opts()).unwrap().warnings;
+        assert!(w.contains(&InstallWarning::DuplicateKeys), "{w:?}");
+        assert!(w.contains(&InstallWarning::LargeNumbers), "{w:?}");
+        assert!(w.iter().all(|x| !x.message_ko(47831).is_empty()));
+        // an ordinary file raises neither
+        let clean = dir.path().join("clean.json");
+        std::fs::write(&clean, r#"{"a":1,"b":{"a":2},"list":[{"a":1},{"a":2}],"id":"12345678901234567890","n":1.5e300}"#).unwrap();
+        let w = install(&clean, &opts()).unwrap().warnings;
+        assert!(
+            !w.contains(&InstallWarning::DuplicateKeys)
+                && !w.contains(&InstallWarning::LargeNumbers),
+            "{w:?}"
+        );
     }
 }

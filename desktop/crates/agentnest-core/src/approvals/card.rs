@@ -89,10 +89,12 @@ pub fn display_project(p: ProjectRef) -> ProjectRef {
     ProjectRef {
         project_key: p.project_key,
         name: line(&p.name, 80),
-        path_hint: p
-            .path_hint
-            .as_deref()
-            .map(|h| clip(&escape_display_text(&mask_path(h).text, true), PATH_MAX_CHARS)),
+        path_hint: p.path_hint.as_deref().map(|h| {
+            clip(
+                &escape_display_text(&mask_path(h).text, true),
+                PATH_MAX_CHARS,
+            )
+        }),
         repo: p.repo.as_deref().map(|r| line(r, 120)),
         branch: p.branch.as_deref().map(|b| line(b, 80)),
     }
@@ -538,8 +540,9 @@ mod tests {
     // -- review regression (PoC 4): card fidelity ---------------------------------------------------------------------
 
     fn is_printable(text: &str) -> bool {
-        text.chars()
-            .all(|c| c == '\n' || c == '\t' || !(c.is_control() || "\u{202e}\u{200b}\u{2066}".contains(c)))
+        text.chars().all(|c| {
+            c == '\n' || c == '\t' || !(c.is_control() || "\u{202e}\u{200b}\u{2066}".contains(c))
+        })
     }
 
     #[test]
@@ -551,7 +554,12 @@ mod tests {
         ));
         let c = d.command.unwrap();
         assert!(is_printable(&c), "{c:?}");
-        assert!(c.contains("\\u{202e}") && c.contains("\\u{200b}") && c.contains("\\u{1b}") && c.contains("\\r"));
+        assert!(
+            c.contains("\\u{202e}")
+                && c.contains("\\u{200b}")
+                && c.contains("\\u{1b}")
+                && c.contains("\\r")
+        );
         assert!(is_printable(&d.cwd_hint.unwrap()));
         // paths, diff lines, content lines, patterns, URLs and the MCP server name
         let e = build_details(&draft(
@@ -569,9 +577,17 @@ mod tests {
         assert!(is_printable(w.content_preview.as_ref().unwrap()));
         let g = build_details(&draft("Grep", json!({"pattern": "a\u{202e}b"}), None));
         assert!(is_printable(g.command.as_ref().unwrap()));
-        let u = build_details(&draft("WebFetch", json!({"url": "https://x/\u{2066}y"}), None));
+        let u = build_details(&draft(
+            "WebFetch",
+            json!({"url": "https://x/\u{2066}y"}),
+            None,
+        ));
         assert!(is_printable(u.command.as_ref().unwrap()));
-        let m = build_details(&draft("mcp__ser\u{202e}ver__do", json!({"a\u{200b}": "b\u{1b}"}), None));
+        let m = build_details(&draft(
+            "mcp__ser\u{202e}ver__do",
+            json!({"a\u{200b}": "b\u{1b}"}),
+            None,
+        ));
         assert!(is_printable(m.mcp_server.as_ref().unwrap()));
         assert!(is_printable(m.command.as_ref().unwrap()));
         assert!(is_printable(&display_tool_name("Ba\u{202e}sh\u{1b}")));
@@ -582,7 +598,12 @@ mod tests {
             repo: Some("o/r\u{1b}".into()),
             branch: Some("main\u{202e}".into()),
         });
-        for text in [&p.name, p.path_hint.as_ref().unwrap(), p.repo.as_ref().unwrap(), p.branch.as_ref().unwrap()] {
+        for text in [
+            &p.name,
+            p.path_hint.as_ref().unwrap(),
+            p.repo.as_ref().unwrap(),
+            p.branch.as_ref().unwrap(),
+        ] {
             assert!(is_printable(text), "{text:?}");
         }
         // a secret split by a zero width character is still masked
@@ -600,14 +621,28 @@ mod tests {
         let edits: Vec<_> = (0..8)
             .map(|i| json!({"old_string": format!("a{i}"), "new_string": format!("b{i}")}))
             .collect();
-        let d = build_details(&draft("MultiEdit", json!({"file_path": "/w/x.rs", "edits": edits}), Some("/w")));
+        let d = build_details(&draft(
+            "MultiEdit",
+            json!({"file_path": "/w/x.rs", "edits": edits}),
+            Some("/w"),
+        ));
         assert!(d.truncated, "3 of 8 edits were not shown");
-        assert_eq!(d.diff_preview.as_ref().unwrap().matches("\n- ").count() + 1, 5);
+        assert_eq!(
+            d.diff_preview.as_ref().unwrap().matches("\n- ").count() + 1,
+            5
+        );
         // exactly 5 edits: nothing was left out
         let five: Vec<_> = (0..5)
             .map(|i| json!({"old_string": format!("a{i}"), "new_string": format!("b{i}")}))
             .collect();
-        assert!(!build_details(&draft("MultiEdit", json!({"file_path": "/w/x.rs", "edits": five}), Some("/w"))).truncated);
+        assert!(
+            !build_details(&draft(
+                "MultiEdit",
+                json!({"file_path": "/w/x.rs", "edits": five}),
+                Some("/w")
+            ))
+            .truncated
+        );
         // Edit with 100 old lines: 40 shown
         let many: String = (0..100).map(|i| format!("line{i}\n")).collect();
         let d = build_details(&draft(
@@ -619,18 +654,40 @@ mod tests {
         assert_eq!(d.diff_preview.as_ref().unwrap().lines().count(), 41);
         // 40 lines exactly: complete
         let forty: String = (0..40).map(|i| format!("line{i}\n")).collect();
-        assert!(!build_details(&draft("Edit", json!({"file_path": "/w/x.rs", "old_string": forty, "new_string": "x"}), Some("/w"))).truncated);
+        assert!(
+            !build_details(&draft(
+                "Edit",
+                json!({"file_path": "/w/x.rs", "old_string": forty, "new_string": "x"}),
+                Some("/w")
+            ))
+            .truncated
+        );
         // a clipped pattern, URL and reason; dropped previews
-        assert!(build_details(&draft("Grep", json!({"pattern": "pat ".repeat(120)}), None)).truncated);
-        assert!(build_details(&draft("WebFetch", json!({"url": format!("https://x/ {}", "w ".repeat(200))}), None)).truncated);
+        assert!(
+            build_details(&draft("Grep", json!({"pattern": "pat ".repeat(120)}), None)).truncated
+        );
+        assert!(
+            build_details(&draft(
+                "WebFetch",
+                json!({"url": format!("https://x/ {}", "w ".repeat(200))}),
+                None
+            ))
+            .truncated
+        );
         let mut with_reason = draft("Bash", json!({"command": "ls"}), None);
         with_reason.reason = Some("r ".repeat(400));
         assert!(build_details(&with_reason).truncated);
         // paths beyond the cap (Codex file change) and a dropped preview
-        let paths: Vec<Value> = (0..60).map(|i| json!({"path": format!("src/f{i}.rs")})).collect();
+        let paths: Vec<Value> = (0..60)
+            .map(|i| json!({"path": format!("src/f{i}.rs")}))
+            .collect();
         assert!(build_details(&draft("fileChange", json!({"changes": paths}), None)).truncated);
         let huge = "x ".repeat(5_000);
-        let w = build_details(&draft("Write", json!({"file_path": "a.txt", "content": format!("{huge}\n{huge}\n{huge}")}), None));
+        let w = build_details(&draft(
+            "Write",
+            json!({"file_path": "a.txt", "content": format!("{huge}\n{huge}\n{huge}")}),
+            None,
+        ));
         assert!(w.truncated);
         // untouched input is not flagged
         assert!(!build_details(&draft("Bash", json!({"command": "cargo test"}), None)).truncated);
@@ -646,11 +703,19 @@ mod tests {
         assert_eq!(m.kind, DetailsKind::McpTool);
         let c = m.command.unwrap();
         assert!(c.contains("target=\"prod-db\"") && c.contains("force=true") && c.contains("n=3"));
-        assert!(c.contains("items=[2 items]") && c.contains("opts={1 keys}"), "{c}");
-        assert!(!c.contains("abcdef123456"), "secret arguments are masked: {c}");
+        assert!(
+            c.contains("items=[2 items]") && c.contains("opts={1 keys}"),
+            "{c}"
+        );
+        assert!(
+            !c.contains("abcdef123456"),
+            "secret arguments are masked: {c}"
+        );
         assert!(!m.truncated);
         // bounded: many keys, long values
-        let many: serde_json::Map<String, Value> = (0..30).map(|i| (format!("k{i:02}"), json!("v".repeat(300)))).collect();
+        let many: serde_json::Map<String, Value> = (0..30)
+            .map(|i| (format!("k{i:02}"), json!("v".repeat(300))))
+            .collect();
         let b = build_details(&draft("mcp__srv__t", Value::Object(many), None));
         let c = b.command.unwrap();
         assert!(c.chars().count() <= 600, "{}", c.chars().count());
@@ -659,7 +724,10 @@ mod tests {
         let u = build_details(&draft("SomeNewTool", json!({"path": "/etc/passwd"}), None));
         assert_eq!(u.kind, DetailsKind::Other);
         assert_eq!(u.command.as_deref(), Some("path=\"/etc/passwd\""));
-        assert_eq!(build_details(&draft("mcp__a__b", json!({}), None)).command, None);
+        assert_eq!(
+            build_details(&draft("mcp__a__b", json!({}), None)).command,
+            None
+        );
     }
 
     #[test]

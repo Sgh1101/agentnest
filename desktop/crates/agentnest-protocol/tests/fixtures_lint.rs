@@ -140,7 +140,10 @@ fn apply_patterns(v: &Value, input: &str, replacement: &str) -> String {
             .unwrap_or_else(|e| panic!("{}: {e}", p["name"]));
         // fixture semantics (see `_format.known_limitations`): the named groups `pre` / `post` are kept, the rest of
         // the match is replaced; a pattern without them is replaced as a whole
-        let keeps = re.capture_names().flatten().any(|n| n == "pre" || n == "post");
+        let keeps = re
+            .capture_names()
+            .flatten()
+            .any(|n| n == "pre" || n == "post");
         s = if keeps {
             re.replace_all(&s, |c: &regex::Captures<'_>| {
                 let g = |n: &str| c.name(n).map_or("", |m| m.as_str());
@@ -158,7 +161,7 @@ fn apply_patterns(v: &Value, input: &str, replacement: &str) -> String {
 fn redact_cases_agree_with_the_rust_regex_engine() {
     let v = fixture("redact_cases.json");
     unique_names(&v);
-    assert_eq!(v["patterns"].as_array().unwrap().len(), 17);
+    assert_eq!(v["patterns"].as_array().unwrap().len(), 18);
     let repl = v["_format"]["replacement"].as_str().unwrap();
     let mut by_rule: BTreeMap<(String, String), usize> = BTreeMap::new();
     for c in cases(&v) {

@@ -4,13 +4,21 @@
 //! (`http://127.0.0.1:<hook_port>`), print the daemon's reply on stdout and **always exit 0**. It never makes decisions and
 //! never edits its input (only strings above 32 KiB are cut and reported in `_agentnest_truncated`). With the daemon down,
 //! unreachable, slow or answering anything but a JSON object, it prints nothing, which every caller reads as "no decision".
+//!
+//! **The reply is authenticated.** Whatever listens on the loopback port could answer a hook with `allow`, and a command
+//! hook has no other way to tell. So the CLI never sends the hook token: it sends a one-time proof derived from it
+//! (`agentnest_protocol::hook_auth`) and prints **only** an answer whose `X-AgentNest-Sig` verifies against that
+//! request's nonce, status and body. An unsigned or wrongly signed answer prints nothing (exit 0, "no decision").
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
+use agentnest_protocol::hook_auth;
+use agentnest_protocol::qr::b64url_encode;
 use clap::{Parser, Subcommand};
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -149,15 +157,26 @@ fn relay(
         .timeout_ms
         .map(Duration::from_millis)
         .unwrap_or_else(|| default_timeout(event.as_deref(), config));
-    let Some((status, text)) = post(config, route.path(), &body, timeout, debug) else {
+    let Some(reply) = post(config, route.path(), &body, timeout, debug) else {
         return Output::Nothing;
     };
-    if status != 200 {
+    // Only the daemon knows the token, so only it can sign: anything else on this port is ignored.
+    if !reply.authentic {
+        if debug {
+            eprintln!("agentnest-hook: the answer is not signed by the daemon; ignored");
+        }
         return Output::Nothing;
     }
     match route {
-        Route::Statusline => Output::Text("AgentNest\n".to_owned()),
-        Route::ClaudeCode | Route::Codex => filter_response(route, &text),
+        // the statusLine reply is `204` (no body) or `200`: both mean "the daemon took the data"
+        Route::Statusline if (200..300).contains(&reply.status) => {
+            Output::Text("AgentNest\n".to_owned())
+        }
+        Route::Statusline => Output::Nothing,
+        Route::ClaudeCode | Route::Codex if reply.status == 200 => {
+            filter_response(route, &reply.text)
+        }
+        Route::ClaudeCode | Route::Codex => Output::Nothing,
     }
 }
 
@@ -265,26 +284,73 @@ fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::new_with_config(config)
 }
 
+/// What the daemon answered, and whether the answer proves it came from the daemon.
+struct Reply {
+    status: u16,
+    text: String,
+    authentic: bool,
+}
+
+/// The one-time authentication of a request: `(nonce, ts, proof)` for `method path`.
+fn authenticate(
+    config: &DaemonConfig,
+    method: &str,
+    path: &str,
+) -> Option<(String, String, String)> {
+    let mut raw = [0u8; 18];
+    SystemRandom::new().fill(&mut raw).ok()?;
+    let nonce = b64url_encode(&raw);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis()
+        .to_string();
+    let key = hook_auth::derive_key(&config.hook_token);
+    let proof = hook_auth::request_proof(&key, method, path, &ts, &nonce);
+    Some((nonce, ts, proof))
+}
+
+fn reply_from(
+    config: &DaemonConfig,
+    nonce: &str,
+    mut resp: ureq::http::Response<ureq::Body>,
+) -> Reply {
+    let status = resp.status().as_u16();
+    let sig = resp
+        .headers()
+        .get(hook_auth::HEADER_SIG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let text = resp.body_mut().read_to_string().unwrap_or_default();
+    let key = hook_auth::derive_key(&config.hook_token);
+    let authentic = sig
+        .is_some_and(|s| hook_auth::verify_response_sig(&key, nonce, status, text.as_bytes(), &s));
+    Reply {
+        status,
+        text,
+        authentic,
+    }
+}
+
 fn post(
     config: &DaemonConfig,
     path: &str,
     body: &[u8],
     timeout: Duration,
     debug: bool,
-) -> Option<(u16, String)> {
+) -> Option<Reply> {
     let url = format!("http://127.0.0.1:{}{path}", config.hook_port);
+    let (nonce, ts, proof) = authenticate(config, "POST", path)?;
     let result = agent(timeout)
         .post(&url)
         .header("Content-Type", "application/json")
-        .header("X-AgentNest-Token", &config.hook_token)
         .header("X-AgentNest-Via", "cli")
+        .header(hook_auth::HEADER_NONCE, &nonce)
+        .header(hook_auth::HEADER_TS, &ts)
+        .header(hook_auth::HEADER_PROOF, &proof)
         .send(body);
     match result {
-        Ok(mut resp) => {
-            let status = resp.status().as_u16();
-            let text = resp.body_mut().read_to_string().unwrap_or_default();
-            Some((status, text))
-        }
+        Ok(resp) => Some(reply_from(config, &nonce, resp)),
         Err(e) => {
             if debug {
                 eprintln!("agentnest-hook: request failed: {e}");
@@ -346,25 +412,39 @@ fn doctor(config: &DaemonConfig, path: Option<&Path>, timeout_ms: Option<u64>) -
             return lines.join("\n") + "\n";
         }
     }
+    let Some((nonce, ts, proof)) = authenticate(config, "GET", "/v1/daemon") else {
+        lines.push("token: check failed".to_owned());
+        return lines.join("\n") + "\n";
+    };
     let info = agent(timeout)
         .get(&format!("{base}/v1/daemon"))
-        .header("X-AgentNest-Token", &config.hook_token)
+        .header(hook_auth::HEADER_NONCE, &nonce)
+        .header(hook_auth::HEADER_TS, &ts)
+        .header(hook_auth::HEADER_PROOF, &proof)
         .call();
     match info {
-        Ok(mut r) if r.status().as_u16() == 200 => {
-            let text = r.body_mut().read_to_string().unwrap_or_default();
-            let wss = serde_json::from_str::<Map<String, Value>>(&text)
-                .ok()
-                .and_then(|m| m.get("wss_port").and_then(Value::as_u64));
-            lines.push("token: accepted".to_owned());
-            if let Some(p) = wss {
-                lines.push(format!("wss_port: {p}"));
+        Ok(resp) => {
+            let reply = reply_from(config, &nonce, resp);
+            match reply.status {
+                200 if reply.authentic => {
+                    let wss = serde_json::from_str::<Map<String, Value>>(&reply.text)
+                        .ok()
+                        .and_then(|m| m.get("wss_port").and_then(Value::as_u64));
+                    lines.push("token: accepted; the answer is signed by the daemon".to_owned());
+                    if let Some(p) = wss {
+                        lines.push(format!("wss_port: {p}"));
+                    }
+                }
+                200 => lines.push(
+                    "daemon: the answer is NOT signed with the hook token - another program may be listening on this port"
+                        .to_owned(),
+                ),
+                401 => lines.push(
+                    "token: REJECTED (reinstall the hooks to refresh daemon.json)".to_owned(),
+                ),
+                other => lines.push(format!("token: unexpected status {other}")),
             }
         }
-        Ok(r) if r.status().as_u16() == 401 => {
-            lines.push("token: REJECTED (reinstall the hooks to refresh daemon.json)".to_owned());
-        }
-        Ok(r) => lines.push(format!("token: unexpected status {}", r.status().as_u16())),
         Err(_) => lines.push("token: check failed".to_owned()),
     }
     lines.join("\n") + "\n"

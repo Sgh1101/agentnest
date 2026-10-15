@@ -66,6 +66,11 @@ pub struct HttpSettings {
     /// Extra time (ms) a held request waits beyond the approval TTL for the broker's own answer before the handler
     /// answers "no decision" itself (the broker timer not running is an abnormal case). Tests shorten it.
     pub hold_slack_ms: AtomicU64,
+    /// `PermissionRequest`s that arrive through Claude Code's own `type: "http"` hooks may be answered. The daemon turns
+    /// this off while the installed HTTP hooks point at another port than the one the collector listens on: such a
+    /// request did not come through the hook configuration, and an HTTP hook cannot authenticate the daemon (security.md
+    /// 1.2). Command hooks (`agentnest-hook`) authenticate both ways and are not affected.
+    pub http_approvals_enabled: AtomicBool,
 }
 
 impl HttpSettings {
@@ -75,6 +80,7 @@ impl HttpSettings {
             force_ask_on_critical: AtomicBool::new(force_ask_on_critical),
             codex_hold: AtomicBool::new(codex_hold),
             hold_slack_ms: AtomicU64::new(HOLD_SLACK_MS),
+            http_approvals_enabled: AtomicBool::new(true),
         }
     }
 }
@@ -247,6 +253,13 @@ pub async fn claude_hook(
         SourceChannel::ClaudeCodeHookHttp
     };
     if name == "PermissionRequest" {
+        if channel == SourceChannel::ClaudeCodeHookHttp
+            && !ctx.settings.http_approvals_enabled.load(Ordering::Relaxed)
+        {
+            // hook_port_unavailable: the installed HTTP hooks point elsewhere; never answer approvals here
+            tracing::warn!("a PermissionRequest over HTTP is not answered: the installed hooks point at another port");
+            return no_decision();
+        }
         return hold(ctx, HookFlavor::Claude, value, channel).await;
     }
     if !ctx.rate_ok() {

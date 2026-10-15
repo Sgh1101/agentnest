@@ -1456,7 +1456,11 @@ mod tests {
         // exactly what the hook CLI relays after cutting at 32 KiB: the dangerous tail is gone, the size is not
         let cut: String = direct.chars().take(32 * 1024).collect();
         let r = bash(&cut);
-        assert_eq!(r.reasons, vec!["input_too_large"], "a cut input is never judged harmless");
+        assert_eq!(
+            r.reasons,
+            vec!["input_too_large"],
+            "a cut input is never judged harmless"
+        );
         // a multi-byte cut (3-byte characters cut at a character boundary below 32768 bytes)
         let wide = "가".repeat(11_000);
         let cut_wide: String = {

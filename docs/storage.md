@@ -251,7 +251,7 @@ CREATE TABLE settings (                              -- 비밀 없음. 금지 �
 | 데몬 시작 | `UPDATE approvals SET status='expired', outcome='expired', resolved_by='system', resolved_at=? WHERE status='pending'` |
 | 중복 훅 병합 | 단일 writer 안에서 `SELECT request_id FROM approvals WHERE session_key=? AND agent_id=? AND tool_name=? AND tool_input_sha256=? AND status='pending' AND created_at >= (now − 2s)` → 있으면 새 HTTP 핸들을 같은 요청에 추가 구독, 없으면 새 카드 INSERT. **`agent_id`가 다르거나 2초 창 밖이면 병합하지 않는다**(병렬 서브에이전트의 동일 명령이 한 번의 승인으로 두 번 실행되는 것을 막음) |
 | 재생 | `SELECT seq, msg_type, payload_json, expires_at FROM stream WHERE seq > ? ORDER BY seq` — `approval_request`는 `expires_at <= now` 또는 해당 `approvals.status != 'pending'`이면 `approval_resolved`로 치환 |
-| 멱등 결정 | `SELECT verify_result FROM decisions WHERE id = ?` → 존재하면 재적용 없이 `decision_result` 재응답 |
+| 멱등 결정 | `SELECT 1 FROM decisions WHERE request_id=? AND actor=? AND verify_result='APPLIED' AND (id=? OR id LIKE '?#%')` → **같은 요청·같은 행위자의 이미 적용된 결정**이면 재적용 없이 `decision_result{APPLIED}` 재응답. `decisions.id`는 폰이 고른 봉투 id라 유일하지 않을 수 있으므로, 이미 쓰인 id의 새 시도는 `<id>#<n>`으로 저장한다(거부된 시도가 같은 id의 다음 유효한 결정을 막지 못함) |
 | 이벤트 페이지(`events_request`) | `SELECT … FROM events WHERE seq < :before_seq [AND session_key = :k] [AND kind IN (…≤16)] ORDER BY seq DESC LIMIT :limit(≤100)` — `stream`이 아니라 `events`(§3 보존 기간)에서 읽는다. 응답 바이트 예산 초과 시 `detail_json`을 빼고, 그래도 넘으면 행 수를 줄이고 `has_more=true` |
 | `hello` | `SELECT token_hash, revoked_at FROM devices WHERE device_id = ?` → 상수시간 비교 |
 
@@ -269,12 +269,13 @@ CREATE TABLE settings (                              -- 비밀 없음. 금지 �
 | `review_findings` | 180일 |
 | `pairings` | 만료 24시간 후 삭제 |
 | `devices` | 폐기 후 365일(감사 참조용), `revoked_reason=inactive_90d`는 90일 미접속 자동 폐기(설정) |
-| 로그 파일 | 7일 롤링(`tracing-appender`) |
+| 로그 파일 | 일 단위 롤링, 최근 7개 파일(`tracing-appender`, `agentnest-core::logging`) |
+| **시계 점프 방어** | 모든 연령 규칙은 "지금"을 **저장된 가장 최신 타임스탬프 + 2일**로 제한한다(`RetentionConfig::max_clock_advance_days`). 시스템 시계가 10년 앞으로 튀어도 평소 일정이 지우지 않을 행은 지워지지 않는다. 데이터가 오래 안 들어오면 정리가 기다릴 뿐이고 새 행이 들어오면 따라잡는다. 한계: 틀린 시계가 찍은 새 행은 "가장 최신"을 끌어올린다(처음부터 틀린 시계는 알아채지 못함) |
 | 유지보수 | 주 1회 `PRAGMA wal_checkpoint(TRUNCATE)`, 월 1회 유휴 시 `VACUUM`. DB 500 MiB 초과 시 가장 오래된 `events`부터 추가 삭제 + 경고 |
 
 **삭제 독립성 불변식**: 어떤 보존 규칙도 다른 테이블의 행을 암묵적으로 지우지 않는다. 이는 PRD §9 '승인과 거절의 실제 처리 결과 확인'의 근거인 `decisions`/`approval_audit`이 세션 정리(30일)나 승인 행 정리(90일)와 함께 사라지는 것을 막기 위함이다(`PRAGMA foreign_keys=ON`이어도 위 컬럼에는 FK 자체가 없다).
 
-백업/이전: DB에는 폐기 가능한 공개 정보·해시만 있어 사용자가 복사해도 자격 증명 재사용은 불가(A5). 개인키는 DB 밖 ACL 파일(→ Phase 3 DPAPI).
+DB 파일(`agentnest.db`, `-wal`, `-shm`)은 Unix에서 `0600`으로 생성·보정한다(데이터 디렉터리 `0700`). 백업/이전: DB에는 폐기 가능한 공개 정보·해시만 있어 사용자가 복사해도 자격 증명 재사용은 불가(A5). 개인키는 DB 밖 ACL 파일(→ Phase 3 DPAPI).
 
 ---
 

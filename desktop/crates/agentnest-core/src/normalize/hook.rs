@@ -67,7 +67,10 @@ pub fn tool_input_with_truncation_marker(tool_input: &Value, hook: &Value) -> Va
     match tool_input {
         Value::Object(map) => {
             let mut map = map.clone();
-            map.insert(TRUNCATED_MARKER_KEY.to_owned(), Value::Array(marked.clone()));
+            map.insert(
+                TRUNCATED_MARKER_KEY.to_owned(),
+                Value::Array(marked.clone()),
+            );
             Value::Object(map)
         }
         other => serde_json::json!({

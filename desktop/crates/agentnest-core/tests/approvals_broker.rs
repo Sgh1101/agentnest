@@ -1102,7 +1102,11 @@ async fn identical_requests_without_an_agent_id_are_two_cards_and_one_allow_cann
         panic!("without an agent_id there is no merging: two cards");
     };
     assert_ne!(id1, id2);
-    assert_eq!(h.broker.pending_cards().await.len(), 2, "the user sees two cards");
+    assert_eq!(
+        h.broker.pending_cards().await.len(),
+        2,
+        "the user sees two cards"
+    );
     let c1 = h.broker.pending_card(&id1).await.unwrap();
     assert!(
         h.broker
@@ -1127,9 +1131,7 @@ async fn an_empty_agent_id_is_the_same_as_none_for_merging() {
     let (o1, _r1) = h
         .open(h.draft_for(SESSION, Some(""), "Bash", input.clone()))
         .await;
-    let (o2, _r2) = h
-        .open(h.draft_for(SESSION, Some(""), "Bash", input))
-        .await;
+    let (o2, _r2) = h.open(h.draft_for(SESSION, Some(""), "Bash", input)).await;
     assert!(matches!(o1, OpenOutcome::Opened { .. }));
     assert!(matches!(o2, OpenOutcome::Opened { .. }));
 }
@@ -1240,7 +1242,10 @@ async fn the_number_of_pending_approvals_and_handles_per_card_is_bounded() {
         .open(h.draft("Bash", json!({"command": "cargo test --bin overflow"})))
         .await;
     assert_eq!(o, OpenOutcome::Failed);
-    assert!(matches!(rx.await.unwrap(), Seen::Abandoned(_)), "an empty reply, never an allow");
+    assert!(
+        matches!(rx.await.unwrap(), Seen::Abandoned(_)),
+        "an empty reply, never an allow"
+    );
     assert_eq!(h.broker.pending_count().await, MAX_PENDING_APPROVALS);
     assert_eq!(
         h.store.list_pending_approvals(None).unwrap().len(),
@@ -1320,8 +1325,13 @@ async fn card_strings_are_printable_while_the_binding_hash_stays_the_originals()
         "the hash is the original's"
     );
     let shown = card.details.command.as_deref().unwrap();
-    assert!(shown.contains("\\u{202e}") && shown.contains("\\r"), "{shown}");
-    assert!(!shown.chars().any(|c| c.is_control() && c != '\n' && c != '\t'));
+    assert!(
+        shown.contains("\\u{202e}") && shown.contains("\\r"),
+        "{shown}"
+    );
+    assert!(!shown
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t'));
     assert!(!card.project.name.contains('\u{202e}'));
     assert!(!card.project.branch.as_deref().unwrap().contains('\u{1b}'));
     // and a decision bound to that hash is applied

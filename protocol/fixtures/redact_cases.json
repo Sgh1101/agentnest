@@ -20,6 +20,10 @@
       "regex": "(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\\s*[:=]\\s*\\S+"
     },
     {
+      "name": "agentnest_token",
+      "regex": "\\ban_hk_[A-Za-z0-9_-]{16,}"
+    },
+    {
       "name": "aws_access_key",
       "regex": "AKIA[0-9A-Z]{16}"
     },
@@ -688,6 +692,36 @@
       "input": "the primary key: id and the monkey=banana keyboard",
       "expect": {
         "output": "the primary key: id and the monkey=banana keyboard",
+        "redacted": false
+      }
+    },
+    {
+      "name": "agentnest_hook_token_bare",
+      "rule": "agentnest_token",
+      "polarity": "positive",
+      "input": "daemon token an_hk_Zm9vYmFyYmF6cXV4MDEyMzQ1 was rotated",
+      "expect": {
+        "output": "daemon token <redacted> was rotated",
+        "redacted": true
+      }
+    },
+    {
+      "name": "agentnest_hook_token_after_equals_sign",
+      "rule": "agentnest_token",
+      "polarity": "positive",
+      "input": "url=an_hk_Zm9vYmFyYmF6cXV4MDEyMzQ1&x=1",
+      "expect": {
+        "output": "url=<redacted>&x=1",
+        "redacted": true
+      }
+    },
+    {
+      "name": "agentnest_prefix_without_token_is_unchanged",
+      "rule": "agentnest_token",
+      "polarity": "negative",
+      "input": "the an_hk_ prefix and an_hk_short are not tokens",
+      "expect": {
+        "output": "the an_hk_ prefix and an_hk_short are not tokens",
         "redacted": false
       }
     }

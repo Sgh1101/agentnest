@@ -330,3 +330,215 @@ async fn the_database_never_gets_a_token_secret_or_card_nonce_in_clear_in_its_ta
         );
     }
 }
+
+// ---- review: token rotation re-merges settings.json (security.md 10) -----------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rotating_the_hook_token_re_merges_the_installed_http_hooks() {
+    let e = E2e::start_with(fast).await;
+    let settings = e.dir.path().join("claude").join("settings.json");
+    e.dm.hooks_install(HooksMode::Http).await.unwrap();
+    let old = e.token();
+    assert!(std::fs::read_to_string(&settings).unwrap().contains(&old));
+    e.dm.request(|reply| DaemonCommand::HookTokenRotate { reply })
+        .await
+        .unwrap();
+    let new = e.token();
+    assert_ne!(old, new);
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        text.contains(&new),
+        "the installed hooks carry the NEW token"
+    );
+    assert!(!text.contains(&old), "and no longer the old one");
+    // what Claude Code would send now is accepted; the old token is not
+    let v: Value = serde_json::from_str(&text).unwrap();
+    let header_token = v["hooks"]["PermissionRequest"][0]["hooks"][0]["headers"]
+        ["X-AgentNest-Token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let body = json!({"hook_event_name": "Stop", "session_id": "s7", "cwd": "C:\\x"});
+    let url = e.hook_url("/v1/hooks/claude-code");
+    assert_eq!(post_blocking(&url, &header_token, &body).0, 204);
+    assert_eq!(post_blocking(&url, &old, &body).0, 401);
+    // the user's own settings and the hook count survive the re-merge
+    let installed = agentnest_core::adapters::claude_code::install::inspect(&settings);
+    assert!(installed.fully_installed());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rotating_without_installed_http_hooks_does_not_touch_settings_json() {
+    let e = E2e::start_with(fast).await;
+    let settings = e.dir.path().join("claude").join("settings.json");
+    e.dm.request(|reply| DaemonCommand::HookTokenRotate { reply })
+        .await
+        .unwrap();
+    assert!(!settings.exists(), "nothing installed, nothing written");
+}
+
+// ---- review item 1: the hook port -----------------------------------------------------------------------------------------
+
+fn install_http_hooks_for(settings: &std::path::Path, port: u16) {
+    use agentnest_core::adapters::claude_code::install::{install, HookMode, InstallOptions};
+    install(
+        settings,
+        &InstallOptions {
+            mode: HookMode::Http,
+            hook_port: port,
+            hook_token: "an_hk_old_token_for_the_squatted_port_000",
+            approval_ttl_s: 120,
+            daemon_down_deny: false,
+            install_statusline: false,
+            hook_cli: "agentnest-hook",
+            backup_stamp: Some("t"),
+        },
+    )
+    .unwrap();
+}
+
+async fn heard_hook_port_unavailable(e: &mut E2e) -> bool {
+    for _ in 0..50 {
+        match tokio::time::timeout(Duration::from_millis(100), e.dm.events.recv()).await {
+            Ok(Ok(DaemonEvent::Error { message }))
+                if message.starts_with("hook_port_unavailable") =>
+            {
+                return true
+            }
+            Ok(Ok(_)) => continue,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// A squatter holds the port the HTTP hooks were installed for. The daemon must not keep serving approvals for hooks that
+/// point at the squatter's port, must say so, and repoints the hooks only if the user opted in.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_port_squatter_disables_http_approvals_and_reports_hook_port_unavailable() {
+    let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let held_port = squatter.local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("claude").join("settings.json");
+    install_http_hooks_for(&settings, held_port);
+    let mut e = E2e::start_in(dir, |o, _| {
+        o.timing.auth_fail_delay_ms = 50;
+        o.hook_port = held_port;
+    })
+    .await;
+    let bound = e.dm.hook_port();
+    assert_ne!(bound, held_port);
+    let problem = e.dm.hook_port_problem().expect("hook_port_unavailable");
+    assert_eq!((problem.wanted, problem.bound), (held_port, bound));
+    assert!(
+        heard_hook_port_unavailable(&mut e).await,
+        "no DaemonEvent::Error(hook_port_unavailable)"
+    );
+    assert!(e.dm.status().await.unwrap().hook_port_mismatch);
+    let report =
+        e.dm.request(|reply| DaemonCommand::HooksStatus {
+            agent: agentnest_core::daemon::HookAgent::ClaudeCode,
+            reply,
+        })
+        .await
+        .unwrap();
+    assert!(
+        report.warnings.iter().any(|w| w.contains("HTTP")),
+        "{:?}",
+        report.warnings
+    );
+    // settings.json was NOT touched without the opt-in
+    assert!(std::fs::read_to_string(&settings)
+        .unwrap()
+        .contains(&format!(":{held_port}/")));
+
+    let (_p, mut ws) = e.pair_ready("Pixel").await;
+    e.wait_online(1).await;
+    // an HTTP-hook PermissionRequest is not answered: 204 at once, no card
+    let (s, body) = e
+        .hook_post(
+            "/v1/hooks/claude-code",
+            permission_request("s1", "cargo test"),
+        )
+        .await;
+    assert_eq!((s, body.as_str()), (204, ""));
+    assert!(
+        matches!(ws.next(Duration::from_millis(400)).await, Got::Timeout),
+        "no card reaches the phone"
+    );
+    // the command-hook channel authenticates both ways and is not gated: it opens a card
+    let url = e.hook_url("/v1/hooks/claude-code");
+    let token = e.token();
+    let held = tokio::task::spawn_blocking(move || {
+        request_blocking(
+            "POST",
+            &url,
+            &[
+                ("X-AgentNest-Token", token.as_str()),
+                ("X-AgentNest-Via", "cli"),
+            ],
+            Some(
+                permission_request("s2", "cargo build")
+                    .to_string()
+                    .into_bytes(),
+            ),
+        )
+    });
+    let (card, _) = ws.recv_card().await;
+    assert!(
+        ws.decide(Phone::decision_for(&card, Decision::Deny))
+            .await
+            .accepted
+    );
+    assert_eq!(held.await.unwrap().0, 200);
+    // the user reinstalls the HTTP hooks for the real port: HTTP approvals work again
+    e.dm.hooks_install(HooksMode::Http).await.unwrap();
+    assert!(!e.dm.status().await.unwrap().hook_port_mismatch);
+    let held = e.hold(permission_request("s3", "cargo fmt"));
+    let (card, _) = ws.recv_card().await;
+    assert!(
+        ws.decide(Phone::decision_for(&card, Decision::Deny))
+            .await
+            .accepted
+    );
+    assert_eq!(held.await.unwrap().0, 200);
+    drop(squatter);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_hooks_are_repointed_only_when_the_user_opted_in() {
+    let squatter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let held_port = squatter.local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("claude").join("settings.json");
+    install_http_hooks_for(&settings, held_port);
+    let e = E2e::start_in(dir, |o, c| {
+        o.hook_port = held_port;
+        c.hooks.auto_reinstall_on_port_change = true;
+    })
+    .await;
+    let bound = e.dm.hook_port();
+    assert_ne!(bound, held_port);
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        text.contains(&format!(":{bound}/")) && !text.contains(&format!(":{held_port}/")),
+        "{text}"
+    );
+    assert!(!e.dm.status().await.unwrap().hook_port_mismatch);
+    assert!(e
+        .dm
+        .store()
+        .list_audit_log(50)
+        .unwrap()
+        .iter()
+        .any(|a| a.action == "hooks_repointed"));
+    drop(squatter);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_conflict_nothing_is_reported_and_http_approvals_work() {
+    let e = E2e::start_with(fast).await;
+    assert!(e.dm.hook_port_problem().is_none());
+    e.dm.hooks_install(HooksMode::Http).await.unwrap();
+    assert!(!e.dm.status().await.unwrap().hook_port_mismatch);
+}

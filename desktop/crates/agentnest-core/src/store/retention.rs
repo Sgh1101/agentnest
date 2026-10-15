@@ -154,7 +154,9 @@ fn newest_timestamp_ms(tx: &rusqlite::Transaction<'_>) -> Result<Option<i64>, St
     let mut newest: Option<i64> = None;
     for (table, column) in SOURCES {
         let max: Option<String> =
-            tx.query_row(&format!("SELECT MAX({column}) FROM {table}"), [], |r| r.get(0))?;
+            tx.query_row(&format!("SELECT MAX({column}) FROM {table}"), [], |r| {
+                r.get(0)
+            })?;
         if let Some(ms) = max.as_deref().and_then(crate::state::timers::parse_ms) {
             newest = Some(newest.map_or(ms, |n| n.max(ms)));
         }
@@ -505,9 +507,7 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.insert_approval(new_approval("ar_p", "s", T0, 120_000), 0)
             .unwrap();
-        let r = s
-            .run_retention(T0 + 400 * DAY_MS, &unguarded())
-            .unwrap();
+        let r = s.run_retention(T0 + 400 * DAY_MS, &unguarded()).unwrap();
         assert_eq!(r.approvals_deleted, 0);
         assert_eq!(r.approval_details_cleared, 0);
         assert_eq!(count(&s, "approvals"), 1);
@@ -600,9 +600,7 @@ mod tests {
         for _ in 0..3 {
             s2.stream_append(stream_message(T0, 10)).unwrap();
         }
-        let r = s2
-            .run_retention(T0 + 500 * HOUR_MS, &unguarded())
-            .unwrap();
+        let r = s2.run_retention(T0 + 500 * HOUR_MS, &unguarded()).unwrap();
         assert_eq!(r.stream_deleted, 0);
     }
 
@@ -707,7 +705,8 @@ mod tests {
         for d in 0..10 {
             let id = format!("ar_{d}");
             let sk = format!("claude_code:s{d}");
-            s.insert_approval(new_approval(&id, &sk, day(d), 120_000), 0).unwrap();
+            s.insert_approval(new_approval(&id, &sk, day(d), 120_000), 0)
+                .unwrap();
             s.resolve_approval_conditional(resolve_request(&id, &format!("d{d}"), day(d) + 5_000))
                 .unwrap();
             append_event_at(&s, d as u32 + 1, &sk, "command_started", day(d));
@@ -720,7 +719,10 @@ mod tests {
             count(&s, "events"),
             count(&s, "stream"),
         );
-        assert!(before.0 == 10 && before.1 == 10 && before.3 == 10 && before.4 >= 10, "{before:?}");
+        assert!(
+            before.0 == 10 && before.1 == 10 && before.3 == 10 && before.4 >= 10,
+            "{before:?}"
+        );
         // the clock jumps +10 years
         let jumped = day(10) + 10 * 365 * DAY_MS;
         let r = s
@@ -734,7 +736,10 @@ mod tests {
             count(&s, "stream"),
         );
         assert_eq!(after, before, "nothing was deleted: {r:?}");
-        assert_eq!(r.approvals_deleted + r.decisions_deleted + r.events_deleted + r.stream_deleted, 0);
+        assert_eq!(
+            r.approvals_deleted + r.decisions_deleted + r.events_deleted + r.stream_deleted,
+            0
+        );
         // the same data at a plausible later date is cleaned by the normal rules (the guard is not a no-op switch)
         let r = s
             .run_retention(day(10) + 2 * DAY_MS, &RetentionConfig::default())
@@ -742,7 +747,9 @@ mod tests {
         assert_eq!(r.approvals_deleted, 0, "still inside every window: {r:?}");
         // and an empty database has nothing to guard
         let empty = Store::open_in_memory().unwrap();
-        empty.run_retention(jumped, &RetentionConfig::default()).unwrap();
+        empty
+            .run_retention(jumped, &RetentionConfig::default())
+            .unwrap();
     }
 
     #[test]

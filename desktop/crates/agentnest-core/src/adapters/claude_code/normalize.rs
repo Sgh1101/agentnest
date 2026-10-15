@@ -18,7 +18,8 @@ use serde_json::{json, Map, Value};
 use thiserror::Error;
 
 use crate::normalize::hook::{
-    count_field, first_line, int_field, raw_text, str_field, tool_input_with_truncation_marker, Hook,
+    count_field, first_line, int_field, raw_text, str_field, tool_input_with_truncation_marker,
+    Hook,
 };
 use crate::normalize::path;
 use crate::normalize::post::{build_event, EventDraft};

@@ -5,7 +5,7 @@
 //! # Redacted formatting
 //!
 //! The daemon's own code only logs identifiers, lengths and error codes (security.md 8.2); on top of that **every line
-//! passes through the shared masker** ([`crate::redact::mask_keep_long_tokens`]) before it reaches the file, so a secret
+//! passes through the shared masker** ([`crate::redact::mask`], long-token rule included) before it reaches the file, so a secret
 //! that a future log statement or a dependency's message carries (`Authorization: Bearer ...`, `password=...`, a URL
 //! with credentials) is replaced by `<redacted>`. Request bodies are never logged at any level.
 //!
@@ -24,7 +24,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::MakeWriter;
 
 use crate::config::LogLevel;
-use crate::redact::mask_keep_long_tokens;
+use crate::redact::mask;
 
 /// Files are `agentnest.<date>.log`.
 pub const LOG_FILE_PREFIX: &str = "agentnest";
@@ -71,7 +71,8 @@ struct RedactingWriter<W: Write> {
 impl<W: Write> RedactingWriter<W> {
     fn emit(&mut self, line: &[u8]) -> io::Result<()> {
         let text = String::from_utf8_lossy(line);
-        let masked = mask_keep_long_tokens(&text);
+        // the full masker, long-token rule included: device tokens are bare base64url without any prefix
+        let masked = mask(&text);
         self.inner.write_all(masked.text.as_bytes())
     }
 
@@ -176,7 +177,9 @@ mod tests {
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(request_id = "ar_1", "approval request opened");
             tracing::debug!("a debug line below the level");
-            tracing::warn!("login password=hunter2hunter2 and Authorization: Bearer abcdefgh12345678");
+            tracing::warn!(
+                "login password=hunter2hunter2 and Authorization: Bearer abcdefgh12345678"
+            );
             tracing::error!(
                 url = "https://user:s3cr3tpw@example.com/x?token=ZZZ",
                 "request failed"
@@ -184,8 +187,14 @@ mod tests {
         });
         drop(guard); // flush
         let text = read_logs(dir.path());
-        assert!(text.contains("approval request opened") && text.contains("request_id"), "{text}");
-        assert!(!text.contains("below the level"), "the level is honoured: {text}");
+        assert!(
+            text.contains("approval request opened") && text.contains("request_id"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("below the level"),
+            "the level is honoured: {text}"
+        );
         for secret in ["hunter2hunter2", "abcdefgh12345678", "s3cr3tpw", "ZZZ"] {
             assert!(!text.contains(secret), "{secret} leaked: {text}");
         }
@@ -197,7 +206,9 @@ mod tests {
             .collect();
         // agentnest.2026-10-15.log
         assert!(
-            names.iter().any(|n| n.starts_with("agentnest.") && n.ends_with(".log") && n.len() > 15),
+            names
+                .iter()
+                .any(|n| n.starts_with("agentnest.") && n.ends_with(".log") && n.len() > 15),
             "{names:?}"
         );
     }

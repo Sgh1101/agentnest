@@ -56,6 +56,10 @@ pub mod actions {
     pub const RETENTION_PRUNED: &str = "retention_pruned";
     /// The daemon started.
     pub const DAEMON_STARTED: &str = "daemon_started";
+    /// The collector could not get its preferred hook port (another process holds it).
+    pub const HOOK_PORT_UNAVAILABLE: &str = "hook_port_unavailable";
+    /// The daemon rewrote the HTTP hooks to the new collector port (`hooks.auto_reinstall_on_port_change`).
+    pub const HOOKS_REPOINTED: &str = "hooks_repointed";
 }
 
 /// `approval_audit.action` values written outside the store transitions.

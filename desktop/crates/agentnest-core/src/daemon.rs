@@ -80,6 +80,17 @@ pub const HOOK_PORT_FALLBACKS: std::ops::RangeInclusive<u16> = 47833..=47840;
 /// Fallback ports of the WSS listener when 47832 is taken.
 pub const LINK_PORT_FALLBACKS: std::ops::RangeInclusive<u16> = 47841..=47848;
 
+/// The collector could not get its preferred hook port (somebody else holds it) and listens on a fallback port. The HTTP
+/// hooks in `settings.json` still point at the preferred one, where an HTTP hook cannot tell the daemon from the program
+/// that holds it (docs/security.md 1.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HookPortProblem {
+    /// The port the hooks were installed for / the daemon asked for.
+    pub wanted: u16,
+    /// The port the collector actually listens on.
+    pub bound: u16,
+}
+
 /// Errors of starting the daemon.
 #[derive(Debug, Error)]
 pub enum DaemonError {
@@ -553,6 +564,7 @@ struct Inner {
     http_server: Mutex<Option<HttpServer>>,
     link_server: tokio::sync::Mutex<Option<LinkServer>>,
     hook_port: u16,
+    hook_port_problem: Option<HookPortProblem>,
     wss_port: Mutex<u16>,
     shutdown_tx: watch::Sender<bool>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -570,11 +582,15 @@ fn generate_hook_token() -> Result<HookToken, DaemonError> {
     Ok(HookToken::new(format!("an_hk_{}", b64url_encode(&raw))))
 }
 
+/// `daemon.json`, read by `agentnest-hook`. `approval_ttl_s` (the EFFECTIVE TTL) lets the CLI wait `ttl + 28 s` for a
+/// held `PermissionRequest`; without it the CLI would assume 120 s and give up on a 180 s TTL while the daemon still waits.
 #[derive(Serialize, Deserialize)]
 struct DaemonJson {
     hook_port: u16,
     wss_port: u16,
     hook_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approval_ttl_s: Option<u32>,
 }
 
 fn read_daemon_json_token(path: &std::path::Path) -> Option<HookToken> {
@@ -658,9 +674,16 @@ impl Inner {
             .ttl_override_ms
             .unwrap_or(i64::from(ttl_s) * 1000);
         self.broker_settings.set_ttl_ms(ttl_ms);
-        self.link_policy
+        let previous = self
+            .link_policy
             .effective_ttl_s
-            .store(ttl_s, Ordering::Relaxed);
+            .swap(ttl_s, Ordering::Relaxed);
+        if previous != ttl_s {
+            // the relay CLI reads the TTL from daemon.json
+            if let Err(e) = self.write_daemon_json() {
+                tracing::warn!(error = %e, "could not update daemon.json");
+            }
+        }
     }
 
     fn apply_policy(&self, cfg: &AppConfig) {
@@ -706,6 +729,7 @@ impl Inner {
             hook_port: self.hook_port,
             wss_port: *lock(&self.wss_port),
             hook_token: token.expose().to_owned(),
+            approval_ttl_s: Some(self.link_policy.effective_ttl_s.load(Ordering::Relaxed)),
         };
         let text = serde_json::to_vec_pretty(&v).map_err(std::io::Error::other)?;
         crate::identity::keywrap::write_user_only(
@@ -1145,6 +1169,11 @@ impl Daemon {
             http_server: Mutex::new(Some(http_server)),
             link_server: tokio::sync::Mutex::new(None),
             hook_port,
+            hook_port_problem: (options.hook_port != 0 && hook_port != options.hook_port)
+                .then_some(HookPortProblem {
+                    wanted: options.hook_port,
+                    bound: hook_port,
+                }),
             wss_port: Mutex::new(0),
             shutdown_tx,
             tasks: Mutex::new(Vec::new()),
@@ -1161,6 +1190,9 @@ impl Daemon {
             .audit
             .log(ACTOR_SYSTEM, actions::DAEMON_STARTED, None, None)
             .await;
+        tracing::info!(hook_port, "agentnest daemon started");
+        inner.handle_hook_port_problem(&config).await;
+        inner.refresh_http_approval_gate();
         inner.init_adapter_status(&config).await;
         inner.spawn_timers();
         inner.run_retention().await;
@@ -1178,6 +1210,77 @@ impl Daemon {
 }
 
 impl Inner {
+    /// The port of the installed HTTP hooks, if HTTP hooks are installed.
+    fn installed_http_port(&self) -> Option<u16> {
+        self.settings_path()
+            .and_then(|p| claude_install::inspect(&p).port)
+    }
+
+    /// `PermissionRequest`s over HTTP hooks are answered only while the installed HTTP hooks point at the port the
+    /// collector listens on (see [`HttpSettings::http_approvals_enabled`]). No HTTP hooks installed: nothing to protect.
+    fn refresh_http_approval_gate(&self) {
+        let ok = self
+            .installed_http_port()
+            .is_none_or(|p| p == self.hook_port);
+        let was = self
+            .http_settings
+            .http_approvals_enabled
+            .swap(ok, Ordering::Relaxed);
+        if was && !ok {
+            tracing::error!(
+                installed = ?self.installed_http_port(),
+                listening = self.hook_port,
+                "hook_port_unavailable: approvals over HTTP hooks are disabled until the hooks point at the collector port"
+            );
+            self.bus.emit(DaemonEvent::Error {
+                message: format!(
+                    "hook_port_unavailable: the installed HTTP hooks point at another port than {}; approvals over HTTP hooks are off (reinstall the hooks, or use command hooks)",
+                    self.hook_port
+                ),
+            });
+        }
+    }
+
+    /// Start-up policy for a collector that had to take a fallback port.
+    async fn handle_hook_port_problem(&self, cfg: &AppConfig) {
+        let Some(problem) = self.hook_port_problem else {
+            return;
+        };
+        tracing::error!(
+            wanted = problem.wanted,
+            bound = problem.bound,
+            "hook_port_unavailable: another process holds the preferred hook port"
+        );
+        self.bus.emit(DaemonEvent::Error {
+            message: format!(
+                "hook_port_unavailable: port {} is held by another process; the collector listens on {}. HTTP hooks cannot authenticate the daemon, so use command hooks (agentnest-hook) or reinstall the hooks",
+                problem.wanted, problem.bound
+            ),
+        });
+        self.audit
+            .log(
+                ACTOR_SYSTEM,
+                actions::HOOK_PORT_UNAVAILABLE,
+                None,
+                Some(serde_json::json!({"wanted": problem.wanted, "bound": problem.bound})),
+            )
+            .await;
+        // opt-in only: rewrite the HTTP hooks to the port the collector really has
+        if cfg.hooks.auto_reinstall_on_port_change && self.installed_http_port().is_some() {
+            match self
+                .hooks_install(HookAgent::ClaudeCode, HooksMode::Http)
+                .await
+            {
+                Ok(_) => {
+                    self.audit
+                        .log(ACTOR_SYSTEM, actions::HOOKS_REPOINTED, None, None)
+                        .await;
+                }
+                Err(e) => tracing::warn!(error = %e, "could not repoint the HTTP hooks"),
+            }
+        }
+    }
+
     async fn init_adapter_status(&self, cfg: &AppConfig) {
         let installed = self
             .settings_path()
@@ -1275,7 +1378,11 @@ impl Inner {
             iv.tick().await;
             loop {
                 tokio::select! {
-                    _ = iv.tick() => { let cfg = me.config(); me.apply_ttl(&cfg); }
+                    _ = iv.tick() => {
+                        let cfg = me.config();
+                        me.apply_ttl(&cfg);
+                        me.refresh_http_approval_gate();
+                    }
                     _ = stop.changed() => return,
                 }
             }
@@ -1415,7 +1522,15 @@ impl Inner {
                     )
                     .await;
                 self.apply_ttl(&cfg);
-                let warnings = report.warnings.iter().map(|w| w.message_ko(port)).collect();
+                self.refresh_http_approval_gate();
+                let mut warnings: Vec<String> =
+                    report.warnings.iter().map(|w| w.message_ko(port)).collect();
+                if let Some(p) = self.hook_port_problem {
+                    warnings.push(format!(
+                        "기본 포트 {}를 다른 프로그램이 쓰고 있어 훅이 포트 {}를 가리켜요. HTTP 훅은 응답을 검증할 수 없으니, 그 프로그램이 의심되면 명령(CLI) 훅으로 전환하세요.",
+                        p.wanted, p.bound
+                    ));
+                }
                 Ok(self.hooks_report(
                     true,
                     report.path.display().to_string(),
@@ -1449,6 +1564,7 @@ impl Inner {
                     )
                     .await;
                 self.apply_ttl(&self.config());
+                self.refresh_http_approval_gate();
                 Ok(self.hooks_report(false, report.path.display().to_string(), vec![], None))
             }
         }
@@ -1477,6 +1593,14 @@ impl Inner {
                     if eff < cfg.approval.ttl_s {
                         warnings.push(format!(
                             "훅 timeout 이 {t}초라 TTL 이 {eff}초로 제한돼요 · 훅 다시 설치"
+                        ));
+                    }
+                }
+                if let (Some(p), Some(port)) = (self.hook_port_problem, i.port) {
+                    if port != self.hook_port {
+                        warnings.push(format!(
+                            "훅이 포트 {port}를 가리키는데 수집기는 {}에서 듣고 있어요(기본 포트 {}를 다른 프로그램이 점유). HTTP 훅 승인은 꺼져 있어요 · 훅 다시 설치 또는 명령(CLI) 훅 사용",
+                            self.hook_port, p.wanted
                         ));
                     }
                 }
@@ -1595,8 +1719,22 @@ impl Inner {
 
     async fn rotate_hook_token(&self) -> Result<(), CommandError> {
         let fresh = generate_hook_token().map_err(|_| CommandError::Internal)?;
+        // Installed HTTP hooks carry the token as a literal header: they are re-merged FIRST with the new token (an
+        // installed hook with a dead token would be a 401 on every event - a total deny with `onFailure: block`). If
+        // the merge fails nothing has changed yet and the old token stays valid.
+        let http_installed = self.installed_http_port().is_some();
+        let old = std::mem::replace(&mut *lock(&self.hook_token), fresh.clone());
+        if http_installed {
+            if let Err(e) = self
+                .hooks_install(HookAgent::ClaudeCode, HooksMode::Http)
+                .await
+            {
+                *lock(&self.hook_token) = old;
+                tracing::warn!(error = %e, "hook token not rotated: settings.json could not be updated");
+                return Err(e);
+            }
+        }
         self.guard.tokens.rotate(&fresh);
-        *lock(&self.hook_token) = fresh;
         self.write_daemon_json()
             .map_err(|_| CommandError::Internal)?;
         self.store_identity_row(None).await;
@@ -1808,6 +1946,12 @@ impl DaemonHandle {
     /// The loopback collector port.
     pub fn hook_port(&self) -> u16 {
         self.inner.hook_port
+    }
+
+    /// `Some` if the collector had to take a fallback port because the preferred one is held by another process
+    /// (`hook_port_unavailable`).
+    pub fn hook_port_problem(&self) -> Option<HookPortProblem> {
+        self.inner.hook_port_problem
     }
 
     /// The WSS listener address, if it runs.

@@ -233,7 +233,7 @@ struct Pattern {
 
 /// The masking patterns of security.md 8.3, in fixture order (order matters: the generic keyword rule runs second, so
 /// the header rule before it can still see `Authorization: Bearer <value>` as a whole).
-const PATTERN_SOURCES: [(&str, &str); 17] = [
+const PATTERN_SOURCES: [(&str, &str); 18] = [
     (
         "auth_header",
         r#"(?i)(?<pre>\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token|digest|negotiate)\s+)[^\s"']+"#,
@@ -242,6 +242,8 @@ const PATTERN_SOURCES: [(&str, &str); 17] = [
         "keyword_assignment",
         r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\s*[:=]\s*\S+",
     ),
+    // AgentNest's own prefixed tokens (hook token `an_hk_...`): never in a log or on a card, whatever they sit next to
+    ("agentnest_token", r"\ban_hk_[A-Za-z0-9_-]{16,}"),
     ("aws_access_key", r"AKIA[0-9A-Z]{16}"),
     ("github_token", r"gh[pousr]_[A-Za-z0-9]{36,}"),
     ("sk_token", r"sk-[A-Za-z0-9]{20,}"),
@@ -294,7 +296,8 @@ const PATTERN_SOURCES: [(&str, &str); 17] = [
 
 /// Patterns that are safe to apply to **file paths**: everything except the keyword-ish rules (a path such as
 /// `docs/token-rotation.md` is not an assignment) and the 40+ character rule (long POSIX paths are not secrets).
-const PATH_SAFE_PATTERNS: [&str; 6] = [
+const PATH_SAFE_PATTERNS: [&str; 7] = [
+    "agentnest_token",
     "aws_access_key",
     "github_token",
     "sk_token",
@@ -506,7 +509,10 @@ fn is_invisible_or_control(c: char) -> bool {
 /// Removes the characters of [`is_invisible_or_control`] except `\n` and `\t`. Used **only to make masking robust**: a
 /// zero-width character inside `pass\u{200B}word=hunter2` must not keep the keyword rule from matching.
 fn without_invisibles(input: &str) -> std::borrow::Cow<'_, str> {
-    if !input.chars().any(|c| is_invisible_or_control(c) && c != '\n' && c != '\t') {
+    if !input
+        .chars()
+        .any(|c| is_invisible_or_control(c) && c != '\n' && c != '\t')
+    {
         return std::borrow::Cow::Borrowed(input);
     }
     std::borrow::Cow::Owned(
@@ -859,11 +865,18 @@ mod tests {
                 ("keep_long", mask_keep_long_tokens(input)),
             ] {
                 assert!(got.redacted, "{label}: {input}");
-                assert!(!got.text.contains(secret), "{label} leaked {secret:?}: {}", got.text);
+                assert!(
+                    !got.text.contains(secret),
+                    "{label} leaked {secret:?}: {}",
+                    got.text
+                );
             }
         }
         // the readable part of the command survives where the rule keeps context
-        assert_eq!(mask("mysql -u root -phunter2 db").text, "mysql -u root -p<redacted> db");
+        assert_eq!(
+            mask("mysql -u root -phunter2 db").text,
+            "mysql -u root -p<redacted> db"
+        );
         assert_eq!(
             mask("git clone https://user:hunter2@github.com/o/r.git").text,
             "git clone https://user:<redacted>@github.com/o/r.git"
@@ -994,7 +1007,10 @@ mod tests {
         // bidi override, zero width, ESC + cursor control, CR: all printable now
         let tricky = "echo safe \u{202e}fdsa\u{200b}\u{1b}[2K\rrm -rf x";
         let shown = escape_display_text(tricky, false);
-        assert_eq!(shown, "echo safe \\u{202e}fdsa\\u{200b}\\u{1b}[2K\\rrm -rf x");
+        assert_eq!(
+            shown,
+            "echo safe \\u{202e}fdsa\\u{200b}\\u{1b}[2K\\rrm -rf x"
+        );
         for c in shown.chars() {
             assert!(!c.is_control() || c == '\n' || c == '\t', "{c:?}");
             assert!(!is_bidi_control(c));
@@ -1003,11 +1019,18 @@ mod tests {
         assert_eq!(escape_display_text("a\n\tb", false), "a\n\tb");
         assert_eq!(escape_display_text("a\n\tb", true), "a  b");
         // plain text (incl. Korean, emoji, normal punctuation) is untouched
-        for ok in ["cargo test -p agentnest-core", "한글 명령 😀", "C:\\dev\\x y"] {
+        for ok in [
+            "cargo test -p agentnest-core",
+            "한글 명령 😀",
+            "C:\\dev\\x y",
+        ] {
             assert_eq!(escape_display_text(ok, false), ok);
         }
         // other format characters and the C1 range
-        assert_eq!(escape_display_text("\u{feff}x\u{85}y\u{2028}", true), "\\u{feff}x\\u{85}y\\u{2028}");
+        assert_eq!(
+            escape_display_text("\u{feff}x\u{85}y\u{2028}", true),
+            "\\u{feff}x\\u{85}y\\u{2028}"
+        );
     }
 
     #[test]

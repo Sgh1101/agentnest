@@ -11,7 +11,7 @@
 | 채널 | 용도 | 상태 |
 | --- | --- | --- |
 | `type: "http"` 훅 → `POST http://127.0.0.1:47831/v1/hooks/claude-code` | 실시간 이벤트 + 원격 승인(**1차**) | [검증] v2.1.63+. 요청 본문 = command 훅 stdin JSON, 응답 본문 = 출력 JSON. 셸을 쓰지 않으므로 Git Bash/PowerShell 함정 회피 |
-| `agentnest-hook claude-code`(command 훅, exec form) | HTTP 훅이 금지된 환경(`allowedHttpHookUrls` 정책)·디버깅 폴백. 같은 엔드포인트로 POST | [검증] 구조 |
+| `agentnest-hook claude-code`(command 훅, exec form) | HTTP 훅이 금지된 환경(`allowedHttpHookUrls` 정책)·디버깅 폴백, **그리고 훅 포트 선점(A3)으로부터 보호가 필요한 사용자의 권장 경로**: 같은 엔드포인트로 POST하되 토큰 대신 일회용 증명을 보내고 **서명된 응답만** 출력한다(§3, `security.md` §1.2) | [검증] 구조 |
 | statusLine 커맨드 `agentnest-hook statusline` → `POST /v1/statusline/claude-code` | AI 생성 세션 제목(`session_name`)·비용·컨텍스트 사용률·PR 번호 — **훅에는 없는 유일한 공식 소스** | [검증] statusline 문서. 선택 설치(기존 `statusLine`이 없을 때만) |
 | transcript JSONL 백필 | 세션 복구·AI 제목 추출. 형식 비공개 | [실측 v2.1.300만] Phase 1 **off**, Phase 2 검토 |
 
@@ -62,8 +62,8 @@
 | 규칙 | 내용 |
 | --- | --- |
 | 병합 | 기존 파일을 파싱해 각 `hooks.<Event>` 배열에서 `url`이 `http://127.0.0.1:*/v1/hooks/claude-code`인 항목만 제거 후 새 항목 **append**. 다른 사용자 훅은 절대 건드리지 않음. 제거도 동일 필터 |
-| 원자성·백업 | 임시 파일 작성 → `settings.json.agentnest-backup-<ts>` 1회 백업 → 원자적 교체. JSONC/주석이 있으면 설치 중단 + 안내 |
-| 토큰 | `an_hk_` + 32바이트 base64url. `%LOCALAPPDATA%\AgentNest\daemon.json`(`{"hook_port","wss_port","hook_token"}`, 사용자 ACL)과 settings.json에 기록, DB에는 해시 |
+| 원자성·백업 | 임시 파일 작성 → `settings.json.agentnest-backup-<ts>` 백업(**기존 백업을 절대 덮어쓰지 않음**: 이름이 겹치면 `-1`, `-2`…; 첫 백업 = 사용자 원본이 보존됨) → 원자적 교체. `settings.json`이 **심볼릭 링크**면 링크를 유지하고 대상 파일을 교체, 기존 파일 권한(mode)을 유지. JSONC/주석이 있으면 설치 중단 + 안내. 재직렬화가 바꿀 수 있는 것(같은 키 중복 → 마지막 값만, 16자리 이상 정수 반올림)은 감지해 `HooksReport.warnings`에 경고 |
+| 토큰 | `an_hk_` + 32바이트 base64url. `%LOCALAPPDATA%\AgentNest\daemon.json`(`{"hook_port","wss_port","hook_token","approval_ttl_s"}` — `approval_ttl_s`는 **유효 TTL**, 사용자 ACL)과 (HTTP 훅 모드에서만) settings.json에 기록, DB에는 해시. 토큰 재발급은 settings.json의 HTTP 훅도 새 토큰으로 재병합한다(`security.md` §10) |
 | `PermissionRequest.timeout` | `approval.ttl_s + 30`(기본 150). 설치 시점에 고정되는 값이다 |
 | **유효 TTL 클램프** | TTL은 런타임 설정(60~180)이지만 훅 `timeout`은 설치 때 고정되므로, TTL만 올리고 재설치하지 않으면 Claude Code가 데몬이 응답하기 전에 훅을 취소한다. 그래서 데몬은 시작 시·`approval.ttl_s` 변경 시·60초 주기로 `settings.json`의 AgentNest `PermissionRequest` 항목의 `timeout`을 **읽기 전용으로 파싱**해 `effective_ttl = min(approval.ttl_s, installed_timeout − 30)`을 쓴다(항목이 없거나 읽을 수 없으면 120). `ttl_seconds`/`expires_at`/`welcome.limits.approval_ttl_s`는 유효 TTL이다. 설정 화면은 설정 TTL > 유효 TTL이면 "훅 `timeout`이 {n}초라 TTL이 {m}초로 제한돼요 · 훅 다시 설치"를 경고하고, TTL 저장 시 재설치(1클릭)를 제안한다(`settings.json` 수정은 사용자 동작으로만; 무음 자동 재설치 금지). 재설치되면 다음 점검에서 클램프가 풀린다 |
 | `onFailure` | 기본 미지정(= `continue`). `approval.daemon_down_deny=true`일 때만 `"onFailure": "block"` 기록(옵트인) |
@@ -71,7 +71,7 @@
 | `statusLine` | 기존 값이 없을 때만 설치(단일 슬롯). 있으면 "AI 제목/비용 수집 비활성" 안내 |
 | `allowedHttpHookUrls` | 사용자가 설정해 둔 경우 `http://127.0.0.1:47831/*` 추가 필요를 안내(자동 수정 금지) |
 | trust 안내 | 설치 완료 화면·세션 카드에 "이 프로젝트에서 이벤트가 오지 않으면 Claude Code의 폴더 신뢰(trust) 확인을 수락하세요" |
-| 포트 충돌 | 47831 점유 시 47833~47840 순으로 시도하고 **훅 URL을 갱신(재설치)**, 데스크톱 UI에 표시 |
+| 포트 충돌 | 47831 점유 시 47833~47840 순으로 폴백하되 **조용히 넘어가지 않는다**: `DaemonEvent::Error("hook_port_unavailable: …")`·감사 `hook_port_unavailable`·`DaemonHandle::hook_port_problem()`·`HooksReport` 경고. 설치된 HTTP 훅이 가리키는 포트와 수집기 포트가 다르면 **HTTP 채널의 `PermissionRequest`에 응답하지 않는다(204)**. 훅 URL 갱신(재설치)은 사용자 동작이거나 옵트인 `hooks.auto_reinstall_on_port_change`일 때만(감사 `hooks_repointed`). HTTP 훅은 응답을 검증할 수 없으므로 선점된 포트에서는 위조 `allow`가 가능하다 — 이 잔여 위험과 CLI 훅 권장은 `security.md` §1.2. Windows `SO_EXCLUSIVEADDRUSE`는 `forbid(unsafe_code)` 때문에 미적용 |
 | 데몬 미실행 소음 | 이벤트마다 `hook error` 알림이 뜨는지 Phase 0 A4에서 확인. 심하면 "데몬 종료 시 AgentNest 훅 항목 제거" 옵션(기본 off). `disableAllHooks`는 전체를 끄므로 사용 금지 |
 
 ---
@@ -90,8 +90,9 @@ HTTP 클라이언트: 훅은 `http://127.0.0.1`에만 말하므로 TLS가 필요
 
 1. stdout에는 **데몬 응답 본문만**(JSON 객체 1개) 또는 **아무것도** 쓰지 않는다(stdout 전체가 하나의 JSON 객체여야 파싱됨).
 2. 종료 코드는 **항상 0**. 데몬 미실행·연결 실패·타임아웃·401 → stdout 비움 + exit 0(= 결정 없음). exit 2는 어떤 경우에도 쓰지 않는다(`PermissionRequest`에서는 무시, `PreToolUse` 등에서는 차단이 되어 의도치 않은 fail-closed).
-3. HTTP 타임아웃: `PermissionRequest` = `ttl + 28`s(데몬 TTL보다 길게), `SessionEnd` 0.8s, 그 외 4s. CLI는 결정을 만들지 않는다(패스스루만).
-4. 32 KiB를 넘는 문자열 필드(`tool_input.content`, `tool_response.stdout` 등)는 **절단**하고 `_agentnest_truncated: ["tool_input.content"]`를 추가(데몬도 동일 상한).
+3. HTTP 타임아웃: `PermissionRequest` = `ttl + 28`s(데몬 TTL보다 길게; `ttl`은 `daemon.json`의 `approval_ttl_s` — 유효 TTL, 없으면 120), `SessionEnd` 0.8s, 그 외 4s. CLI는 결정을 만들지 않는다(패스스루만).
+3a. **응답 인증**: CLI는 토큰을 보내지 않는다. 요청마다 `X-AgentNest-Nonce`(무작위 18바이트 base64url)·`X-AgentNest-Ts`(ms)·`X-AgentNest-Proof = HMAC-SHA256(키, "req"‖method‖path‖ts‖nonce)`를 보낸다(키 = `SHA-256("agentnest-hook-hmac-v1\0"‖token)`, DB에 저장된 토큰 해시와 다른 값). 데몬은 증명·시계 오차(±120초)·nonce 1회성을 검사하고 응답에 `X-AgentNest-Sig = HMAC-SHA256(키, "resp"‖nonce‖status‖body)`를 붙인다. **CLI는 서명이 검증되는 응답만 출력**한다 — 서명이 없거나 다르거나 다른 요청의 것이면 아무것도 출력하지 않고 exit 0(= 결정 없음). `doctor`는 서명 여부를 보고한다. 정의: `agentnest-protocol::hook_auth`. (HTTP 훅은 이 보호를 받을 수 없다 — `security.md` §1.2.)
+4. 32 KiB를 넘는 문자열 필드(`tool_input.content`, `tool_response.stdout` 등)는 **절단**하고 `_agentnest_truncated: ["tool_input.content"]`를 추가(데몬도 동일 상한). **데몬은 절단된 입력을 신뢰하지 않는다**: `tool_input` 안의 절단 표시(`_agentnest_truncated`의 `tool_input…` 항목)이거나 문자열 필드가 32 KiB(−4바이트: 다바이트 문자 경계 절단 여유) 이상이면 위험 등급을 **`critical` / `input_too_large`** 로 올린다(`PreToolUse`는 `ask`, `PermissionRequest`는 빨간 카드). 위험 분류가 보지 못한 꼬리에 위험한 명령이 있을 수 있기 때문이다.
 5. Windows 등록은 exec form: `{"type":"command","command":"C:\\Program Files\\AgentNest\\agentnest-hook.exe","args":["claude-code"],"timeout":150}` — 셸 미사용(프로필 출력 오염 방지; `.exe`만 spawn 가능).
 6. Codex 입력(`turn_id`, `model`, `permission_mode` 포함)은 변환하지 않는다. 데몬이 경로 + `hook_event_name`으로 구분한다. **Codex `PreToolUse`에 대해 CLI는 절대 Claude 스타일 `ask` 응답을 전달하지 않는다**(데몬이 `/v1/hooks/codex`에서는 결정을 생성하지 않으므로 자연히 보장되지만, CLI도 `/codex` 경로 응답에서 `permissionDecision` 키를 발견하면 버리고 빈 stdout으로 끝낸다 — 이중 방어).
 
@@ -103,11 +104,11 @@ HTTP 클라이언트: 훅은 `http://127.0.0.1`에만 말하므로 TLS가 필요
 | --- | --- | --- | --- |
 | `POST /v1/hooks/claude-code` | `X-AgentNest-Token` | 훅 입력 JSON 그대로 | 관찰 이벤트: `204`. `PermissionRequest`: 결정 있으면 `200 application/json`, 없으면 `204`. `PreToolUse`: critical + `force_ask_on_critical`이면 `200 {ask}`, 아니면 `204` |
 | `POST /v1/hooks/codex` | 동일 | Codex 훅 입력 | `codex.md` §5 |
-| `POST /v1/statusline/claude-code` | 동일 | statusLine stdin JSON | `204` |
+| `POST /v1/statusline/claude-code` | 동일 | statusLine stdin JSON | `204`(CLI는 2xx + 유효한 서명이면 상태 1줄 `AgentNest`를 출력) |
 | `GET /v1/health` | 없음 | — | `{"ok":true,"version":"0.1.0"}` (비밀 없음) |
 | `GET /v1/daemon` | 토큰 | — | `{"hook_port":47831,"wss_port":47832,"uptime_s":…}` |
 
-가드(`security.md` I8): `127.0.0.1` + `[::1]` 바인드 고정, `Origin`/`Sec-Fetch-Site` 존재 시 403, 토큰 `subtle` 상수시간 비교 실패 401(본문 폐기, 토큰 값 미기록), 본문 1 MiB 초과 413, 관찰 이벤트 200건/초 초과 429(`PermissionRequest` 제외). 관찰 이벤트 처리 목표 **< 10 ms**(큐에 넣고 즉시 204). 요청 본문은 절대 전체 로깅하지 않는다.
+가드(`security.md` I8): `127.0.0.1` + `[::1]` 바인드 고정, `Origin`/`Sec-Fetch-Site` 존재 시 403, `Host`는 루프백 리터럴 + 숫자 포트만(userinfo 트릭 403), 토큰 `subtle` 상수시간 비교 **또는 CLI 증명(§3a)** 실패 401(본문 폐기, 토큰 값 미기록), 본문 1 MiB 초과 413, 관찰 이벤트 200건/초 초과 429(`PermissionRequest` 제외). 관찰 이벤트 처리 목표 **< 10 ms**(큐에 넣고 즉시 204). 요청 본문은 절대 전체 로깅하지 않는다.
 
 중복 제거(**관찰 이벤트용**): `dedupe_key = sha256(session_id | hook_event_name | tool_use_id ?? sha256(body))`, 2초 창 내 동일 키 무시. `PermissionRequest`는 이 규칙으로 버리지 않고 §6 [6]의 **승인 카드 병합 규칙**(`agent_id` 포함, 2초 창)을 따른다(같은 훅이 사용자+프로젝트 settings에 중복 정의될 수 있음; 문서상 "동일 핸들러는 한 번만 실행"이지만 URL이 다르게 보일 수 있어 방어 — Phase 0 A10).
 
@@ -186,7 +187,7 @@ Claude Code            agentnest-core (PC)                                    �
 분기(`security.md` §7 fail-closed 표가 규범):
 
 - **만료**(유효 TTL, 기본 120s): 204 → 로컬 다이얼로그. 훅 `timeout` 150은 TTL보다 30초 길어 **데몬이 항상 먼저** 응답한다(Claude Code가 훅을 취소하는 경로를 만들지 않음). 이 불변식은 §2의 **유효 TTL 클램프**가 TTL 설정 변경 뒤에도 유지한다.
-- **중복 병합 vs 중복 실행**: 병합은 같은 훅 호출이 user+project settings 양쪽에서 거의 동시에 도착한 경우에만 허용한다(**같은 `agent_id`, 2초 창**). 병렬 서브에이전트가 같은 명령을 낼 때는 `agent_id`가 다르므로 **카드가 둘**이고 각각의 승인이 각자의 훅 호출 하나에만 적용된다(한 번의 승인으로 두 번 실행되지 않음 — PRD Phase 3 "중복 실행 없음"과 정합). `PermissionRequest` 입력에 `agent_id`가 실제로 실리는지는 A14로 확인하며, **실리지 않으면 병합 창을 0으로**(병합하지 않음) 두어 보수적으로 카드를 나눈다.
+- **중복 병합 vs 중복 실행**: 병합은 같은 훅 호출이 user+project settings 양쪽에서 거의 동시에 도착한 경우에만 허용한다(**같은 `agent_id`, 2초 창**). 병렬 서브에이전트가 같은 명령을 낼 때는 `agent_id`가 다르므로 **카드가 둘**이고 각각의 승인이 각자의 훅 호출 하나에만 적용된다(한 번의 승인으로 두 번 실행되지 않음 — PRD Phase 3 "중복 실행 없음"과 정합). `PermissionRequest` 입력에 `agent_id`가 실제로 실리는지는 A14로 확인한다. **`agent_id`가 없는 요청의 병합 창은 항상 0이다**(코드: `Broker::open`이 `agent_id`가 없거나 빈 문자열이면 병합 창 0, 저장소도 `agent_id`가 빈 요청은 병합하지 않음): 같은 명령의 두 요청은 두 장의 카드이고 한 번의 허용이 다른 훅을 허용하지 않는다.
 - **로컬로 처리**(데스크톱 트레이/창 버튼): 즉시 204, `handed_off_local`(resolved_by=desktop). 로컬 다이얼로그가 훅 대기 중 동시에 표시되는지는 **검증 필요 (Phase 0) A2** — 이 버튼과 "폰 없음 → 즉시 204" 규칙으로 두 경우 모두 동작한다.
 - **데스크톱 허용/거부**: 폰 결정과 **같은 브로커 전이**(actor=desktop, 감사). 두 번째 allow 경로를 만들지 않는다.
 - **폰 연결 끊김**(보류 중): 10초 유예 후 204 `handed_off_local`.

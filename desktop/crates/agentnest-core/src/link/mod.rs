@@ -76,6 +76,9 @@ pub struct Timing {
     pub ack_retry_ms: u64,
     /// Number of re-sends before the delivery counts as failed (3).
     pub ack_retries: u32,
+    /// **Tests only** (0 in production): pause between a successful authentication and the registration of the
+    /// connection, to make the "revoked in between" race reproducible.
+    pub post_auth_delay_ms: u64,
 }
 
 impl Default for Timing {
@@ -87,6 +90,7 @@ impl Default for Timing {
             idle_close_ms: 90_000,
             ack_retry_ms: 5_000,
             ack_retries: 3,
+            post_auth_delay_ms: 0,
         }
     }
 }
@@ -264,7 +268,8 @@ struct AdmitAcceptor {
 impl AdmitAcceptor {
     fn admit(&self, stream: TcpStream) -> std::io::Result<GuardedStream> {
         let peer = stream.peer_addr()?;
-        let refuse = |why: &'static str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, why);
+        let refuse =
+            |why: &'static str| std::io::Error::new(std::io::ErrorKind::PermissionDenied, why);
         if self.ctx.private_sources_only && !is_private_source(peer.ip()) {
             return Err(refuse("source address is not private"));
         }
@@ -273,10 +278,12 @@ impl AdmitAcceptor {
             .admission
             .admit(peer.ip())
             .map_err(|_| refuse("connection cap or blocked address"))?;
-        self.ctx.bus.emit(DaemonEvent::Link(LinkUiEvent::PreAuthAttempt {
-            ip_masked: mask_ip(&peer.ip().to_string()),
-            at: format_ms(self.ctx.clock.now_ms()),
-        }));
+        self.ctx
+            .bus
+            .emit(DaemonEvent::Link(LinkUiEvent::PreAuthAttempt {
+                ip_masked: mask_ip(&peer.ip().to_string()),
+                at: format_ms(self.ctx.clock.now_ms()),
+            }));
         let window = Duration::from_millis(self.ctx.timing.preauth_ms);
         let accepted_at = Instant::now();
         let conn = Arc::new(AcceptedConn {
@@ -335,14 +342,20 @@ impl GuardedStream {
 impl Drop for GuardedStream {
     fn drop(&mut self) {
         let mut g = conn_map_lock(&self.map);
-        if g.get(&self.peer).is_some_and(|c| Arc::ptr_eq(c, &self.conn)) {
+        if g.get(&self.peer)
+            .is_some_and(|c| Arc::ptr_eq(c, &self.conn))
+        {
             g.remove(&self.peer);
         }
     }
 }
 
 impl AsyncRead for GuardedStream {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
         if let Err(e) = this.check_window(cx) {
             return Poll::Ready(Err(e));
@@ -352,7 +365,11 @@ impl AsyncRead for GuardedStream {
 }
 
 impl AsyncWrite for GuardedStream {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
         if let Err(e) = this.check_window(cx) {
             return Poll::Ready(Err(e));
