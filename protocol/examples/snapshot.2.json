@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "id": "01929f2a-7c00-7b3c-9e4d-00000000007d",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "seq": 1842,
+  "payload": {
+    "sessions": [],
+    "pending_approvals": [],
+    "recent_errors": [],
+    "recent_events": [],
+    "adapters": [],
+    "pending_approval_ids_complete": [
+      "ar_01929f1a-6c2e-7b3c-9e4d-00000000001a",
+      "ar_01929f1b-0a11-7b3c-9e4d-00000000002b"
+    ],
+    "pending_followup": 2,
+    "truncated": {
+      "sessions": false,
+      "pending_approvals": true,
+      "recent_events": true,
+      "recent_events_detail": true,
+      "approval_previews": true
+    }
+  }
+}

@@ -1,0 +1,2151 @@
+{
+  "_format": {
+    "description": "AgentState derivation (docs/protocol.md 5.4): pure function reduce(prev, event, now). Each case starts from a fresh reducer (state idle, no pending approvals, turn_active false, last_event_at = t 0). Steps are applied in order: first all timers up to t_ms fire, then `input` (null = timers only) is applied, then the reducer output must contain every key listed in `expect`.",
+    "input": {
+      "kind": "AgentEvent.kind",
+      "detail": "AgentEvent.detail subset",
+      "actor": "AgentEvent.actor subset",
+      "channel": "AgentEvent.source.channel (defaults to claude_code.hook.http)"
+    },
+    "expect": {
+      "state": "AgentState string",
+      "stale": "bool",
+      "ended": "bool",
+      "turn_active": "bool",
+      "pending_approval_ids": "request ids in arrival order"
+    },
+    "conventions": [
+      "Underlying (base) state follows the table; error latches (tool/command failure 5 s, test_failed 30 s, turn_failed/agent_error sticky) only overlay it, so releasing a latch reveals the base state. Pending approvals overlay everything and are the only thing that can hold awaiting_approval.",
+      "Latch expiry: a 5 s / 30 s latch is active while now < start + 5000 / 30000 ms and gone at exactly start + duration.",
+      "A 5 s latch is also cleared by the next *_started event (tool_started, command_started, test_run, subagent_started, review_started, turn_started) or prompt_submitted; a 30 s latch by test_passed, turn_completed, prompt_submitted; a sticky latch only by prompt_submitted.",
+      "A failing test run emits command_failed and test_failed; when both latches exist the longer one wins.",
+      "approval_resolved returns to the state before the first pending approval (pre_approval_state); denied_and_stopped returns idle.",
+      "Codex thread/status/changed has no AgentEvent kind of its own: the normaliser emits kind 'notification' with detail {notification_type:'codex_thread_status', status, active_flags, has_recent_items?}.",
+      "Codex fileChange items are tool_started with detail.item_type 'fileChange'; Codex hooks use detail.tool_name (UNVERIFIED C10).",
+      "command_completed, tool_completed, subagent_*, task_*, token_usage_updated, session_meta_updated and unknown notifications do not change the state.",
+      "Timers: completed -> idle after 60 s; stale = turn_active && no event for 15 min (state kept); disconnected = turn_active && 45 min, or !turn_active && 30 min without events; any event clears stale and revives a disconnected session."
+    ]
+  },
+  "cases": [
+    {
+      "name": "session_started_startup_is_idle",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "startup"
+            }
+          },
+          "expect": {
+            "state": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "name": "session_started_clear_resets",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working",
+            "turn_active": true
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "clear"
+            }
+          },
+          "expect": {
+            "state": "idle",
+            "turn_active": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "session_started_resume_keeps_previous_state",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "resume"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "session_started_resume_without_previous_is_idle",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "resume"
+            }
+          },
+          "expect": {
+            "state": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "name": "session_started_fork_and_compact_keep_state",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "fork"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "compact"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "prompt_submitted_sets_working_and_turn_active",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working",
+            "turn_active": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_test_is_testing",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "test"
+            }
+          },
+          "expect": {
+            "state": "testing"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_build_is_testing",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "build"
+            }
+          },
+          "expect": {
+            "state": "testing"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_vcs_is_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "vcs"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_shell_is_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "shell"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_network_is_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "network"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_fs_is_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "fs"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_started_package_is_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "package"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "file_modified_is_writing_code",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        }
+      ]
+    },
+    {
+      "name": "pretooluse_edit_family_is_writing_code_immediately",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "Edit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "Write"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 4000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "MultiEdit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 5000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 6000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "NotebookEdit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        }
+      ]
+    },
+    {
+      "name": "codex_file_change",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "item_type": "fileChange"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        }
+      ],
+      "description": "(Codex) item/started{fileChange}"
+    },
+    {
+      "name": "codex_hooks_apply_patch",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "apply_patch"
+            },
+            "channel": "codex.hook.cli"
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        }
+      ],
+      "description": "(Codex) hooks PreToolUse{apply_patch}; tool_name value is UNVERIFIED (Phase 0 C10)",
+      "tags": [
+        "unverified"
+      ]
+    },
+    {
+      "name": "codex_hooks_unknown_tool",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.hook.cli"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "some_future_tool"
+            },
+            "channel": "codex.hook.cli"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "(Codex) an unknown hooks tool_name does not match the writing_code row and stays working",
+      "tags": [
+        "unverified"
+      ]
+    },
+    {
+      "name": "codex_review_window",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "review_started",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "reviewing"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "review_completed",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "turn_completed",
+            "detail": {
+              "background_tasks": 0
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "completed"
+          }
+        }
+      ],
+      "description": "(Codex) enteredReviewMode -> reviewing, exitedReviewMode -> working, the following turn_completed -> completed"
+    },
+    {
+      "name": "codex_waiting_on_approval_flag",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "codex_thread_status",
+              "status": "active",
+              "active_flags": [
+                "waitingOnApproval"
+              ]
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": []
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "codex_thread_status",
+              "status": "active",
+              "active_flags": []
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "(Codex) thread/status/changed{active, [waitingOnApproval]} without a pending approval (TUI local prompt); clearing the flag restores the previous state. The normaliser encodes thread/status/changed as kind 'notification' with detail.notification_type 'codex_thread_status'."
+    },
+    {
+      "name": "codex_active_idle",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "codex_thread_status",
+              "status": "active",
+              "active_flags": [],
+              "has_recent_items": false
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "(Codex) thread/status/changed{active, []} with no recent items -> working"
+    },
+    {
+      "name": "codex_web_mcp",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "item_type": "webSearch"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "item_type": "mcpToolCall"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 4000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 5000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "item_type": "dynamicToolCall"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "codex_socket_eof",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "superseded",
+              "resolved_by": "system"
+            }
+          },
+          "expect": {
+            "state": "working",
+            "pending_approval_ids": []
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "adapter_status",
+            "detail": {
+              "status": "disconnected",
+              "mode": "daemon_observer"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "disconnected"
+          }
+        }
+      ],
+      "description": "(Codex) socket EOF: pending approvals are first superseded (step 3), then every session of that adapter becomes disconnected"
+    },
+    {
+      "name": "codex_system_error",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "agent_error",
+            "detail": {
+              "message": "systemError"
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 600000,
+          "input": null,
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 600001,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "(Codex) systemError is sticky until the next prompt"
+    },
+    {
+      "name": "file_read_once_stays_working_twice_is_reviewing",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "file_read",
+            "detail": {
+              "file_path": "a.rs"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "file_read",
+            "detail": {
+              "file_path": "b.rs"
+            }
+          },
+          "expect": {
+            "state": "reviewing"
+          }
+        }
+      ]
+    },
+    {
+      "name": "file_read_streak_is_broken_by_other_events",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "file_read",
+            "detail": {
+              "file_path": "a.rs"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "shell"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "file_read",
+            "detail": {
+              "file_path": "b.rs"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "file_read_by_explore_subagent_is_reviewing_immediately",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "file_read",
+            "detail": {
+              "file_path": "a.rs"
+            },
+            "actor": {
+              "agent_type": "Explore",
+              "is_subagent": true
+            }
+          },
+          "expect": {
+            "state": "reviewing"
+          }
+        }
+      ]
+    },
+    {
+      "name": "web_mcp_agent_tools_are_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "edit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "WebFetch"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "edit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "WebSearch"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 4000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "edit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 5000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "mcp__github__create_issue"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 6000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "edit"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 7000,
+          "input": {
+            "kind": "tool_started",
+            "detail": {
+              "tool_name": "Agent"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "approval_requested_wins_and_cannot_be_left_until_resolved",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "test"
+            }
+          },
+          "expect": {
+            "state": "testing"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 4000,
+          "input": {
+            "kind": "turn_completed",
+            "detail": {
+              "background_tasks": 0
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 5000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "allowed"
+            }
+          },
+          "expect": {
+            "state": "testing",
+            "pending_approval_ids": []
+          }
+        }
+      ],
+      "description": "after the last pending approval is resolved the state returns to pre_approval_state"
+    },
+    {
+      "name": "two_pending_approvals_need_both_resolved",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_2"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1",
+              "ar_2"
+            ]
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "allowed"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_2"
+            ]
+          }
+        },
+        {
+          "t_ms": 4000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_2",
+              "outcome": "denied"
+            }
+          },
+          "expect": {
+            "state": "working",
+            "pending_approval_ids": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "approval_denied_and_stopped_is_idle",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "denied_and_stopped"
+            }
+          },
+          "expect": {
+            "state": "idle",
+            "pending_approval_ids": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "approval_returns_to_writing_code",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "expired"
+            }
+          },
+          "expect": {
+            "state": "writing_code"
+          }
+        }
+      ]
+    },
+    {
+      "name": "approval_beats_sticky_error_and_error_returns_after",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "turn_failed",
+            "detail": {
+              "error_code": "rate_limit"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval"
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "allowed"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 4000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "error(sticky) ranks below awaiting_approval (protocol.md 5.4 priority rule)"
+    },
+    {
+      "name": "claude_needs_input_is_awaiting_input",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "agent_needs_input"
+            }
+          },
+          "expect": {
+            "state": "awaiting_input"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "codex_waiting_on_user_input_flag",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted",
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "codex_thread_status",
+              "status": "active",
+              "active_flags": [
+                "waitingOnUserInput"
+              ]
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "awaiting_input"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "codex_thread_status",
+              "status": "active",
+              "active_flags": []
+            },
+            "channel": "codex.app_server"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "permission_prompt_notification_without_request_is_awaiting_approval",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "permission_prompt"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval"
+          }
+        }
+      ],
+      "description": "supplements sandbox network prompts for which no PermissionRequest hook fires"
+    },
+    {
+      "name": "permission_prompt_notification_with_pending_approval_changes_nothing",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "approval_requested",
+            "detail": {
+              "request_id": "ar_1"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "permission_prompt"
+            }
+          },
+          "expect": {
+            "state": "awaiting_approval",
+            "pending_approval_ids": [
+              "ar_1"
+            ]
+          }
+        },
+        {
+          "t_ms": 3000,
+          "input": {
+            "kind": "approval_resolved",
+            "detail": {
+              "request_id": "ar_1",
+              "outcome": "allowed"
+            }
+          },
+          "expect": {
+            "state": "working",
+            "pending_approval_ids": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "unknown_hook_notification_changes_nothing",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "notification",
+            "detail": {
+              "notification_type": "unknown_hook:FutureEvent"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "tool_failed_is_error_for_5_seconds",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "tool_failed",
+            "detail": {
+              "tool_name": "WebFetch"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 5999,
+          "input": null,
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 6000,
+          "input": null,
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_failed_error_is_cleared_by_next_started_event",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "command_failed",
+            "detail": {
+              "command": "cargo build"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "build"
+            }
+          },
+          "expect": {
+            "state": "testing"
+          }
+        }
+      ]
+    },
+    {
+      "name": "command_failed_error_is_cleared_by_prompt",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "command_failed",
+            "detail": {
+              "command": "cargo build"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "test_failed_is_error_for_30_seconds",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "test_failed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 30999,
+          "input": null,
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 31000,
+          "input": null,
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "test_failed_is_released_by_test_passed",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "test_failed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "test_passed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "test_failed_is_released_by_turn_completed",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "test_failed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "turn_completed",
+            "detail": {
+              "background_tasks": 0
+            }
+          },
+          "expect": {
+            "state": "completed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "test_failed_is_released_by_prompt_submitted",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "test_failed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "test_failed_error_outlasts_transient_error",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "command_failed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 1001,
+          "input": {
+            "kind": "test_failed",
+            "detail": {
+              "command": "cargo test"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 7000,
+          "input": null,
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 31001,
+          "input": null,
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "a failing test emits command_failed and test_failed; the longer 30 s latch wins"
+    },
+    {
+      "name": "turn_failed_is_sticky_until_next_prompt",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "turn_failed",
+            "detail": {
+              "error_code": "rate_limit"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 2000,
+          "input": {
+            "kind": "command_started",
+            "detail": {
+              "command_class": "shell"
+            }
+          },
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 600000,
+          "input": null,
+          "expect": {
+            "state": "error"
+          }
+        },
+        {
+          "t_ms": 600001,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "turn_completed_without_background_tasks_is_completed_then_idle_after_60s",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "turn_completed",
+            "detail": {
+              "background_tasks": 0
+            }
+          },
+          "expect": {
+            "state": "completed",
+            "turn_active": false
+          }
+        },
+        {
+          "t_ms": 60999,
+          "input": null,
+          "expect": {
+            "state": "completed"
+          }
+        },
+        {
+          "t_ms": 61000,
+          "input": null,
+          "expect": {
+            "state": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "name": "turn_completed_with_background_tasks_stays_working",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "turn_completed",
+            "detail": {
+              "background_tasks": 2
+            }
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ],
+      "description": "headline becomes 'N background tasks pending' (summary text, not state)"
+    },
+    {
+      "name": "new_prompt_during_completed_goes_working_and_cancels_idle_timer",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "turn_completed",
+            "detail": {
+              "background_tasks": 0
+            }
+          },
+          "expect": {
+            "state": "completed"
+          }
+        },
+        {
+          "t_ms": 10000,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 70000,
+          "input": null,
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "turn_interrupted_is_idle",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "turn_interrupted"
+          },
+          "expect": {
+            "state": "idle",
+            "turn_active": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "idle_kind_is_idle",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "idle",
+            "detail": {
+              "idle_seconds": 60
+            }
+          },
+          "expect": {
+            "state": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale_after_15_minutes_keeps_state_and_sets_flag",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working",
+            "stale": false
+          }
+        },
+        {
+          "t_ms": 899999,
+          "input": null,
+          "expect": {
+            "state": "working",
+            "stale": false
+          }
+        },
+        {
+          "t_ms": 900000,
+          "input": null,
+          "expect": {
+            "state": "working",
+            "stale": true
+          }
+        },
+        {
+          "t_ms": 901000,
+          "input": {
+            "kind": "file_modified",
+            "detail": {
+              "op": "update"
+            }
+          },
+          "expect": {
+            "state": "writing_code",
+            "stale": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "dead_after_45_minutes_with_active_turn",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 2699999,
+          "input": null,
+          "expect": {
+            "state": "working",
+            "stale": true
+          }
+        },
+        {
+          "t_ms": 2700000,
+          "input": null,
+          "expect": {
+            "state": "disconnected"
+          }
+        }
+      ]
+    },
+    {
+      "name": "dead_after_30_minutes_without_active_turn",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "session_started",
+            "detail": {
+              "source_reason": "startup"
+            }
+          },
+          "expect": {
+            "state": "idle",
+            "turn_active": false
+          }
+        },
+        {
+          "t_ms": 1799999,
+          "input": null,
+          "expect": {
+            "state": "idle"
+          }
+        },
+        {
+          "t_ms": 1800000,
+          "input": null,
+          "expect": {
+            "state": "disconnected"
+          }
+        },
+        {
+          "t_ms": 1800001,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        }
+      ]
+    },
+    {
+      "name": "session_ended_sets_ended_flag",
+      "steps": [
+        {
+          "t_ms": 0,
+          "input": {
+            "kind": "prompt_submitted"
+          },
+          "expect": {
+            "state": "working"
+          }
+        },
+        {
+          "t_ms": 1000,
+          "input": {
+            "kind": "session_ended",
+            "detail": {
+              "reason": "prompt_input_exit"
+            }
+          },
+          "expect": {
+            "state": "working",
+            "ended": true
+          }
+        }
+      ],
+      "description": "ended sessions leave the active list after 10 minutes and are excluded from the character input"
+    }
+  ]
+}

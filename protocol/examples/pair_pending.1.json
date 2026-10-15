@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "pair_pending",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000076",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "pairing_id": "p_3f9c2b1ea8d04c77",
+    "sas": "313211",
+    "confirm_timeout_ms": 60000
+  }
+}

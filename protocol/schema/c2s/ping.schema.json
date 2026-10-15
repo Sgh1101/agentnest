@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/ping.schema.json",
+  "title": "ping payload",
+  "description": "protocol.md 4.14",
+  "type": "object",
+  "properties": {
+    "sent_at": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "sent_at"
+  ]
+}

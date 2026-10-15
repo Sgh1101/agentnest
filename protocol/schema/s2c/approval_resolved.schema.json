@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/approval_resolved.schema.json",
+  "title": "approval_resolved payload",
+  "description": "protocol.md 4.12. Re-sent with the same request_id when observed_result is updated (idempotent).",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "../model/common.schema.json#/$defs/RequestId"
+    },
+    "session_key": {
+      "$ref": "../model/common.schema.json#/$defs/SessionKey"
+    },
+    "outcome": {
+      "enum": [
+        "allowed",
+        "denied",
+        "denied_and_stopped",
+        "expired",
+        "handed_off_local",
+        "superseded",
+        "failed"
+      ]
+    },
+    "resolved_by": {
+      "enum": [
+        "phone",
+        "desktop",
+        "timeout",
+        "agent",
+        "system"
+      ]
+    },
+    "resolved_device_id": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/DeviceId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resolved_at": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    },
+    "delivery": {
+      "enum": [
+        "delivered",
+        "not_delivered"
+      ]
+    },
+    "observed_result": {
+      "enum": [
+        "executed",
+        "declined",
+        "unknown"
+      ]
+    },
+    "message_ko": {
+      "type": "string",
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "request_id",
+    "session_key",
+    "outcome",
+    "resolved_by",
+    "resolved_at",
+    "delivery",
+    "observed_result",
+    "message_ko"
+  ]
+}

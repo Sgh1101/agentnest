@@ -1,0 +1,315 @@
+{
+  "v": 1,
+  "type": "snapshot",
+  "id": "01929f2a-7c00-7b3c-9e4d-00000000007c",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "seq": 1842,
+  "payload": {
+    "sessions": [
+      {
+        "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+        "agent_kind": "claude_code",
+        "agent_label": "Claude Code",
+        "project": {
+          "project_key": "c:/dev/agentnest",
+          "name": "agentnest",
+          "path_hint": "…\\dev\\agentnest",
+          "repo": "owner/agentnest",
+          "branch": "feat/pairing"
+        },
+        "state": "testing",
+        "state_since": "2026-10-15T12:34:50.000Z",
+        "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
+        "detail": "Run core tests.",
+        "started_at": "2026-10-15T11:02:10.000Z",
+        "turn": {
+          "active": true,
+          "started_at": "2026-10-15T12:30:01.000Z",
+          "prompt_preview": "페어링 토큰 만료 테스트 추가해줘"
+        },
+        "permission_mode": "default",
+        "remote_approval": "available",
+        "pending_approval_ids": [],
+        "counters": {
+          "tools": 42,
+          "files_modified": 3,
+          "commands": 7,
+          "tests": 2,
+          "errors": 1
+        },
+        "recent_files": [
+          {
+            "path_hint": "…\\src\\pairing.rs",
+            "op": "update",
+            "at": "2026-10-15T12:34:40.000Z"
+          }
+        ],
+        "recent_commands": [
+          {
+            "command_preview": "cargo test -p agentnest-core",
+            "command_class": "test",
+            "at": "2026-10-15T12:34:50.000Z"
+          }
+        ],
+        "last_test": {
+          "status": "running",
+          "command_class": "test",
+          "at": "2026-10-15T12:34:50.000Z"
+        },
+        "meta": {
+          "title": "훅 수집기 구현",
+          "model": "claude-opus-5",
+          "cost_usd": 1.23,
+          "context_used_pct": 41,
+          "review": {
+            "p0": 0,
+            "p1": 2,
+            "state": "completed"
+          }
+        },
+        "last_event_seq": 1842,
+        "last_event_at": "2026-10-15T12:34:55.000Z",
+        "ended": false,
+        "stale": false
+      },
+      {
+        "session_key": "codex:thr_01HZX3Q9N4K7",
+        "agent_kind": "codex",
+        "agent_label": "Codex",
+        "project": {
+          "project_key": "c:/dev/notes",
+          "name": "notes",
+          "path_hint": "…\\dev\\notes"
+        },
+        "state": "awaiting_approval",
+        "state_since": "2026-10-15T12:35:00.000Z",
+        "headline": "허락을 기다리고 있어요: 파일 1개를 바꾸려고 해요",
+        "started_at": "2026-10-15T11:40:00.000Z",
+        "turn": {
+          "active": true,
+          "started_at": "2026-10-15T12:20:00.000Z"
+        },
+        "remote_approval": "unknown",
+        "pending_approval_ids": [
+          "ar_01929f1b-0a11-7b3c-9e4d-00000000002b"
+        ],
+        "counters": {
+          "tools": 5,
+          "files_modified": 0,
+          "commands": 2,
+          "tests": 0,
+          "errors": 0
+        },
+        "recent_files": [],
+        "recent_commands": [],
+        "meta": {
+          "review": {
+            "p0": 0,
+            "p1": 0,
+            "state": "unavailable"
+          }
+        },
+        "last_event_at": "2026-10-15T12:35:00.000Z",
+        "ended": false,
+        "stale": false
+      }
+    ],
+    "pending_approvals": [
+      {
+        "request_id": "ar_01929f1b-0a11-7b3c-9e4d-00000000002b",
+        "nonce_b64": "dHTB5+2SmvWA/mbkYLBgOQ==",
+        "session_key": "codex:thr_01HZX3Q9N4K7",
+        "agent_kind": "codex",
+        "agent_label": "Codex",
+        "project": {
+          "project_key": "c:/dev/notes",
+          "name": "notes",
+          "path_hint": "…\\dev\\notes"
+        },
+        "origin": "codex.hook.cli",
+        "created_at": "2026-10-15T12:35:00.000Z",
+        "expires_at": "2026-10-15T12:37:00.000Z",
+        "ttl_seconds": 120,
+        "tool_name": "apply_patch",
+        "title": "파일 1개를 바꾸려고 해요",
+        "details": {
+          "kind": "file_change",
+          "file_paths": [
+            "src/pairing.rs"
+          ],
+          "diff_preview": "@@ -10,3 +10,4 @@\n-    old();\n+    new();",
+          "truncated": false
+        },
+        "tool_input_sha256": "a1b5f040275ff2e75b5bbbfe96102aa9b840fb4a8ea076d75119cdee05bfa72d",
+        "risk": {
+          "level": "low",
+          "reasons": [
+            "edit_in_project"
+          ],
+          "reasons_ko": [
+            "프로젝트 안의 파일을 고쳐요"
+          ],
+          "extra_confirmation": "none"
+        },
+        "allowed_decisions": [
+          "allow",
+          "deny"
+        ],
+        "auth_required_for": [
+          "allow"
+        ],
+        "local_prompt": "visible"
+      }
+    ],
+    "recent_errors": [
+      {
+        "event_id": "01929f1a-7a00-7b3c-9e4d-00000000000f",
+        "seq": 1840,
+        "ts": "2026-10-15T09:12:33.120Z",
+        "agent_kind": "claude_code",
+        "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+        "kind": "command_failed",
+        "category": "error",
+        "severity": "warning",
+        "summary": {
+          "headline": "명령이 실패했어요 (exit 101)"
+        },
+        "detail": {
+          "command": "cargo build",
+          "exit_code": 101,
+          "error": "error[E0432]: unresolved import `crate::pairing`"
+        },
+        "source": {
+          "channel": "claude_code.hook.http",
+          "native_ids": {
+            "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+          },
+          "native_event": "PostToolUseFailure"
+        },
+        "redacted": false,
+        "state_hint": "error",
+        "project": {
+          "project_key": "c:/dev/agentnest",
+          "name": "agentnest",
+          "path_hint": "…\\dev\\agentnest",
+          "repo": "owner/agentnest",
+          "branch": "feat/pairing"
+        }
+      }
+    ],
+    "recent_events": [
+      {
+        "event_id": "01929f1a-7a00-7b3c-9e4d-00000000000d",
+        "seq": 1841,
+        "ts": "2026-10-15T09:12:33.120Z",
+        "agent_kind": "claude_code",
+        "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+        "kind": "command_started",
+        "category": "command",
+        "severity": "info",
+        "summary": {
+          "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
+          "detail": "Run core tests."
+        },
+        "detail": {
+          "tool_name": "Bash",
+          "command": "cargo test -p agentnest-core",
+          "description": "Run core tests",
+          "command_class": "test",
+          "cwd_hint": "…\\agentnest",
+          "run_in_background": false
+        },
+        "source": {
+          "channel": "claude_code.hook.http",
+          "native_ids": {
+            "tool_use_id": "toolu_01ABC",
+            "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+            "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+          },
+          "native_event": "PreToolUse"
+        },
+        "redacted": false,
+        "state_hint": "testing",
+        "actor": {
+          "agent_id": "def456",
+          "agent_type": "Explore",
+          "is_subagent": true
+        },
+        "project": {
+          "project_key": "c:/dev/agentnest",
+          "name": "agentnest",
+          "path_hint": "…\\dev\\agentnest",
+          "repo": "owner/agentnest",
+          "branch": "feat/pairing"
+        }
+      },
+      {
+        "event_id": "01929f1a-7a00-7b3c-9e4d-000000000012",
+        "seq": 1842,
+        "ts": "2026-10-15T09:12:33.120Z",
+        "agent_kind": "claude_code",
+        "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+        "kind": "test_failed",
+        "category": "command",
+        "severity": "warning",
+        "summary": {
+          "headline": "테스트가 실패했어요 (exit 101)"
+        },
+        "detail": {
+          "command": "cargo test",
+          "command_class": "test",
+          "runner": "cargo",
+          "exit_code": 101,
+          "stderr_tail": "test pairing::expired ... FAILED"
+        },
+        "source": {
+          "channel": "claude_code.hook.http",
+          "native_ids": {
+            "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+          },
+          "native_event": "PostToolUseFailure"
+        },
+        "redacted": false,
+        "state_hint": "error",
+        "project": {
+          "project_key": "c:/dev/agentnest",
+          "name": "agentnest",
+          "path_hint": "…\\dev\\agentnest",
+          "repo": "owner/agentnest",
+          "branch": "feat/pairing"
+        }
+      }
+    ],
+    "adapters": [
+      {
+        "agent_kind": "claude_code",
+        "status": "connected",
+        "mode": "hooks_http",
+        "detail": "hooks installed (user settings)",
+        "updated_at": "2026-10-15T09:00:00.000Z"
+      },
+      {
+        "agent_kind": "codex",
+        "status": "degraded",
+        "mode": "hooks_cli",
+        "detail": "daemon observer disabled",
+        "updated_at": "2026-10-15T09:00:01.000Z"
+      }
+    ],
+    "focus": {
+      "session_key": "codex:thr_01HZX3Q9N4K7",
+      "state": "awaiting_approval"
+    },
+    "pending_approval_ids_complete": [
+      "ar_01929f1b-0a11-7b3c-9e4d-00000000002b"
+    ],
+    "pending_followup": 0,
+    "truncated": {
+      "sessions": false,
+      "pending_approvals": false,
+      "recent_events": false,
+      "recent_events_detail": false,
+      "approval_previews": false
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000021",
+  "seq": 1832,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "claude_code",
+  "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+  "kind": "session_meta_updated",
+  "category": "lifecycle",
+  "severity": "debug",
+  "summary": {
+    "headline": "세션 정보가 바뀌었어요"
+  },
+  "detail": {
+    "title": "훅 수집기 구현",
+    "cost_usd": 1.23,
+    "pr_number": 42,
+    "pr_url": "https://github.com/owner/agentnest/pull/42",
+    "model": "claude-opus-5"
+  },
+  "source": {
+    "channel": "claude_code.statusline",
+    "native_ids": {
+      "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+    }
+  },
+  "redacted": false,
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

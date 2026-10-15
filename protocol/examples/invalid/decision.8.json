@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "type": "decision",
+  "id": "01929f2a-7c00-7b3c-9e4d-00000000c3d2",
+  "ts": "2026-10-15T12:35:40.510Z",
+  "payload": {
+    "request_id": "ar_01929f1a-6c2e-7b3c-9e4d-00000000001a",
+    "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "nonce_b64": "nj8VYyTULw6ktvT86B1W+w==",
+    "tool_input_sha256": "940519b4cf559666e1068256e714a63ef4b8df29e78fc02b9b75079bbeae4032",
+    "decision": "allow",
+    "decided_at": "2026-10-15T12:35:40.500Z",
+    "auth": {
+      "method": "fingerprint",
+      "authenticated_at": "2026-10-15T12:35:39.900Z"
+    },
+    "extra_confirmation": {
+      "method": "hold",
+      "completed": true
+    }
+  }
+}

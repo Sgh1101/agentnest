@@ -1,0 +1,45 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-00000000000d",
+  "seq": 1812,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "claude_code",
+  "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+  "kind": "command_started",
+  "category": "command",
+  "severity": "info",
+  "summary": {
+    "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
+    "detail": "Run core tests."
+  },
+  "detail": {
+    "tool_name": "Bash",
+    "command": "cargo test -p agentnest-core",
+    "description": "Run core tests",
+    "command_class": "test",
+    "cwd_hint": "…\\agentnest",
+    "run_in_background": false
+  },
+  "source": {
+    "channel": "claude_code.hook.http",
+    "native_ids": {
+      "tool_use_id": "toolu_01ABC",
+      "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+      "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+    },
+    "native_event": "PreToolUse"
+  },
+  "redacted": false,
+  "state_hint": "testing",
+  "actor": {
+    "agent_id": "def456",
+    "agent_type": "Explore",
+    "is_subagent": true
+  },
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

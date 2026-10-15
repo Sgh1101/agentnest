@@ -1,0 +1,23 @@
+[package]
+name = "agentnest-adapter-api"
+version = "0.1.0"
+description = "AgentNest agent adapter plugin API: AgentAdapter, RawObservation and the opaque ApprovalReply"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Test-only constructors for an allow reply. MUST NOT be enabled in release builds (checked in CI via `cargo tree -e features`).
+test-util = []
+
+[dependencies]
+agentnest-protocol = { path = "../agentnest-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

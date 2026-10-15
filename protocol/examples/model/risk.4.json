@@ -1,0 +1,10 @@
+{
+  "level": "critical",
+  "reasons": [
+    "delete_root"
+  ],
+  "reasons_ko": [
+    "시스템 루트를 지우는 명령이에요"
+  ],
+  "extra_confirmation": "hold_and_reconfirm"
+}

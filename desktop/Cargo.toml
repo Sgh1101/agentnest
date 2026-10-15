@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/agentnest-protocol",
+  "crates/agentnest-adapter-api",
+  "crates/agentnest-core",
+  "crates/agentnest-hook",
+  # "apps/desktop/src-tauri",   # enabled by the Tauri-shell task once that crate exists (docs/architecture.md 3.1)
+]
+default-members = [
+  "crates/agentnest-protocol",
+  "crates/agentnest-adapter-api",
+  "crates/agentnest-core",
+  "crates/agentnest-hook",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.90"          # Tauri 2.12.x MSRV [verified]
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "sync", "net", "time", "signal", "process", "io-util", "fs"] }
+axum = { version = "0.8.9", features = ["ws", "json", "macros"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
+# Test-client only (dev-dependency): default features carry no TLS. Pin-verification tests do the TLS handshake via tokio-rustls and then call `client_async`.
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+ring = "0.17.14"               # HMAC-SHA256, SHA-256, SystemRandom, (Phase 3) ECDSA verification
+rcgen = "0.14.10"              # default features (ring): self-signed certificate
+subtle = "2.6.1"
+zeroize = "1.9.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite_migration = "2.6.0"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+jsonschema = { version = "0.58.6", default-features = false }
+uuid = { version = "1.28.0", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4.45", features = ["serde", "clock"] }
+time = "0.3.55"                # rcgen not_before/not_after (OffsetDateTime)
+base64 = "0.23.1"              # may be pinned to the 0.22 line on API friction
+hex = "0.4.3"
+regex = "1.13.1"
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2.5"
+futures-util = "0.3.34"
+directories = "6.0.0"
+local-ip-address = "0.6.13"
+clap = { version = "4.6.7", features = ["derive"] }
+# The hook CLI only talks to http://127.0.0.1, so TLS is not needed. ureq's default features pull in rustls/ring/webpki-roots, hence disabled.
+ureq = { version = "3.4.2", default-features = false, features = ["json"] }
+tempfile = "3.27.0"

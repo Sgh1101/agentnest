@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/decision_result.schema.json",
+  "title": "decision_result payload",
+  "description": "protocol.md 4.11",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "../model/common.schema.json#/$defs/RequestId"
+    },
+    "in_reply_to": {
+      "$ref": "../model/common.schema.json#/$defs/Uuid7"
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "reason": {
+      "enum": [
+        "APPLIED",
+        "UNKNOWN_REQUEST",
+        "ALREADY_RESOLVED",
+        "EXPIRED",
+        "BINDING_MISMATCH",
+        "INPUT_HASH_MISMATCH",
+        "NOT_ALLOWED",
+        "AUTH_REQUIRED",
+        "EXTRA_CONFIRMATION_REQUIRED",
+        "CLOCK_SKEW",
+        "PAUSED",
+        "DEVICE_REVOKED"
+      ]
+    },
+    "message_ko": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "request_id",
+    "in_reply_to",
+    "accepted",
+    "reason"
+  ]
+}

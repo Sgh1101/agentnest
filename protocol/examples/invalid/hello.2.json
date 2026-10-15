@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "hello",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000066",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "device_id": "dev_8a1f3c5e7b9d2f4a6c8e0a1b3d5f7092",
+    "device_token": "h_j9LwNrZhpuXLA-l2xZrvVHmemOB14QqVVTLCZH27Q",
+    "challenge_b64": "INp2R/LVlw3RUnoDCQOm5g==",
+    "protocol": 1,
+    "app_version": "0.1.0",
+    "last_seq": -5,
+    "wants_snapshot": false
+  }
+}

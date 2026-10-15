@@ -1,0 +1,29 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000007",
+  "seq": 1806,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "kind": "turn_interrupted",
+  "category": "turn",
+  "severity": "info",
+  "summary": {
+    "headline": "작업이 중단됐어요"
+  },
+  "detail": {},
+  "source": {
+    "channel": "codex.app_server",
+    "native_ids": {
+      "thread_id": "thr_01HZX3Q9N4K7"
+    },
+    "native_event": "turn/completed"
+  },
+  "redacted": false,
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

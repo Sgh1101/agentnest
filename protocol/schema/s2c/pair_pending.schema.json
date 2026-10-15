@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/pair_pending.schema.json",
+  "title": "pair_pending payload",
+  "description": "protocol.md 4.3",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../model/common.schema.json#/$defs/PairingId"
+    },
+    "sas": {
+      "type": "string",
+      "pattern": "^\\d{6}$",
+      "description": "6 digits, zero padded; the phone must compute its own and compare, never display this value"
+    },
+    "confirm_timeout_ms": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "pairing_id",
+    "sas",
+    "confirm_timeout_ms"
+  ]
+}

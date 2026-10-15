@@ -1,0 +1,448 @@
+{
+  "description": "Every file in this directory must be REJECTED by the schema (default envelope.schema.json unless 'schema' is given). error_pointer: JSON pointer (instance path) of at least one validation error. rust_rejects: agentnest-protocol must also fail to parse it.",
+  "files": {
+    "decision.1.json": {
+      "reason": "scope-expanding decision value allow_for_session does not exist in v1 (I11)",
+      "error_pointer": "/payload/decision",
+      "rust_rejects": true
+    },
+    "decision.2.json": {
+      "reason": "scope-expanding decision value allow_always",
+      "error_pointer": "/payload/decision",
+      "rust_rejects": true
+    },
+    "decision.3.json": {
+      "reason": "Codex-style scope-expanding decision value",
+      "error_pointer": "/payload/decision",
+      "rust_rejects": true
+    },
+    "decision.4.json": {
+      "reason": "decision values are lowercase snake_case, no case folding",
+      "error_pointer": "/payload/decision",
+      "rust_rejects": true
+    },
+    "decision.5.json": {
+      "reason": "missing nonce_b64 (binding field)",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "decision.6.json": {
+      "reason": "missing tool_input_sha256 (binding field)",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "decision.7.json": {
+      "reason": "reason longer than 200 characters",
+      "error_pointer": "/payload/reason",
+      "rust_rejects": false
+    },
+    "decision.8.json": {
+      "reason": "unknown auth.method",
+      "error_pointer": "/payload/auth/method",
+      "rust_rejects": true
+    },
+    "decision.9.json": {
+      "reason": "tool_input_sha256 must be lowercase hex",
+      "error_pointer": "/payload/tool_input_sha256",
+      "rust_rejects": false
+    },
+    "decision.10.json": {
+      "reason": "request_id must be 'ar_' + UUIDv7",
+      "error_pointer": "/payload/request_id",
+      "rust_rejects": false
+    },
+    "decision.11.json": {
+      "reason": "missing request_id (binding field)",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "decision.12.json": {
+      "reason": "missing session_key (binding field)",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "decision.13.json": {
+      "reason": "unknown extra_confirmation.method",
+      "error_pointer": "/payload/extra_confirmation/method",
+      "rust_rejects": true
+    },
+    "decision.14.json": {
+      "reason": "missing decided_at",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "event.1.json": {
+      "reason": "wrong protocol version (v must be 1)",
+      "error_pointer": "/v",
+      "rust_rejects": true
+    },
+    "event.2.json": {
+      "reason": "negative seq",
+      "error_pointer": "/seq",
+      "rust_rejects": true
+    },
+    "event.3.json": {
+      "reason": "replayable message type without seq",
+      "error_pointer": "",
+      "rust_rejects": true
+    },
+    "event.4.json": {
+      "reason": "command_started detail missing required 'command'",
+      "error_pointer": "/payload/detail",
+      "rust_rejects": false
+    },
+    "event.5.json": {
+      "reason": "summary.headline longer than 40 characters",
+      "error_pointer": "/payload/summary/headline",
+      "rust_rejects": false
+    },
+    "event.6.json": {
+      "reason": "category does not match kind (command_started is category 'command')",
+      "error_pointer": "/payload/category",
+      "rust_rejects": false
+    },
+    "event.7.json": {
+      "reason": "unknown kind is invalid against the v1 schema (readers still tolerate it, see forward_compat/)",
+      "error_pointer": "/payload/kind",
+      "rust_rejects": false
+    },
+    "event.8.json": {
+      "reason": "summary.detail longer than 200 characters",
+      "error_pointer": "/payload/summary/detail",
+      "rust_rejects": false
+    },
+    "event.9.json": {
+      "reason": "envelope id must be a UUIDv7",
+      "error_pointer": "/id",
+      "rust_rejects": true
+    },
+    "ping.1.json": {
+      "reason": "payload must be an object",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "ping.2.json": {
+      "reason": "missing envelope id",
+      "error_pointer": "",
+      "rust_rejects": true
+    },
+    "ping.3.json": {
+      "reason": "missing protocol version",
+      "error_pointer": "",
+      "rust_rejects": true
+    },
+    "ping.4.json": {
+      "reason": "timestamps are UTC with Z suffix",
+      "error_pointer": "/payload/sent_at",
+      "rust_rejects": false
+    },
+    "approval_request.1.json": {
+      "reason": "scope-expanding value in allowed_decisions",
+      "error_pointer": "/payload/allowed_decisions/3",
+      "rust_rejects": true
+    },
+    "approval_request.2.json": {
+      "reason": "Codex hooks origin must never offer deny_and_stop",
+      "error_pointer": "/payload/allowed_decisions",
+      "rust_rejects": false
+    },
+    "approval_request.3.json": {
+      "reason": "missing nonce_b64",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "approval_request.4.json": {
+      "reason": "missing expires_at",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "approval_request.5.json": {
+      "reason": "ttl_seconds above 180",
+      "error_pointer": "/payload/ttl_seconds",
+      "rust_rejects": false
+    },
+    "approval_request.6.json": {
+      "reason": "unknown risk.level is invalid against the v1 schema (readers treat it as high)",
+      "error_pointer": "/payload/risk/level",
+      "rust_rejects": false
+    },
+    "approval_request.7.json": {
+      "reason": "more than 50 file_paths",
+      "error_pointer": "/payload/details/file_paths",
+      "rust_rejects": false
+    },
+    "approval_request.8.json": {
+      "reason": "missing tool_input_sha256",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "approval_request.9.json": {
+      "reason": "details.command longer than 2000 characters",
+      "error_pointer": "/payload/details/command",
+      "rust_rejects": false
+    },
+    "approval_request.10.json": {
+      "reason": "details.diff_preview longer than 4 KiB",
+      "error_pointer": "/payload/details/diff_preview",
+      "rust_rejects": false
+    },
+    "approval_request.11.json": {
+      "reason": "unknown risk.extra_confirmation is invalid against the v1 schema (readers treat it as the strongest confirmation)",
+      "error_pointer": "/payload/risk/extra_confirmation",
+      "rust_rejects": false
+    },
+    "approval_request.12.json": {
+      "reason": "allowed_decisions must not be empty",
+      "error_pointer": "/payload/allowed_decisions",
+      "rust_rejects": false
+    },
+    "welcome.1.json": {
+      "reason": "port out of range",
+      "error_pointer": "/payload/hosts/port",
+      "rust_rejects": false
+    },
+    "welcome.2.json": {
+      "reason": "more than 8 host addresses",
+      "error_pointer": "/payload/hosts/addresses",
+      "rust_rejects": false
+    },
+    "welcome.3.json": {
+      "reason": "missing limits",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "welcome.4.json": {
+      "reason": "unknown resync.mode is invalid against the v1 schema",
+      "error_pointer": "/payload/resync/mode",
+      "rust_rejects": false
+    },
+    "pair.1.json": {
+      "reason": "proof_b64 must be exactly 32 bytes",
+      "error_pointer": "/payload/proof_b64",
+      "rust_rejects": false
+    },
+    "pair.2.json": {
+      "reason": "device.name longer than 64",
+      "error_pointer": "/payload/device/name",
+      "rust_rejects": false
+    },
+    "pair.3.json": {
+      "reason": "missing challenge_b64",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "pair.4.json": {
+      "reason": "missing proof_b64",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "pair.5.json": {
+      "reason": "malformed pairing_id",
+      "error_pointer": "/payload/pairing_id",
+      "rust_rejects": false
+    },
+    "hello.1.json": {
+      "reason": "missing device_token",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "hello.2.json": {
+      "reason": "negative last_seq",
+      "error_pointer": "/payload/last_seq",
+      "rust_rejects": false
+    },
+    "hello.3.json": {
+      "reason": "device_token must be 32 bytes base64url",
+      "error_pointer": "/payload/device_token",
+      "rust_rejects": false
+    },
+    "unpair.1.json": {
+      "reason": "unpair needs device_id or pairing_id",
+      "error_pointer": "/payload",
+      "rust_rejects": false
+    },
+    "unpair.2.json": {
+      "reason": "unpair takes exactly one of device_id / pairing_id",
+      "error_pointer": "/payload",
+      "rust_rejects": false
+    },
+    "approval_resolved.1.json": {
+      "reason": "unknown outcome is invalid against the v1 schema (readers show 'handled')",
+      "error_pointer": "/payload/outcome",
+      "rust_rejects": false
+    },
+    "approval_resolved.2.json": {
+      "reason": "missing delivery",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "decision_result.1.json": {
+      "reason": "reason codes are upper snake case",
+      "error_pointer": "/payload/reason",
+      "rust_rejects": false
+    },
+    "decision_result.2.json": {
+      "reason": "missing accepted",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "events_request.1.json": {
+      "reason": "limit below 1",
+      "error_pointer": "/payload/limit",
+      "rust_rejects": false
+    },
+    "events_request.2.json": {
+      "reason": "missing before_seq",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "events_request.3.json": {
+      "reason": "more than 16 kinds",
+      "error_pointer": "/payload/kinds",
+      "rust_rejects": false
+    },
+    "snapshot.1.json": {
+      "reason": "more than 50 recent_events",
+      "error_pointer": "/payload/recent_events",
+      "rust_rejects": false
+    },
+    "snapshot.2.json": {
+      "reason": "missing truncated",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "snapshot.3.json": {
+      "reason": "missing pending_approval_ids_complete",
+      "error_pointer": "/payload",
+      "rust_rejects": true
+    },
+    "snapshot.4.json": {
+      "reason": "more than 20 pending_approvals",
+      "error_pointer": "/payload/pending_approvals",
+      "rust_rejects": false
+    },
+    "session_state.1.json": {
+      "reason": "missing counters (readers default them to 0)",
+      "error_pointer": "/payload",
+      "rust_rejects": false
+    },
+    "session_state.2.json": {
+      "reason": "headline longer than 40 characters",
+      "error_pointer": "/payload/headline",
+      "rust_rejects": false
+    },
+    "session_state.3.json": {
+      "reason": "more than 5 recent_files",
+      "error_pointer": "/payload/recent_files",
+      "rust_rejects": false
+    },
+    "session_state.4.json": {
+      "reason": "unknown state is invalid against the v1 schema (readers render 'working')",
+      "error_pointer": "/payload/state",
+      "rust_rejects": false
+    },
+    "session_state.5.json": {
+      "reason": "more than 3 recent_commands",
+      "error_pointer": "/payload/recent_commands",
+      "rust_rejects": false
+    },
+    "challenge.1.json": {
+      "reason": "challenge must be 16 bytes",
+      "error_pointer": "/payload/challenge_b64",
+      "rust_rejects": false
+    },
+    "pair_pending.1.json": {
+      "reason": "sas must be 6 digits",
+      "error_pointer": "/payload/sas",
+      "rust_rejects": false
+    },
+    "pair_result.1.json": {
+      "reason": "ok:true requires device_token",
+      "error_pointer": "/payload",
+      "rust_rejects": false
+    },
+    "pair_result.2.json": {
+      "reason": "ok:false requires error_code",
+      "error_pointer": "/payload",
+      "rust_rejects": false
+    },
+    "error.1.json": {
+      "reason": "unknown error code is invalid against the v1 schema",
+      "error_pointer": "/payload/code",
+      "rust_rejects": false
+    },
+    "bye.1.json": {
+      "reason": "unknown bye reason",
+      "error_pointer": "/payload/reason",
+      "rust_rejects": false
+    },
+    "hosts_update.1.json": {
+      "reason": "port out of range",
+      "error_pointer": "/payload/port",
+      "rust_rejects": false
+    },
+    "approval_seen.1.json": {
+      "reason": "malformed request_id",
+      "error_pointer": "/payload/request_id",
+      "rust_rejects": false
+    },
+    "ack.1.json": {
+      "reason": "ack needs through_seq or approval_ids",
+      "error_pointer": "/payload",
+      "rust_rejects": false
+    },
+    "snapshot_request.1.json": {
+      "reason": "reason longer than 64",
+      "error_pointer": "/payload/reason",
+      "rust_rejects": false
+    },
+    "pairing_payload.1.json": {
+      "reason": "wrong QR payload version",
+      "error_pointer": "/v",
+      "rust_rejects": false,
+      "schema": "qr/pairing_payload.schema.json"
+    },
+    "pairing_payload.2.json": {
+      "reason": "spki_pin must be 'sha256/' + 44-char base64",
+      "error_pointer": "/spki_pin",
+      "rust_rejects": false,
+      "schema": "qr/pairing_payload.schema.json"
+    },
+    "pairing_payload.3.json": {
+      "reason": "more than 8 hosts",
+      "error_pointer": "/hosts",
+      "rust_rejects": false,
+      "schema": "qr/pairing_payload.schema.json"
+    },
+    "pairing_payload.4.json": {
+      "reason": "missing pairing_secret",
+      "error_pointer": "",
+      "rust_rejects": false,
+      "schema": "qr/pairing_payload.schema.json"
+    },
+    "pairing_payload.5.json": {
+      "reason": "at least one host",
+      "error_pointer": "/hosts",
+      "rust_rejects": false,
+      "schema": "qr/pairing_payload.schema.json"
+    },
+    "risk.1.json": {
+      "reason": "unknown extra_confirmation is invalid against the v1 schema",
+      "error_pointer": "/extra_confirmation",
+      "rust_rejects": false,
+      "schema": "model/risk.schema.json"
+    },
+    "risk.2.json": {
+      "reason": "missing extra_confirmation",
+      "error_pointer": "",
+      "rust_rejects": false,
+      "schema": "model/risk.schema.json"
+    },
+    "agent_state.1.json": {
+      "reason": "unknown AgentState is invalid against the v1 schema",
+      "error_pointer": "",
+      "rust_rejects": false,
+      "schema": "model/agent_state.schema.json"
+    }
+  }
+}

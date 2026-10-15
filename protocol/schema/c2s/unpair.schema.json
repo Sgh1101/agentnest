@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/unpair.schema.json",
+  "title": "unpair payload",
+  "description": "protocol.md 4.14: exactly one of device_id (registered device) or pairing_id (abort during PairPending)",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "$ref": "../model/common.schema.json#/$defs/DeviceId"
+    },
+    "pairing_id": {
+      "$ref": "../model/common.schema.json#/$defs/PairingId"
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "device_id"
+      ]
+    },
+    {
+      "required": [
+        "pairing_id"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/qr/pairing_payload.schema.json",
+  "title": "pairing payload",
+  "description": "security.md 4.1. Transported as agentnest://pair?d=<base64url(JSON)>. Valid for 120 s, single use.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "pc_id": {
+      "$ref": "../model/common.schema.json#/$defs/PcId"
+    },
+    "pc_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "hosts": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/common.schema.json#/$defs/Host"
+      },
+      "minItems": 1,
+      "maxItems": 8
+    },
+    "port": {
+      "$ref": "../model/common.schema.json#/$defs/Port"
+    },
+    "spki_pin": {
+      "type": "string",
+      "pattern": "^sha256/[A-Za-z0-9+/]{43}=$",
+      "description": "'sha256/' + base64(SHA-256(DER SubjectPublicKeyInfo)), OkHttp pin format"
+    },
+    "pairing_id": {
+      "$ref": "../model/common.schema.json#/$defs/PairingId"
+    },
+    "pairing_secret": {
+      "$ref": "../model/common.schema.json#/$defs/B64Url32"
+    },
+    "expires_at": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "v",
+    "pc_id",
+    "pc_name",
+    "hosts",
+    "port",
+    "spki_pin",
+    "pairing_id",
+    "pairing_secret",
+    "expires_at"
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000004",
+  "seq": 1803,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "kind": "turn_started",
+  "category": "turn",
+  "severity": "info",
+  "summary": {
+    "headline": "작업을 시작했어요"
+  },
+  "detail": {
+    "turn_id": "turn_1"
+  },
+  "source": {
+    "channel": "codex.app_server",
+    "native_ids": {
+      "thread_id": "thr_01HZX3Q9N4K7",
+      "turn_id": "turn_1"
+    },
+    "native_event": "turn/started"
+  },
+  "redacted": false,
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

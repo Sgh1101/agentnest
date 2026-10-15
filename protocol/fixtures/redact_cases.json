@@ -1,0 +1,346 @@
+{
+  "_format": {
+    "description": "Pattern masking golden cases (docs/security.md 8.3). Apply `patterns` in order, each as a global regex replacement with the replacement string; `redacted` is true iff the output differs from the input. Regexes are valid for both Rust `regex` and java.util.regex. `cmd_preview_cases` use the same patterns with replacement '***' (docs/protocol.md 7 {cmd60}).",
+    "replacement": "<redacted>",
+    "cmd_preview_replacement": "***",
+    "known_limitations": [
+      "keyword_assignment consumes only the first token after ':' or '=', so 'Authorization: Bearer <opaque>' leaves '<opaque>' unmasked unless another pattern catches it (the JWT / 40+ char patterns do).",
+      "long_token_40 also matches long path-like strings that consist only of [A-Za-z0-9+/_-] (over-masking is the safe direction)."
+    ]
+  },
+  "patterns": [
+    {
+      "name": "keyword_assignment",
+      "regex": "(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\\s*[:=]\\s*\\S+"
+    },
+    {
+      "name": "aws_access_key",
+      "regex": "AKIA[0-9A-Z]{16}"
+    },
+    {
+      "name": "github_token",
+      "regex": "gh[pousr]_[A-Za-z0-9]{36,}"
+    },
+    {
+      "name": "sk_token",
+      "regex": "sk-[A-Za-z0-9]{20,}"
+    },
+    {
+      "name": "private_key_block",
+      "regex": "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"
+    },
+    {
+      "name": "jwt",
+      "regex": "eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"
+    },
+    {
+      "name": "long_token_40",
+      "regex": "[A-Za-z0-9+/_-]{40,}={0,2}"
+    }
+  ],
+  "cases": [
+    {
+      "name": "api_key_assignment_upper",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "API_KEY=abc123def456",
+      "expect": {
+        "output": "<redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "api_key_dash_colon_mixed_case",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "Api-Key: abc123",
+      "expect": {
+        "output": "<redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "export_token",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "export TOKEN=abc123 && run.sh",
+      "expect": {
+        "output": "export <redacted> && run.sh",
+        "redacted": true
+      }
+    },
+    {
+      "name": "password_colon_space",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "password: hunter2",
+      "expect": {
+        "output": "<redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "secret_flag",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "deploy --secret=xyz789 --env prod",
+      "expect": {
+        "output": "deploy --<redacted> --env prod",
+        "redacted": true
+      }
+    },
+    {
+      "name": "spaces_around_equals",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "token = abc123",
+      "expect": {
+        "output": "<redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "passwd_assignment",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "mysql -u root passwd=rootpw",
+      "expect": {
+        "output": "mysql -u root <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "authorization_header_with_jwt",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl",
+      "expect": {
+        "output": "<redacted> <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "aws_key",
+      "rule": "aws_access_key",
+      "polarity": "positive",
+      "input": "aws key AKIAIOSFODNN7EXAMPLE here",
+      "expect": {
+        "output": "aws key <redacted> here",
+        "redacted": true
+      }
+    },
+    {
+      "name": "github_pat",
+      "rule": "github_token",
+      "polarity": "positive",
+      "input": "git clone https://ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8@github.com/o/r",
+      "expect": {
+        "output": "git clone https://<redacted>@github.com/o/r",
+        "redacted": true
+      }
+    },
+    {
+      "name": "sk_token_in_command",
+      "rule": "sk_token",
+      "polarity": "positive",
+      "input": "echo sk-abcdefghijklmnopqrstuvwx",
+      "expect": {
+        "output": "echo <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "private_key_block",
+      "rule": "private_key_block",
+      "polarity": "positive",
+      "input": "key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyy\n-----END RSA PRIVATE KEY-----\nend",
+      "expect": {
+        "output": "key:\n<redacted>\nend",
+        "redacted": true
+      }
+    },
+    {
+      "name": "bare_jwt",
+      "rule": "jwt",
+      "polarity": "positive",
+      "input": "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl ok",
+      "expect": {
+        "output": "jwt <redacted> ok",
+        "redacted": true
+      }
+    },
+    {
+      "name": "sha1_hex_40",
+      "rule": "long_token_40",
+      "polarity": "positive",
+      "input": "commit da39a3ee5e6b4b0d3255bfef95601890afd80709 done",
+      "expect": {
+        "output": "commit <redacted> done",
+        "redacted": true
+      }
+    },
+    {
+      "name": "sha256_hex_64",
+      "rule": "long_token_40",
+      "polarity": "positive",
+      "input": "hash 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "expect": {
+        "output": "hash <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "base64_blob_44",
+      "rule": "long_token_40",
+      "polarity": "positive",
+      "input": "blob dGhpcyBpcyBhIHZlcnkgbG9uZyBiYXNlNjQgc3RyaW5nISE= end",
+      "expect": {
+        "output": "blob <redacted> end",
+        "redacted": true
+      }
+    },
+    {
+      "name": "multiple_secrets",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "API_KEY=abc AKIAIOSFODNN7EXAMPLE sk-abcdefghijklmnopqrstuvwx",
+      "expect": {
+        "output": "<redacted> <redacted> <redacted>",
+        "redacted": true
+      }
+    },
+    {
+      "name": "plain_command",
+      "rule": "keyword_assignment",
+      "polarity": "negative",
+      "input": "cargo test -p agentnest-core",
+      "expect": {
+        "output": "cargo test -p agentnest-core",
+        "redacted": false
+      }
+    },
+    {
+      "name": "word_token_without_assignment",
+      "rule": "keyword_assignment",
+      "polarity": "negative",
+      "input": "the token expires soon",
+      "expect": {
+        "output": "the token expires soon",
+        "redacted": false
+      }
+    },
+    {
+      "name": "word_password_alone",
+      "rule": "keyword_assignment",
+      "polarity": "negative",
+      "input": "enter your password",
+      "expect": {
+        "output": "enter your password",
+        "redacted": false
+      }
+    },
+    {
+      "name": "korean_text",
+      "rule": "keyword_assignment",
+      "polarity": "negative",
+      "input": "페어링 토큰 만료 테스트 추가해줘",
+      "expect": {
+        "output": "페어링 토큰 만료 테스트 추가해줘",
+        "redacted": false
+      }
+    },
+    {
+      "name": "sk_prefix_too_short",
+      "rule": "sk_token",
+      "polarity": "negative",
+      "input": "skip-this-step sk-short",
+      "expect": {
+        "output": "skip-this-step sk-short",
+        "redacted": false
+      }
+    },
+    {
+      "name": "github_prefix_too_short",
+      "rule": "github_token",
+      "polarity": "negative",
+      "input": "ghp_short and ghx_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "expect": {
+        "output": "ghp_short and ghx_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "redacted": false
+      }
+    },
+    {
+      "name": "akia_too_short",
+      "rule": "aws_access_key",
+      "polarity": "negative",
+      "input": "AKIA123 is not a key",
+      "expect": {
+        "output": "AKIA123 is not a key",
+        "redacted": false
+      }
+    },
+    {
+      "name": "hex_39_chars",
+      "rule": "long_token_40",
+      "polarity": "negative",
+      "input": "id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ok",
+      "expect": {
+        "output": "id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ok",
+        "redacted": false
+      }
+    },
+    {
+      "name": "uuid_not_a_token",
+      "rule": "long_token_40",
+      "polarity": "negative",
+      "input": "request 01929f1a-6c2e-7b3c-9e4d-2a7b1c3d4e5f done",
+      "expect": {
+        "output": "request 01929f1a-6c2e-7b3c-9e4d-2a7b1c3d4e5f done",
+        "redacted": false
+      }
+    },
+    {
+      "name": "begin_without_end_is_not_a_block",
+      "rule": "private_key_block",
+      "polarity": "negative",
+      "input": "-----BEGIN RSA PRIVATE KEY----- truncated",
+      "expect": {
+        "output": "-----BEGIN RSA PRIVATE KEY----- truncated",
+        "redacted": false
+      }
+    },
+    {
+      "name": "eyj_without_three_parts",
+      "rule": "jwt",
+      "polarity": "negative",
+      "input": "eyJhbGciOiJIUzI1NiJ9 only header",
+      "expect": {
+        "output": "eyJhbGciOiJIUzI1NiJ9 only header",
+        "redacted": false
+      }
+    }
+  ],
+  "cmd_preview_cases": [
+    {
+      "name": "echo_sk_token",
+      "input": "echo sk-abcdefghijklmnopqrstuvwx",
+      "expect": {
+        "output": "echo ***"
+      }
+    },
+    {
+      "name": "password_assignment",
+      "input": "login --user bob password=hunter2",
+      "expect": {
+        "output": "login --user bob ***"
+      }
+    },
+    {
+      "name": "clean_command",
+      "input": "cargo build --release",
+      "expect": {
+        "output": "cargo build --release"
+      }
+    }
+  ]
+}

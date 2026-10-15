@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "approval_resolved",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000001",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "seq": 1850,
+  "payload": {
+    "request_id": "ar_01929f1a-6c2e-7b3c-9e4d-00000000001a",
+    "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+    "outcome": "allowed",
+    "resolved_by": "phone",
+    "resolved_device_id": "dev_8a1f3c5e7b9d2f4a6c8e0a1b3d5f7092",
+    "resolved_at": "2026-10-15T12:35:40.620Z",
+    "observed_result": "unknown",
+    "message_ko": "허용했어요. Claude가 명령을 실행해요."
+  }
+}

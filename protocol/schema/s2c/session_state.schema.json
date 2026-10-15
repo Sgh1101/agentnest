@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/session_state.schema.json",
+  "title": "session_state payload",
+  "description": "protocol.md 4.8 (payload = SessionState)",
+  "$ref": "../model/session_state.schema.json"
+}

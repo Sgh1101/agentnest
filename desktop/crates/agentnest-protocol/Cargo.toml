@@ -1,0 +1,21 @@
+[package]
+name = "agentnest-protocol"
+version = "0.1.0"
+description = "AgentNest wire protocol v1 types, canonical encodings and pairing crypto helpers"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ring = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+
+[dev-dependencies]
+jsonschema = { workspace = true }
+regex = { workspace = true }

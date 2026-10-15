@@ -1,0 +1,26 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000023",
+  "seq": 1834,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:adapter",
+  "kind": "adapter_status",
+  "category": "adapter",
+  "severity": "notice",
+  "summary": {
+    "headline": "Codex 연결이 제한됐어요"
+  },
+  "detail": {
+    "status": "degraded",
+    "mode": "hooks_cli",
+    "detail": "daemon observer disabled"
+  },
+  "source": {
+    "channel": "codex.hook.cli",
+    "native_ids": {
+      "adapter_kind": "codex",
+      "updated_at": "2026-10-15T09:12:30.000Z"
+    }
+  },
+  "redacted": false
+}

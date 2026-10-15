@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/adapter_status.schema.json",
+  "title": "AdapterStatus",
+  "description": "protocol.md 4.13",
+  "type": "object",
+  "properties": {
+    "agent_kind": {
+      "$ref": "../model/common.schema.json#/$defs/AgentKind"
+    },
+    "status": {
+      "$ref": "../model/common.schema.json#/$defs/AdapterStatusKind"
+    },
+    "mode": {
+      "$ref": "../model/common.schema.json#/$defs/AdapterMode"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "updated_at": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "agent_kind",
+    "status",
+    "mode",
+    "updated_at"
+  ]
+}

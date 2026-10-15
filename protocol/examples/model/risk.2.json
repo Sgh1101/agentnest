@@ -1,0 +1,10 @@
+{
+  "level": "medium",
+  "reasons": [
+    "installs_deps"
+  ],
+  "reasons_ko": [
+    "패키지를 설치해요"
+  ],
+  "extra_confirmation": "none"
+}

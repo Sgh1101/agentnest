@@ -1,0 +1,33 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000022",
+  "seq": 1833,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "kind": "agent_error",
+  "category": "error",
+  "severity": "error",
+  "summary": {
+    "headline": "에이전트에 오류가 생겼어요"
+  },
+  "detail": {
+    "message": "systemError",
+    "code": "systemError"
+  },
+  "source": {
+    "channel": "codex.app_server",
+    "native_ids": {
+      "session_id": "thr_01HZX3Q9N4K7"
+    },
+    "native_event": "thread/status/changed"
+  },
+  "redacted": false,
+  "state_hint": "error",
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

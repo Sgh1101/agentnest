@@ -1,0 +1,33 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-00000000001d",
+  "seq": 1828,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "kind": "review_started",
+  "category": "review",
+  "severity": "info",
+  "summary": {
+    "headline": "코드 리뷰를 시작했어요"
+  },
+  "detail": {
+    "review_target": "uncommittedChanges"
+  },
+  "source": {
+    "channel": "codex.app_server",
+    "native_ids": {
+      "thread_id": "thr_01HZX3Q9N4K7",
+      "item_id": "item_9"
+    },
+    "native_event": "item/started"
+  },
+  "redacted": false,
+  "state_hint": "reviewing",
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

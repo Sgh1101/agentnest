@@ -1,0 +1,41 @@
+{
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "agent_kind": "codex",
+  "agent_label": "Codex",
+  "project": {
+    "project_key": "c:/dev/notes",
+    "name": "notes",
+    "path_hint": "…\\dev\\notes"
+  },
+  "state": "awaiting_approval",
+  "state_since": "2026-10-15T12:35:00.000Z",
+  "headline": "허락을 기다리고 있어요: 파일 1개를 바꾸려고 해요",
+  "started_at": "2026-10-15T11:40:00.000Z",
+  "turn": {
+    "active": true,
+    "started_at": "2026-10-15T12:20:00.000Z"
+  },
+  "remote_approval": "unknown",
+  "pending_approval_ids": [
+    "ar_01929f1b-0a11-7b3c-9e4d-00000000002b"
+  ],
+  "counters": {
+    "tools": 5,
+    "files_modified": 0,
+    "commands": 2,
+    "tests": 0,
+    "errors": 0
+  },
+  "recent_files": [],
+  "recent_commands": [],
+  "meta": {
+    "review": {
+      "p0": 0,
+      "p1": 0,
+      "state": "unavailable"
+    }
+  },
+  "last_event_at": "2026-10-15T12:35:00.000Z",
+  "ended": false,
+  "stale": false
+}

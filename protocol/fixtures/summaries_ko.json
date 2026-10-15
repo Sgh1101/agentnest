@@ -1,0 +1,605 @@
+{
+  "_format": {
+    "description": "Korean summary golden cases (docs/protocol.md 7). `cases` take a tool observation and expect {title (approval card), headline, detail?}; `event_cases` cover the non-tool rows. Lengths are counted in Unicode code points.",
+    "rules": {
+      "clip(s, n)": "s if len(s) <= n else s[:n-1] + '…'. Applied last: headline <= 40, detail <= 200 (first sentences: <= 120, description60: <= 60).",
+      "{cmd60}": "strip leading 'cd X &&' segments, then a leading 'env' keyword and leading VAR=value assignments; mask with the redact patterns using '***' as the replacement (see redact_cases.json cmd_preview_cases); then clip to 60.",
+      "{basename}": "last path segment after normalising '\\\\' to '/'.",
+      "{rel_path}": "path relative to cwd (case-insensitive prefix, '/' separators); if outside cwd: last two segments.",
+      "{cwd_short}": "basename of cwd",
+      "{host}": "URL host only (never path, query or fragment)",
+      "detail": "'{description}.' (a trailing '.' is not doubled) for test commands, '{description}' for the others; absent description => no detail except test commands ('{cwd_short} 에서 {cmd}') and Edit/Write rows that define their own detail.",
+      "first sentence": "text up to and including the first '.', '!', '?' or U+3002 followed by whitespace/end, on the first line only.",
+      "PermissionRequest headline": "'허락을 기다리고 있어요: ' + the tool headline, then clip to 40 (the tool headline is NOT pre-clipped).",
+      "codex fileChange detail": "kind counts joined by ' · ' in the order update ('수정'), add ('새 파일'), delete ('삭제'), e.g. '수정 2개 · 새 파일 1개' (reading of the table cell '변경 종류별 개수')."
+    },
+    "unspecified_in_doc": [
+      "StopFailure types other than rate_limit (12 types in total)",
+      "WebSearch headline (no URL)",
+      "fileChange with exactly one change"
+    ]
+  },
+  "cases": [
+    {
+      "name": "bash_test_with_description",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "test",
+        "tool_input": {
+          "command": "cargo test -p core",
+          "description": "Run core tests"
+        }
+      },
+      "expect": {
+        "title": "테스트를 실행하려고 해요",
+        "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
+        "detail": "Run core tests."
+      }
+    },
+    {
+      "name": "bash_test_without_description",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "test",
+        "tool_input": {
+          "command": "pnpm test"
+        },
+        "cwd": "C:\\dev\\agentnest\\apps\\desktop"
+      },
+      "expect": {
+        "title": "테스트를 실행하려고 해요",
+        "headline": "테스트를 돌리고 있어요 (pnpm test)",
+        "detail": "desktop 에서 pnpm test"
+      }
+    },
+    {
+      "name": "bash_test_headline_clipped_to_40",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "test",
+        "tool_input": {
+          "command": "cargo test -p agentnest-core",
+          "description": "Run core tests"
+        }
+      },
+      "expect": {
+        "title": "테스트를 실행하려고 해요",
+        "headline": "테스트를 돌리고 있어요 (cargo test -p agentnest-c…",
+        "detail": "Run core tests."
+      },
+      "note": "13 + 28 + 1 = 42 characters before clipping; the headline is clipped to 39 characters plus an ellipsis"
+    },
+    {
+      "name": "bash_build_with_description",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "build",
+        "tool_input": {
+          "command": "cargo build",
+          "description": "Build all crates"
+        }
+      },
+      "expect": {
+        "title": "빌드를 실행하려고 해요",
+        "headline": "빌드하고 있어요 (cargo build)",
+        "detail": "Build all crates"
+      }
+    },
+    {
+      "name": "bash_build_without_description",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "build",
+        "tool_input": {
+          "command": "tsc"
+        }
+      },
+      "expect": {
+        "title": "빌드를 실행하려고 해요",
+        "headline": "빌드하고 있어요 (tsc)"
+      }
+    },
+    {
+      "name": "bash_general",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "vcs",
+        "tool_input": {
+          "command": "git status",
+          "description": "Show working tree status"
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "명령을 실행하고 있어요: git status",
+        "detail": "Show working tree status"
+      }
+    },
+    {
+      "name": "bash_general_without_description",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "shell",
+        "tool_input": {
+          "command": "ls -la"
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "명령을 실행하고 있어요: ls -la"
+      }
+    },
+    {
+      "name": "powershell_general",
+      "input": {
+        "tool_name": "PowerShell",
+        "command_class": "shell",
+        "tool_input": {
+          "command": "Get-ChildItem -Recurse"
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "명령을 실행하고 있어요: Get-ChildItem -Recurse"
+      }
+    },
+    {
+      "name": "bash_strips_leading_cd",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "test",
+        "tool_input": {
+          "command": "cd desktop && cargo test -p core"
+        }
+      },
+      "expect": {
+        "title": "테스트를 실행하려고 해요",
+        "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
+        "detail": "agentnest 에서 cargo test -p core"
+      }
+    },
+    {
+      "name": "bash_strips_multiple_cd_and_env",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "build",
+        "tool_input": {
+          "command": "cd a && cd \"b c\" && env CI=1 NODE_ENV=test cargo build"
+        }
+      },
+      "expect": {
+        "title": "빌드를 실행하려고 해요",
+        "headline": "빌드하고 있어요 (cargo build)"
+      }
+    },
+    {
+      "name": "bash_strips_plain_env_assignments",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "test",
+        "tool_input": {
+          "command": "CI=1 RUST_LOG=debug cargo test"
+        }
+      },
+      "expect": {
+        "title": "테스트를 실행하려고 해요",
+        "headline": "테스트를 돌리고 있어요 (cargo test)",
+        "detail": "agentnest 에서 cargo test"
+      }
+    },
+    {
+      "name": "bash_command_truncated_to_60_then_40",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "shell",
+        "tool_input": {
+          "command": "find . -type f -name '*.rs' -not -path './target/*' -exec grep -l 'unsafe' {} +"
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "명령을 실행하고 있어요: find . -type f -name '*.r…"
+      },
+      "note": "cmd60 truncates to 59 characters plus an ellipsis; the headline is then clipped to 40"
+    },
+    {
+      "name": "bash_masks_token_in_command",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "shell",
+        "tool_input": {
+          "command": "echo sk-abcdefghijklmnopqrstuvwx"
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "명령을 실행하고 있어요: echo ***"
+      }
+    },
+    {
+      "name": "bash_masks_password_assignment",
+      "input": {
+        "tool_name": "Bash",
+        "command_class": "shell",
+        "tool_input": {
+          "command": "login --user bob password=hunter2"
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "명령을 실행하고 있어요: login --user bob ***"
+      }
+    },
+    {
+      "name": "edit",
+      "input": {
+        "tool_name": "Edit",
+        "tool_input": {
+          "file_path": "C:\\dev\\agentnest\\src\\main.rs",
+          "old_string": "a",
+          "new_string": "b"
+        }
+      },
+      "expect": {
+        "title": "파일을 고치려고 해요",
+        "headline": "main.rs 파일을 고치고 있어요",
+        "detail": "src/main.rs 의 일부를 바꿉니다."
+      }
+    },
+    {
+      "name": "edit_with_description",
+      "input": {
+        "tool_name": "Edit",
+        "tool_input": {
+          "file_path": "C:\\dev\\agentnest\\desktop\\crates\\agentnest-core\\src\\lib.rs",
+          "old_string": "a",
+          "new_string": "b",
+          "description": "Rename the module."
+        }
+      },
+      "expect": {
+        "title": "파일을 고치려고 해요",
+        "headline": "lib.rs 파일을 고치고 있어요",
+        "detail": "desktop/crates/agentnest-core/src/lib.rs 의 일부를 바꿉니다. Rename the module."
+      }
+    },
+    {
+      "name": "edit_outside_cwd_uses_last_two_segments",
+      "input": {
+        "tool_name": "Edit",
+        "cwd": "C:\\dev\\agentnest",
+        "tool_input": {
+          "file_path": "D:\\other\\project\\main.rs",
+          "old_string": "a",
+          "new_string": "b"
+        }
+      },
+      "expect": {
+        "title": "파일을 고치려고 해요",
+        "headline": "main.rs 파일을 고치고 있어요",
+        "detail": "project/main.rs 의 일부를 바꿉니다."
+      }
+    },
+    {
+      "name": "write_new_file",
+      "input": {
+        "tool_name": "Write",
+        "file_exists": false,
+        "tool_input": {
+          "file_path": "C:\\dev\\agentnest\\docs\\notes.md",
+          "content": "line1\nline2\nline3"
+        }
+      },
+      "expect": {
+        "title": "새 파일을 만들려고 해요",
+        "headline": "notes.md 파일을 새로 만들고 있어요",
+        "detail": "docs/notes.md (3줄)"
+      }
+    },
+    {
+      "name": "write_overwrite",
+      "input": {
+        "tool_name": "Write",
+        "file_exists": true,
+        "tool_input": {
+          "file_path": "C:\\dev\\agentnest\\docs\\notes.md",
+          "content": "x"
+        }
+      },
+      "expect": {
+        "title": "파일을 다시 쓰려고 해요",
+        "headline": "notes.md 파일을 다시 쓰고 있어요"
+      }
+    },
+    {
+      "name": "read",
+      "input": {
+        "tool_name": "Read",
+        "tool_input": {
+          "file_path": "C:\\dev\\agentnest\\src\\pairing.rs"
+        }
+      },
+      "expect": {
+        "title": "파일을 읽으려고 해요",
+        "headline": "pairing.rs 파일을 읽고 있어요"
+      }
+    },
+    {
+      "name": "grep",
+      "input": {
+        "tool_name": "Grep",
+        "tool_input": {
+          "pattern": "TODO",
+          "path": "C:\\dev\\agentnest\\src"
+        }
+      },
+      "expect": {
+        "title": "파일을 읽으려고 해요",
+        "headline": "'TODO'을(를) 찾고 있어요"
+      }
+    },
+    {
+      "name": "glob",
+      "input": {
+        "tool_name": "Glob",
+        "tool_input": {
+          "pattern": "**/*.rs"
+        }
+      },
+      "expect": {
+        "title": "파일을 읽으려고 해요",
+        "headline": "'**/*.rs'을(를) 찾고 있어요"
+      }
+    },
+    {
+      "name": "webfetch_host_only",
+      "input": {
+        "tool_name": "WebFetch",
+        "tool_input": {
+          "url": "https://docs.rs/serde/latest/serde/?token=abc123#derive",
+          "prompt": "summarize"
+        }
+      },
+      "expect": {
+        "title": "웹에 접속하려고 해요",
+        "headline": "docs.rs 에서 자료를 가져오고 있어요"
+      },
+      "note": "only the host appears; path, query and fragment never do"
+    },
+    {
+      "name": "agent",
+      "input": {
+        "tool_name": "Agent",
+        "tool_input": {
+          "description": "Explore the repository layout",
+          "prompt": "find files",
+          "subagent_type": "Explore"
+        }
+      },
+      "expect": {
+        "title": "보조 에이전트를 실행하려고 해요",
+        "headline": "보조 에이전트에게 맡겼어요: Explore the repository …"
+      }
+    },
+    {
+      "name": "agent_description_clipped",
+      "input": {
+        "tool_name": "Agent",
+        "tool_input": {
+          "description": "Investigate why the pairing flow fails intermittently when the phone reconnects",
+          "prompt": "x"
+        }
+      },
+      "expect": {
+        "title": "보조 에이전트를 실행하려고 해요",
+        "headline": "보조 에이전트에게 맡겼어요: Investigate why the pai…"
+      }
+    },
+    {
+      "name": "mcp_tool",
+      "input": {
+        "tool_name": "mcp__github__create_issue",
+        "tool_input": {
+          "title": "x"
+        }
+      },
+      "expect": {
+        "title": "github 도구를 쓰려고 해요",
+        "headline": "github의 create_issue을(를) 쓰고 있어요"
+      }
+    },
+    {
+      "name": "unknown_tool",
+      "input": {
+        "tool_name": "Frobnicate",
+        "tool_input": {}
+      },
+      "expect": {
+        "title": "Frobnicate 도구를 쓰려고 해요",
+        "headline": "Frobnicate 도구를 쓰고 있어요"
+      }
+    },
+    {
+      "name": "permission_request_edit",
+      "input": {
+        "hook": "PermissionRequest",
+        "tool_name": "Edit",
+        "tool_input": {
+          "file_path": "C:\\dev\\agentnest\\src\\main.rs",
+          "old_string": "a",
+          "new_string": "b"
+        }
+      },
+      "expect": {
+        "title": "파일을 고치려고 해요",
+        "headline": "허락을 기다리고 있어요: main.rs 파일을 고치고 있어요",
+        "detail": "src/main.rs 의 일부를 바꿉니다."
+      }
+    },
+    {
+      "name": "permission_request_bash_clipped",
+      "input": {
+        "hook": "PermissionRequest",
+        "tool_name": "Bash",
+        "command_class": "shell",
+        "tool_input": {
+          "command": "rm -rf node_modules && pnpm install",
+          "description": "node_modules 폴더를 지우고 다시 설치합니다."
+        }
+      },
+      "expect": {
+        "title": "명령을 실행하려고 해요",
+        "headline": "허락을 기다리고 있어요: 명령을 실행하고 있어요: rm -rf node…",
+        "detail": "node_modules 폴더를 지우고 다시 설치합니다."
+      }
+    },
+    {
+      "name": "codex_command_execution",
+      "input": {
+        "agent": "codex",
+        "tool_name": "commandExecution",
+        "command_class": "test",
+        "tool_input": {
+          "command": "cargo test"
+        }
+      },
+      "expect": {
+        "title": "테스트를 실행하려고 해요",
+        "headline": "테스트를 돌리고 있어요 (cargo test)",
+        "detail": "agentnest 에서 cargo test"
+      }
+    },
+    {
+      "name": "codex_file_change_many",
+      "input": {
+        "agent": "codex",
+        "tool_name": "fileChange",
+        "tool_input": {
+          "changes": [
+            {
+              "path": "src/a.rs",
+              "kind": "update"
+            },
+            {
+              "path": "src/b.rs",
+              "kind": "update"
+            },
+            {
+              "path": "src/c.rs",
+              "kind": "add"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "title": "파일 3개를 바꾸려고 해요",
+        "headline": "a.rs 외 2개 파일을 고치고 있어요",
+        "detail": "수정 2개 · 새 파일 1개"
+      }
+    },
+    {
+      "name": "codex_file_change_single",
+      "input": {
+        "agent": "codex",
+        "tool_name": "fileChange",
+        "tool_input": {
+          "changes": [
+            {
+              "path": "src/a.rs",
+              "kind": "delete"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "title": "파일 1개를 바꾸려고 해요",
+        "headline": "a.rs 파일을 고치고 있어요",
+        "detail": "삭제 1개"
+      },
+      "note": "n == 1 is not covered by the doc table; reading: reuse the single-file headline"
+    }
+  ],
+  "event_cases": [
+    {
+      "name": "stop_no_background",
+      "input": {
+        "hook": "Stop",
+        "background_tasks": 0,
+        "last_assistant_message": "테스트를 모두 통과했어요. 다음으로 문서를 고칠게요."
+      },
+      "expect": {
+        "headline": "이번 작업을 마쳤어요",
+        "detail": "테스트를 모두 통과했어요."
+      }
+    },
+    {
+      "name": "stop_first_sentence_clipped_to_120",
+      "input": {
+        "hook": "Stop",
+        "background_tasks": 0,
+        "last_assistant_message": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. next"
+      },
+      "expect": {
+        "headline": "이번 작업을 마쳤어요",
+        "detail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa…"
+      }
+    },
+    {
+      "name": "stop_background_tasks",
+      "input": {
+        "hook": "Stop",
+        "background_tasks": 2,
+        "last_assistant_message": "x"
+      },
+      "expect": {
+        "headline": "백그라운드 작업 2개를 기다리고 있어요"
+      }
+    },
+    {
+      "name": "post_tool_use_failure_bash",
+      "input": {
+        "hook": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "error": "Exit code 101\nerror[E0432]: unresolved import"
+      },
+      "expect": {
+        "headline": "명령이 실패했어요 (exit 101)",
+        "detail": "Exit code 101"
+      }
+    },
+    {
+      "name": "stop_failure_rate_limit",
+      "input": {
+        "hook": "StopFailure",
+        "error": "rate_limit"
+      },
+      "expect": {
+        "headline": "사용량 한도에 걸려 멈췄어요"
+      }
+    },
+    {
+      "name": "codex_entered_review_mode",
+      "input": {
+        "agent": "codex",
+        "item": "enteredReviewMode"
+      },
+      "expect": {
+        "headline": "코드 리뷰를 시작했어요"
+      }
+    },
+    {
+      "name": "codex_exited_review_mode",
+      "input": {
+        "agent": "codex",
+        "item": "exitedReviewMode",
+        "p0": 0,
+        "p1": 2,
+        "overall": "변경 사항이 대체로 안전해요. 다만 두 가지를 고쳐주세요."
+      },
+      "expect": {
+        "headline": "리뷰를 마쳤어요 · P0 0 · P1 2",
+        "detail": "변경 사항이 대체로 안전해요."
+      }
+    }
+  ]
+}

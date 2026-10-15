@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/events_page.schema.json",
+  "title": "events_page payload",
+  "description": "protocol.md 4.15. Non-replayable; carries no seq.",
+  "type": "object",
+  "properties": {
+    "in_reply_to": {
+      "$ref": "../model/common.schema.json#/$defs/Uuid7"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/agent_event.schema.json"
+      },
+      "maxItems": 100,
+      "description": "seq ascending"
+    },
+    "has_more": {
+      "type": "boolean"
+    },
+    "next_before_seq": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/Seq"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "detail_omitted": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "in_reply_to",
+    "events",
+    "has_more",
+    "detail_omitted"
+  ]
+}

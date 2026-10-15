@@ -1,0 +1,149 @@
+{
+  "description": "Pairing proof vectors (docs/protocol.md 4.2/4.3, docs/security.md 4.2). canonical_pair_bytes = 'agentnest-pair-v1' || L(pc_id) pc_id || L(pairing_id) pairing_id || L(challenge) challenge(16B raw) || L(device_name) device_name(UTF-8, NFC, <=64B) || L(spki) spki(DER raw, empty => L=0); L(x) = u16 big-endian byte length of x. The label is not length-prefixed. proof = HMAC-SHA256(key = pairing_secret raw 32 bytes (base64url-decoded QR value), msg = canonical_pair_bytes). sas = (first 4 bytes of HMAC-SHA256(pairing_secret, 'sas' || challenge(16B) || spki) as big-endian u32) % 1000000, zero-padded to 6 digits (no length prefixes). The device_name bytes are used exactly as sent: the phone must NFC-normalise it before putting it into both the pair payload and the HMAC input.",
+  "cases": [
+    {
+      "name": "typical",
+      "pairing_secret_b64url": "PH3xtFr5K5p_eeUvT-rN8XCPxRr9HpAGz8OqMr24H-w",
+      "pairing_secret_hex": "3c7df1b45af92b9a7f79e52f4feacdf1708fc51afd1e9006cfc3aa32bdb81fec",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_3f9c2b1ea8d04c77",
+      "challenge_b64": "INp2R/LVlw3RUnoDCQOm5g==",
+      "challenge_hex": "20da7647f2d5970dd1527a030903a6e6",
+      "device_name": "Galaxy S25",
+      "device_name_utf8_len": 10,
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "canonical_pair_bytes_hex": "6167656e746e6573742d706169722d7631001370635f383235326536323830613364383164310012705f33663963326231656138643034633737001020da7647f2d5970dd1527a030903a6e6000a47616c61787920533235005b3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "proof_hmac_sha256_hex": "4fa64ee8d1435e26b93dbf9885253df83187b0e94594df068182cfd8c26ebb47",
+      "proof_b64": "T6ZO6NFDXia5Pb+YhSU9+DGHsOlFlN8GgYLP2MJuu0c=",
+      "sas": "313211"
+    },
+    {
+      "name": "no_spki_length_zero",
+      "pairing_secret_b64url": "HMoV0lJ2rtksA7-NVFzV44d9nkbmRvQAzF8Y9gq9XLo",
+      "pairing_secret_hex": "1cca15d25276aed92c03bf8d545cd5e3877d9e46e646f400cc5f18f60abd5cba",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_0123456789abcdef",
+      "challenge_b64": "8fxZMYxS/JFR7oE26OK9fQ==",
+      "challenge_hex": "f1fc59318c52fc9151ee8136e8e2bd7d",
+      "device_name": "Pixel 9",
+      "device_name_utf8_len": 7,
+      "spki_hex": "",
+      "canonical_pair_bytes_hex": "6167656e746e6573742d706169722d7631001370635f383235326536323830613364383164310012705f303132333435363738396162636465660010f1fc59318c52fc9151ee8136e8e2bd7d0007506978656c20390000",
+      "proof_hmac_sha256_hex": "7b3994dceca112a46cd0aaa6096d44876c54b188002d40513afc36a0982c52d2",
+      "proof_b64": "ezmU3OyhEqRs0KqmCW1Eh2xUsYgALUBROvw2oJgsUtI=",
+      "sas": "963460"
+    },
+    {
+      "name": "korean_nfc_name",
+      "pairing_secret_b64url": "LXAZEaLf5zOv5DA6qTlfyc2Pc12yO6c17gzMkJJDaeg",
+      "pairing_secret_hex": "2d701911a2dfe733afe4303aa9395fc9cd8f735db23ba735ee0ccc90924369e8",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_fedcba9876543210",
+      "challenge_b64": "fkf+pSh+5cAqi7RT2z/m0A==",
+      "challenge_hex": "7e47fea5287ee5c02a8bb453db3fe6d0",
+      "device_name": "홍길동의 갤럭시",
+      "device_name_utf8_len": 22,
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "canonical_pair_bytes_hex": "6167656e746e6573742d706169722d7631001370635f383235326536323830613364383164310012705f6665646362613938373635343332313000107e47fea5287ee5c02a8bb453db3fe6d00016ed998deab8b8eb8f99ec9d9820eab0a4eb9fadec8b9c005b3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "proof_hmac_sha256_hex": "17ce40103914050a207f2ed37dbaeb0e40a8ebb0cb888da067066fb9acdb417f",
+      "proof_b64": "F85AEDkUBQogfy7TfbrrDkCo67DLiI2gZwZvuazbQX8=",
+      "sas": "357174"
+    },
+    {
+      "name": "name_exactly_64_bytes",
+      "pairing_secret_b64url": "Cvf9MrD9saDigrLBNiBb5gG5L0qi3mtKHXudry_jvZ8",
+      "pairing_secret_hex": "0af7fd32b0fdb1a0e282b2c136205be601b92f4aa2de6b4a1d7b9daf2fe3bd9f",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_00ff00ff00ff00ff",
+      "challenge_b64": "a14l3GDMPTEr2hC6aCyWCA==",
+      "challenge_hex": "6b5e25dc60cc3d312bda10ba682c9608",
+      "device_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      "device_name_utf8_len": 64,
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "canonical_pair_bytes_hex": "6167656e746e6573742d706169722d7631001370635f383235326536323830613364383164310012705f3030666630306666303066663030666600106b5e25dc60cc3d312bda10ba682c960800406e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e005b3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "proof_hmac_sha256_hex": "6827671b5ce08abacf3b721d5a1af20dbee26e2a3315b5ade15c860af5e00834",
+      "proof_b64": "aCdnG1zgirrPO3IdWhryDb7ibiozFbWt4VyGCvXgCDQ=",
+      "sas": "335275"
+    },
+    {
+      "name": "sas_leading_zero",
+      "pairing_secret_b64url": "anXT9TstNVAOlruPSkOW9LE9chDxqo0A1LtZiLS_gLU",
+      "pairing_secret_hex": "6a75d3f53b2d35500e96bb8f4a4396f4b13d7210f1aa8d00d4bb5988b4bf80b5",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_1111222233334444",
+      "challenge_b64": "/q3bwYRSI/ufw3zJz0Uopw==",
+      "challenge_hex": "feaddbc1845223fb9fc37cc9cf4528a7",
+      "device_name": "Galaxy S25",
+      "device_name_utf8_len": 10,
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "canonical_pair_bytes_hex": "6167656e746e6573742d706169722d7631001370635f383235326536323830613364383164310012705f313131313232323233333333343434340010feaddbc1845223fb9fc37cc9cf4528a7000a47616c61787920533235005b3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "proof_hmac_sha256_hex": "e41a359b388447ce0a8047a408ec3f546316f677affbfd8f093e0f623500ce63",
+      "proof_b64": "5Bo1mziER84KgEekCOw/VGMW9nev+/2PCT4PYjUAzmM=",
+      "sas": "007950"
+    }
+  ],
+  "verify_cases": [
+    {
+      "name": "valid_proof",
+      "case": "typical",
+      "proof_b64": "T6ZO6NFDXia5Pb+YhSU9+DGHsOlFlN8GgYLP2MJuu0c=",
+      "expect_valid": true
+    },
+    {
+      "name": "one_bit_flipped",
+      "case": "typical",
+      "proof_b64": "TqZO6NFDXia5Pb+YhSU9+DGHsOlFlN8GgYLP2MJuu0c=",
+      "expect_valid": false
+    },
+    {
+      "name": "proof_of_other_case",
+      "case": "typical",
+      "proof_b64": "ezmU3OyhEqRs0KqmCW1Eh2xUsYgALUBROvw2oJgsUtI=",
+      "expect_valid": false
+    },
+    {
+      "name": "truncated_proof_31_bytes",
+      "case": "typical",
+      "proof_b64": "T6ZO6NFDXia5Pb+YhSU9+DGHsOlFlN8GgYLP2MJuuw==",
+      "expect_valid": false
+    }
+  ],
+  "invalid_inputs": [
+    {
+      "name": "device_name_65_bytes",
+      "error": "device_name_too_long",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_3f9c2b1ea8d04c77",
+      "challenge_hex": "20da7647f2d5970dd1527a030903a6e6",
+      "device_name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2"
+    },
+    {
+      "name": "device_name_korean_22_chars_66_bytes",
+      "error": "device_name_too_long",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_3f9c2b1ea8d04c77",
+      "challenge_hex": "20da7647f2d5970dd1527a030903a6e6",
+      "device_name": "가가가가가가가가가가가가가가가가가가가가가가",
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2"
+    },
+    {
+      "name": "challenge_15_bytes",
+      "error": "bad_challenge_length",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_3f9c2b1ea8d04c77",
+      "challenge_hex": "20da7647f2d5970dd1527a030903a6",
+      "device_name": "Galaxy S25",
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2"
+    },
+    {
+      "name": "challenge_17_bytes",
+      "error": "bad_challenge_length",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "pairing_id": "p_3f9c2b1ea8d04c77",
+      "challenge_hex": "20da7647f2d5970dd1527a030903a6e600",
+      "device_name": "Galaxy S25",
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2"
+    }
+  ]
+}

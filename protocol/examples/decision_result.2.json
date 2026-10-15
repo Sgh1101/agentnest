@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "decision_result",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000087",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "request_id": "ar_01929f1a-6c2e-7b3c-9e4d-00000000001a",
+    "in_reply_to": "01929f2b-0000-7b3c-9e4d-00000000c3d2",
+    "accepted": false,
+    "reason": "EXPIRED",
+    "message_ko": "요청 시간이 지나 PC에서 직접 처리하도록 넘겼어요."
+  }
+}

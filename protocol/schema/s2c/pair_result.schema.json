@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/pair_result.schema.json",
+  "title": "pair_result payload",
+  "description": "protocol.md 4.3",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "device_id": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/DeviceId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "device_token": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/B64Url32"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pc": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "pc_id": {
+              "$ref": "../model/common.schema.json#/$defs/PcId"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "app_version": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "os": {
+              "type": "string",
+              "maxLength": 32
+            }
+          },
+          "required": [
+            "pc_id",
+            "name",
+            "app_version"
+          ],
+          "title": "PcInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "enum": [
+            "E_PAIR_FAILED",
+            "E_PAIR_REJECTED",
+            "E_PAIR_BUSY"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "ok"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "then": {
+        "required": [
+          "device_id",
+          "device_token",
+          "pc"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ok": {
+            "const": false
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "then": {
+        "required": [
+          "error_code"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000020",
+  "seq": 1831,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "kind": "token_usage_updated",
+  "category": "usage",
+  "severity": "debug",
+  "summary": {
+    "headline": "토큰 사용량이 갱신됐어요"
+  },
+  "detail": {
+    "total_tokens": 51200,
+    "input_tokens": 40000,
+    "cached_input_tokens": 30000,
+    "output_tokens": 11200,
+    "reasoning_output_tokens": 2048,
+    "context_window": 200000
+  },
+  "source": {
+    "channel": "codex.app_server",
+    "native_ids": {
+      "session_id": "thr_01HZX3Q9N4K7"
+    },
+    "native_event": "thread/tokenUsage/updated"
+  },
+  "redacted": false,
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

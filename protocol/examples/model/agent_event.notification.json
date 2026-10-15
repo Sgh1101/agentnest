@@ -1,0 +1,33 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-00000000001a",
+  "seq": 1825,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "claude_code",
+  "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+  "kind": "notification",
+  "category": "notification",
+  "severity": "info",
+  "summary": {
+    "headline": "알림이 왔어요"
+  },
+  "detail": {
+    "notification_type": "idle_prompt",
+    "message": "Claude is waiting for your input",
+    "title": "Claude Code"
+  },
+  "source": {
+    "channel": "claude_code.hook.http",
+    "native_ids": {
+      "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+    },
+    "native_event": "Notification"
+  },
+  "redacted": false,
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

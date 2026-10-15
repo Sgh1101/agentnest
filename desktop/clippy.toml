@@ -1,0 +1,6 @@
+# security.md 12 #6 / codex.md 2.1: ApplyProof::mint may be called from exactly one non-test place
+# (the success branch of Broker::apply_decision). That call site carries an explicit
+# #[allow(clippy::disallowed_methods)], which makes any second call site visible in review and in CI.
+disallowed-methods = [
+  { path = "agentnest_adapter_api::ApplyProof::mint", reason = "only Broker::apply_decision's success branch may mint an ApplyProof (security.md I5)" },
+]

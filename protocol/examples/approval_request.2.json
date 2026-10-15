@@ -1,0 +1,52 @@
+{
+  "v": 1,
+  "type": "approval_request",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000083",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "seq": 1845,
+  "payload": {
+    "request_id": "ar_01929f1b-0a11-7b3c-9e4d-00000000002b",
+    "nonce_b64": "dHTB5+2SmvWA/mbkYLBgOQ==",
+    "session_key": "codex:thr_01HZX3Q9N4K7",
+    "agent_kind": "codex",
+    "agent_label": "Codex",
+    "project": {
+      "project_key": "c:/dev/notes",
+      "name": "notes",
+      "path_hint": "…\\dev\\notes"
+    },
+    "origin": "codex.hook.cli",
+    "created_at": "2026-10-15T12:35:00.000Z",
+    "expires_at": "2026-10-15T12:37:00.000Z",
+    "ttl_seconds": 120,
+    "tool_name": "apply_patch",
+    "title": "파일 1개를 바꾸려고 해요",
+    "details": {
+      "kind": "file_change",
+      "file_paths": [
+        "src/pairing.rs"
+      ],
+      "diff_preview": "@@ -10,3 +10,4 @@\n-    old();\n+    new();",
+      "truncated": false
+    },
+    "tool_input_sha256": "a1b5f040275ff2e75b5bbbfe96102aa9b840fb4a8ea076d75119cdee05bfa72d",
+    "risk": {
+      "level": "low",
+      "reasons": [
+        "edit_in_project"
+      ],
+      "reasons_ko": [
+        "프로젝트 안의 파일을 고쳐요"
+      ],
+      "extra_confirmation": "none"
+    },
+    "allowed_decisions": [
+      "allow",
+      "deny"
+    ],
+    "auth_required_for": [
+      "allow"
+    ],
+    "local_prompt": "visible"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "v": 1,
+  "type": "welcome",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000001",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "pc": {
+      "pc_id": "pc_8252e6280a3d81d1",
+      "name": "DESKTOP-HOME",
+      "app_version": "0.1.0",
+      "os": "windows"
+    },
+    "protocol": {
+      "version": 1,
+      "minor": 0,
+      "min_client_version": "0.1.0"
+    },
+    "hosts": {
+      "addresses": [
+        "10.0.0.0",
+        "10.0.0.1",
+        "10.0.0.2",
+        "10.0.0.3",
+        "10.0.0.4",
+        "10.0.0.5",
+        "10.0.0.6",
+        "10.0.0.7",
+        "10.0.0.8"
+      ],
+      "port": 47832
+    },
+    "capabilities": [
+      "events",
+      "approvals",
+      "snapshot",
+      "resync",
+      "events_history",
+      "claude_code",
+      "codex_observe"
+    ],
+    "server_time": "2026-10-15T09:12:33.400Z",
+    "heartbeat": {
+      "client_ping_interval_s": 30,
+      "server_idle_close_s": 90
+    },
+    "resync": {
+      "mode": "replay",
+      "from_seq": 1831,
+      "to_seq": 1842
+    },
+    "limits": {
+      "approval_ttl_s": 120,
+      "max_frame_bytes": 262144,
+      "snapshot_max_bytes": 196608,
+      "events_page_max_bytes": 196608
+    },
+    "policy": {
+      "remote_approval": {
+        "critical": "extra_confirmation",
+        "high": "hold"
+      },
+      "deny_requires_auth": false
+    }
+  }
+}

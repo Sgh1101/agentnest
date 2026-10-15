@@ -74,10 +74,11 @@ agentnest/
 ├── protocol/                               # 언어 중립 단일 진실 공급원
 │   ├── schema/                             # JSON Schema draft 2020-12
 │   │   ├── envelope.schema.json
-│   │   ├── c2s/{pair,hello,ack,ping,snapshot_request,decision,approval_seen,unpair}.schema.json
+│   │   ├── c2s/{pair,hello,ack,ping,snapshot_request,events_request,decision,approval_seen,unpair}.schema.json
 │   │   ├── s2c/{challenge,pair_pending,pair_result,welcome,snapshot,event,session_state,
-│   │   │        approval_request,approval_resolved,decision_result,adapter_status,pong,error,bye}.schema.json
-│   │   ├── model/{agent_event,agent_state,approval_request,session_state,project_ref,risk}.schema.json
+│   │   │        approval_request,approval_resolved,decision_result,events_page,hosts_update,
+│   │   │        adapter_status,pong,error,bye}.schema.json
+│   │   ├── model/{common,agent_event,agent_state,approval_request,session_state,project_ref,risk}.schema.json
 │   │   └── qr/pairing_payload.schema.json
 │   ├── examples/                           # 타입당 ≥1개 유효 예시 + invalid/ (반드시 거부)
 │   ├── vectors/                            # pair 소지 증명·SAS·tool_input_sha256 테스트 벡터(Rust·Kotlin 동일 결과)
@@ -189,7 +190,7 @@ agentnest-protocol ◀── agentnest-adapter-api ◀── agentnest-core ◀�
 agentnest-protocol ◀── agentnest-hook
 ```
 
-`agentnest-adapter-api`는 `protocol`, `serde`, `serde_json`, `futures-util`, `tokio(sync)`만 의존한다. `agentnest-core`는 Tauri를 모른다: `Daemon::start(config) -> DaemonHandle{events: broadcast::Receiver<DaemonEvent>, cmds: mpsc::Sender<DaemonCommand>}`.
+`agentnest-adapter-api`는 `protocol`, `serde`, `serde_json`, `futures-util`, `tokio(sync)`, `thiserror`만 의존한다. `agentnest-core`는 Tauri를 모른다: `Daemon::start(config) -> DaemonHandle{events: broadcast::Receiver<DaemonEvent>, cmds: mpsc::Sender<DaemonCommand>}`.
 
 ### 3.3 `agentnest-core` 모듈 구조
 

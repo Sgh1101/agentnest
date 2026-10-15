@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/snapshot.schema.json",
+  "title": "snapshot payload",
+  "description": "protocol.md 4.6. Replaces the stream up to the envelope seq; does not consume a seq.",
+  "type": "object",
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/session_state.schema.json"
+      },
+      "maxItems": 20
+    },
+    "pending_approvals": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/approval_request.schema.json"
+      },
+      "maxItems": 20,
+      "description": "only unexpired; never silently dropped, overflow follows as separate approval_request frames"
+    },
+    "recent_errors": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/agent_event.schema.json"
+      },
+      "maxItems": 5
+    },
+    "recent_events": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/agent_event.schema.json"
+      },
+      "maxItems": 50,
+      "description": "seq ascending"
+    },
+    "adapters": {
+      "type": "array",
+      "items": {
+        "$ref": "adapter_status.schema.json"
+      },
+      "maxItems": 16
+    },
+    "focus": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "session_key": {
+              "$ref": "../model/common.schema.json#/$defs/SessionKey"
+            },
+            "state": {
+              "$ref": "../model/agent_state.schema.json"
+            }
+          },
+          "required": [
+            "session_key",
+            "state"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pending_approval_ids_complete": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/common.schema.json#/$defs/RequestId"
+      },
+      "maxItems": 64
+    },
+    "pending_followup": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "type": "object",
+      "properties": {
+        "sessions": {
+          "type": "boolean"
+        },
+        "pending_approvals": {
+          "type": "boolean"
+        },
+        "recent_events": {
+          "type": "boolean"
+        },
+        "recent_events_detail": {
+          "type": "boolean"
+        },
+        "approval_previews": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sessions",
+        "pending_approvals",
+        "recent_events",
+        "recent_events_detail",
+        "approval_previews"
+      ]
+    }
+  },
+  "required": [
+    "sessions",
+    "pending_approvals",
+    "recent_errors",
+    "recent_events",
+    "adapters",
+    "pending_approval_ids_complete",
+    "pending_followup",
+    "truncated"
+  ]
+}

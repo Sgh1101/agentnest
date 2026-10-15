@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/hosts_update.schema.json",
+  "title": "hosts_update payload",
+  "description": "protocol.md 4.5",
+  "type": "object",
+  "properties": {
+    "addresses": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/common.schema.json#/$defs/Host"
+      },
+      "maxItems": 8
+    },
+    "port": {
+      "$ref": "../model/common.schema.json#/$defs/Port"
+    }
+  },
+  "required": [
+    "addresses",
+    "port"
+  ]
+}

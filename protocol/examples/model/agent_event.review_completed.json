@@ -1,0 +1,35 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-00000000001e",
+  "seq": 1829,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "codex",
+  "session_key": "codex:thr_01HZX3Q9N4K7",
+  "kind": "review_completed",
+  "category": "review",
+  "severity": "info",
+  "summary": {
+    "headline": "리뷰를 마쳤어요 · P0 0 · P1 2"
+  },
+  "detail": {
+    "review_target": "uncommittedChanges",
+    "review_text_preview": "[P1] 토큰 만료 검사 누락",
+    "p0_count": 0,
+    "p1_count": 2
+  },
+  "source": {
+    "channel": "codex.app_server",
+    "native_ids": {
+      "thread_id": "thr_01HZX3Q9N4K7",
+      "item_id": "item_9"
+    },
+    "native_event": "item/completed"
+  },
+  "redacted": false,
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

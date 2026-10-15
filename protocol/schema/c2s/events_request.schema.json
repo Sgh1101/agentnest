@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/events_request.schema.json",
+  "title": "events_request payload",
+  "description": "protocol.md 4.15",
+  "type": "object",
+  "properties": {
+    "session_key": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/SessionKey"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "before_seq": {
+      "$ref": "../model/common.schema.json#/$defs/Seq",
+      "description": "exclusive upper bound (seq < before_seq)"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "1..100; larger values are clamped to 100 by the server (not rejected)"
+    },
+    "kinds": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "maxItems": 16,
+          "description": "unknown kinds are ignored by the server"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "before_seq",
+    "limit"
+  ]
+}

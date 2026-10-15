@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/model/common.schema.json",
+  "title": "Common definitions",
+  "description": "Shared identifier, timestamp and enum definitions for AgentNest protocol v1",
+  "$defs": {
+    "Uuid7": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "UUIDv7, lowercase"
+    },
+    "Timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$",
+      "description": "RFC 3339 UTC with a trailing Z; server emits milliseconds"
+    },
+    "Seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "PC-global monotonically increasing sequence number"
+    },
+    "RequestId": {
+      "type": "string",
+      "pattern": "^ar_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "'ar_' + UUIDv7"
+    },
+    "SessionKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*:\\S+$",
+      "maxLength": 256,
+      "description": "'<agent_kind>:<native_session_id>'"
+    },
+    "DeviceId": {
+      "type": "string",
+      "pattern": "^dev_[0-9a-f]{32}$",
+      "description": "'dev_' + 16 random bytes hex"
+    },
+    "PairingId": {
+      "type": "string",
+      "pattern": "^p_[0-9a-f]{16}$",
+      "description": "'p_' + 8 random bytes hex"
+    },
+    "PcId": {
+      "type": "string",
+      "pattern": "^pc_[0-9a-f]{16}$",
+      "description": "'pc_' + first 8 bytes of SHA-256(SPKI) hex"
+    },
+    "B64Std": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+      "minLength": 4,
+      "description": "standard base64 with padding"
+    },
+    "B64_16": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{22}==$",
+      "description": "standard base64 of exactly 16 bytes"
+    },
+    "B64_32": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{43}=$",
+      "description": "standard base64 of exactly 32 bytes"
+    },
+    "B64Url32": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "base64url (no padding) of exactly 32 bytes"
+    },
+    "Sha256Hex": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "lowercase hex SHA-256"
+    },
+    "Decision": {
+      "enum": [
+        "allow",
+        "deny",
+        "deny_and_stop"
+      ],
+      "description": "Closed set. Scope-expanding values (allow_for_session, ...) do not exist in v1 (security.md I11)."
+    },
+    "AgentKind": {
+      "enum": [
+        "claude_code",
+        "codex",
+        "gemini_cli",
+        "opencode",
+        "other"
+      ]
+    },
+    "AgentState": {
+      "enum": [
+        "idle",
+        "working",
+        "writing_code",
+        "reviewing",
+        "testing",
+        "awaiting_approval",
+        "awaiting_input",
+        "error",
+        "completed",
+        "disconnected"
+      ]
+    },
+    "SourceChannel": {
+      "enum": [
+        "claude_code.hook.http",
+        "claude_code.hook.cli",
+        "claude_code.statusline",
+        "codex.hook.cli",
+        "codex.app_server",
+        "codex.rollout",
+        "codex.exec_json"
+      ]
+    },
+    "CommandClass": {
+      "enum": [
+        "test",
+        "build",
+        "vcs",
+        "package",
+        "fs",
+        "network",
+        "shell"
+      ]
+    },
+    "AuthMethod": {
+      "enum": [
+        "biometric",
+        "device_credential",
+        "none"
+      ]
+    },
+    "ExtraConfirmation": {
+      "enum": [
+        "none",
+        "hold",
+        "hold_and_reconfirm"
+      ]
+    },
+    "ExtraConfirmationMethod": {
+      "enum": [
+        "hold",
+        "hold_and_reconfirm"
+      ]
+    },
+    "AdapterStatusKind": {
+      "enum": [
+        "connected",
+        "degraded",
+        "disconnected",
+        "not_configured"
+      ]
+    },
+    "AdapterMode": {
+      "enum": [
+        "hooks_http",
+        "hooks_cli",
+        "daemon_observer",
+        "rollout_tail",
+        "none"
+      ]
+    },
+    "RemoteApproval": {
+      "enum": [
+        "available",
+        "unavailable",
+        "paused",
+        "unknown"
+      ]
+    },
+    "Host": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64,
+      "description": "PC address (IPv4/IPv6 literal)"
+    },
+    "Port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    }
+  }
+}

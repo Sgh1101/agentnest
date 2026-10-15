@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/ack.schema.json",
+  "title": "ack payload",
+  "description": "protocol.md 4.14",
+  "type": "object",
+  "properties": {
+    "through_seq": {
+      "$ref": "../model/common.schema.json#/$defs/Seq"
+    },
+    "approval_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "../model/common.schema.json#/$defs/RequestId"
+      },
+      "maxItems": 64
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "through_seq"
+      ]
+    },
+    {
+      "required": [
+        "approval_ids"
+      ]
+    }
+  ]
+}

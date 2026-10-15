@@ -1,0 +1,34 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000006",
+  "seq": 1805,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "claude_code",
+  "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+  "kind": "turn_failed",
+  "category": "error",
+  "severity": "error",
+  "summary": {
+    "headline": "사용량 한도에 걸려 멈췄어요"
+  },
+  "detail": {
+    "error_code": "rate_limit",
+    "error_message": "Rate limit reached",
+    "will_retry": false
+  },
+  "source": {
+    "channel": "claude_code.hook.http",
+    "native_ids": {
+      "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+    },
+    "native_event": "StopFailure"
+  },
+  "redacted": false,
+  "state_hint": "error",
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/model/approval_request.schema.json",
+  "title": "ApprovalRequest",
+  "description": "protocol.md 6.1. Codex hooks origin never offers deny_and_stop (hooks cannot stop the agent).",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "common.schema.json#/$defs/RequestId"
+    },
+    "nonce_b64": {
+      "$ref": "common.schema.json#/$defs/B64_16"
+    },
+    "session_key": {
+      "$ref": "common.schema.json#/$defs/SessionKey"
+    },
+    "agent_kind": {
+      "$ref": "common.schema.json#/$defs/AgentKind"
+    },
+    "agent_label": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "project": {
+      "$ref": "project_ref.schema.json"
+    },
+    "origin": {
+      "$ref": "common.schema.json#/$defs/SourceChannel"
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "expires_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "ttl_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 180
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "purpose": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Agent-controlled, unverified text (protocol.md 6.1)"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "details": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "command",
+            "file_write",
+            "file_edit",
+            "file_read",
+            "mcp_tool",
+            "web",
+            "agent",
+            "file_change",
+            "permissions",
+            "other"
+          ]
+        },
+        "command": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd_hint": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "maxItems": 50
+        },
+        "diff_preview": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_preview": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mcp_server": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 500
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "permission_suggestions_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "truncated"
+      ],
+      "description": "Display-only, bounded and masked. The full tool_input is represented only by tool_input_sha256.",
+      "title": "ApprovalDetails"
+    },
+    "tool_input_sha256": {
+      "$ref": "common.schema.json#/$defs/Sha256Hex"
+    },
+    "risk": {
+      "$ref": "risk.schema.json"
+    },
+    "allowed_decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Decision"
+      },
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "auth_required_for": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/Decision"
+      },
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "permission_mode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 64
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "local_prompt": {
+      "enum": [
+        "unknown",
+        "visible",
+        "hidden"
+      ]
+    }
+  },
+  "required": [
+    "request_id",
+    "nonce_b64",
+    "session_key",
+    "agent_kind",
+    "agent_label",
+    "project",
+    "origin",
+    "created_at",
+    "expires_at",
+    "ttl_seconds",
+    "tool_name",
+    "title",
+    "details",
+    "tool_input_sha256",
+    "risk",
+    "allowed_decisions",
+    "auth_required_for",
+    "local_prompt"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "origin": {
+            "const": "codex.hook.cli"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "then": {
+        "properties": {
+          "allowed_decisions": {
+            "not": {
+              "contains": {
+                "const": "deny_and_stop"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

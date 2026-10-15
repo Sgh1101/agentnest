@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/hello.schema.json",
+  "title": "hello payload",
+  "description": "protocol.md 4.4",
+  "type": "object",
+  "properties": {
+    "device_id": {
+      "$ref": "../model/common.schema.json#/$defs/DeviceId"
+    },
+    "device_token": {
+      "$ref": "../model/common.schema.json#/$defs/B64Url32"
+    },
+    "challenge_b64": {
+      "$ref": "../model/common.schema.json#/$defs/B64_16"
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "app_version": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 32
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "last_seq": {
+      "$ref": "../model/common.schema.json#/$defs/Seq"
+    },
+    "wants_snapshot": {
+      "type": "boolean"
+    },
+    "signature_b64": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/B64Std"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "device_id",
+    "device_token",
+    "challenge_b64",
+    "protocol",
+    "last_seq",
+    "wants_snapshot"
+  ]
+}

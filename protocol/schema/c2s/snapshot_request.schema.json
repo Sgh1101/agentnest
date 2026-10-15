@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/snapshot_request.schema.json",
+  "title": "snapshot_request payload",
+  "description": "protocol.md 4.14",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 64
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

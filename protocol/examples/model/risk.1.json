@@ -1,0 +1,10 @@
+{
+  "level": "low",
+  "reasons": [
+    "test_or_build"
+  ],
+  "reasons_ko": [
+    "빌드나 테스트 명령이에요"
+  ],
+  "extra_confirmation": "none"
+}

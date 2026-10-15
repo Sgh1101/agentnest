@@ -1,0 +1,10 @@
+{
+  "level": "high",
+  "reasons": [
+    "recursive_delete"
+  ],
+  "reasons_ko": [
+    "폴더를 통째로 지우는 명령이에요"
+  ],
+  "extra_confirmation": "hold"
+}

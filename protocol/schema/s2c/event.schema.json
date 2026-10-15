@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/event.schema.json",
+  "title": "event payload",
+  "description": "protocol.md 4.7 (payload = AgentEvent)",
+  "$ref": "../model/agent_event.schema.json"
+}

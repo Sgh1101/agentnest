@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "type": "approval_resolved",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000085",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "seq": 1851,
+  "payload": {
+    "request_id": "ar_01929f1b-0a11-7b3c-9e4d-00000000002b",
+    "session_key": "codex:thr_01HZX3Q9N4K7",
+    "outcome": "expired",
+    "resolved_by": "timeout",
+    "resolved_at": "2026-10-15T12:37:00.010Z",
+    "delivery": "not_delivered",
+    "observed_result": "unknown",
+    "message_ko": "시간이 지나 PC에서 직접 처리하도록 넘겼어요."
+  }
+}

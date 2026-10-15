@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "adapter_status",
+  "id": "01929f2a-7c00-7b3c-9e4d-00000000008b",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "seq": 1851,
+  "payload": {
+    "agent_kind": "codex",
+    "status": "connected",
+    "mode": "hooks_cli",
+    "detail": "codex hooks trusted",
+    "updated_at": "2026-10-15T12:00:00.000Z"
+  }
+}

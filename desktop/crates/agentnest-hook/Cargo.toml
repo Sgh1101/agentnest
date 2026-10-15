@@ -1,0 +1,22 @@
+[package]
+name = "agentnest-hook"
+version = "0.1.0"
+description = "Tiny CLI invoked by Claude Code / Codex command hooks: stdin JSON -> local daemon POST -> stdout"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agentnest-hook"
+path = "src/main.rs"
+
+[dependencies]
+agentnest-protocol = { path = "../agentnest-protocol" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+ureq = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

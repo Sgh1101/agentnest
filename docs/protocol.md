@@ -131,7 +131,7 @@
  ‖ L(device_name) device_name(UTF-8 NFC, ≤64B) ‖ L(spki) spki(DER raw, 없으면 L=0)
 ```
 
-인코더는 `agentnest-protocol::canonical`(Rust)와 `dev.agentnest.core.crypto.Canonical`(Kotlin)에 있고 `protocol/vectors/pair.json`으로 바이트 단위 일치를 검증한다.
+인코더는 `agentnest-protocol::canonical`(Rust)와 `dev.agentnest.core.crypto.Canonical`(Kotlin)에 있고 `protocol/vectors/pair.json`으로 바이트 단위 일치를 검증한다. `pairing_secret` 은 QR 의 base64url 을 디코드한 **원시 32바이트**가 HMAC 키다. `device_name` 의 NFC 정규화와 64바이트 상한 검사는 **폰이 `pair` 를 보내기 전에** 하고(`device.name` 과 HMAC 입력에 같은 문자열을 쓴다), PC 는 받은 문자열의 UTF-8 바이트를 그대로 쓴다(재정규화하지 않음; 64바이트 초과는 `E_BAD_MESSAGE`). SAS 의 `challenge`·`spki` 도 원시 바이트이며 길이 프리픽스는 붙이지 않는다.
 
 ### 4.3 `pair_pending` / `pair_result` (PC→폰)
 
@@ -356,7 +356,7 @@
   "kind": "command_started",
   "category": "command",
   "severity": "info",
-  "summary": { "headline": "테스트를 돌리고 있어요 (cargo test -p agentnest-core)", "detail": "Run core tests." },
+  "summary": { "headline": "테스트를 돌리고 있어요 (cargo test -p core)", "detail": "Run core tests." },
   "state_hint": "testing",
   "detail": { "tool_name": "Bash", "command": "cargo test -p agentnest-core", "description": "Run core tests", "command_class": "test", "cwd_hint": "…\\agentnest", "run_in_background": false },
   "source": { "channel": "claude_code.hook.http", "native_event": "PreToolUse",
@@ -433,7 +433,7 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
   "project": { "project_key": "c:/dev/agentnest", "name": "agentnest", "path_hint": "…\\dev\\agentnest", "branch": "feat/pairing" },
   "state": "testing",
   "state_since": "2026-10-15T12:34:50.000Z",
-  "headline": "테스트를 돌리고 있어요 (cargo test -p agentnest-core)",
+  "headline": "테스트를 돌리고 있어요 (cargo test -p core)",
   "detail": "Run core tests.",
   "started_at": "2026-10-15T11:02:10.000Z",
   "turn": { "active": true, "started_at": "2026-10-15T12:30:01.000Z", "completed_at": null, "prompt_preview": "페어링 토큰 만료 테스트 추가해줘" },
@@ -504,6 +504,8 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
 | 타이머 `dead_after` | `turn_active && 45분 무이벤트` 또는 `!turn_active && 30분 무이벤트` | `disconnected` | 비정상 종료 시 `SessionEnd` 미발생 가능 — 검증 필요 (Phase 0) |
 | `session_ended` | — | `ended=true`(10분 후 활성 목록 제거) | 캐릭터 입력에서 제외 |
 
+**픽스처 입력 규약**: `thread/status/changed` 는 전용 `AgentEvent.kind` 가 없어 정규화기가 `kind: "notification"` + `detail{notification_type:"codex_thread_status", status, active_flags, has_recent_items?}` 로 내보낸다. 오류 래치(5초/30초/sticky)는 기저 상태 위에 덮어쓰는 방식이라 해제되면 기저 상태가 드러난다 — 세부 규약은 `state_transitions.json` 의 `_format.conventions` 가 규범이다.
+
 **단일 출처 규칙**: 두 에이전트의 모든 상태 전이는 이 표 한 곳에만 있다. `integrations/codex.md` §7은 Codex 알림 → `AgentEvent.kind` **정규화 매핑**만 두고 상태 결과를 다시 적지 않는다. `protocol/fixtures/state_transitions.json`에는 위 `(Codex)` 행마다 케이스(`codex_file_change`, `codex_review_window`, `codex_waiting_on_approval_flag`, `codex_active_idle`, `codex_web_mcp`, `codex_socket_eof`, `codex_system_error`, `codex_hooks_unknown_tool`)가 있고 Rust·Kotlin 리듀서가 같은 파일을 읽는다.
 
 **에러 지속시간의 단일 출처**: `error` 상태가 얼마나 지속되는지는 이 표(PC 리듀서)만이 정한다 — `tool_failed`/`command_failed` 5초 일시, `test_failed` 30초(또는 해제 입력), `turn_failed`/`agent_error` 다음 프롬프트까지. 폰의 `MoodResolver`는 별도의 `flustered` 타이머를 두지 않고 `AgentState.error`를 그대로 따른다(`character.md` §2.2).
@@ -572,7 +574,7 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
 | --- | --- |
 | `request_id` | `ar_` + UUIDv7(PC 발급). Claude `PermissionRequest`에는 `tool_use_id`가 없으므로 [검증] 열린 HTTP 요청이 상관 키 |
 | `nonce_b64` | 16바이트 CSPRNG, 요청별 |
-| `tool_input_sha256` | `SHA-256(canonical JSON(tool_input))` — **PC만 계산**(키 정렬, 공백 없음). 폰은 에코만. 표시 축약(`details`)이 바인딩을 약화시키지 않게 함 |
+| `tool_input_sha256` | `SHA-256(canonical JSON(tool_input))` 소문자 hex — **PC만 계산**. 폰은 에코만. 표시 축약(`details`)이 바인딩을 약화시키지 않게 함. **canonical JSON = RFC 8785(JCS)**: 객체 키를 UTF-16 코드 유닛 순으로 정렬, 공백 없음, 문자열은 `"` `\` 와 U+0020 미만 제어 문자만 이스케이프(`\b \t \n \f \r`, 나머지는 `\u00xx` 소문자 hex; 그 외 문자는 UTF-8 원문), 모든 숫자는 IEEE-754 double 의 ECMAScript `Number::toString`(`-0`→`0`, `1.0`→`1`, `1e21`→`1e+21`, 2^53 초과 정수는 double 로 반올림), 중복 키는 마지막 값. 바이트 단위 벡터: `protocol/vectors/tool_input_sha256.json` |
 | `details.kind` | `command` \| `file_write` \| `file_edit` \| `file_read` \| `mcp_tool` \| `web` \| `agent` \| `file_change`(Codex) \| `permissions`(Codex) \| `other` |
 | `details.*` | 표시용 상한: `command` 2,000자, `diff_preview` 4 KiB, `content_preview`(Write 신규 첫 20줄, 마스킹), `file_paths` 50개. 전체 파일 본문은 없음 |
 | `title` / `purpose` | `title`은 도구별 고정 한국어(§7). **`purpose`는 에이전트가 쓴 `description`이라 에이전트(또는 공격자) 통제 문자열이며 검증되지 않는다**(없으면 null). PC가 제어 문자·양방향 제어를 제거하고 200자로 절단한다. 폰·데스크톱은 이를 **"에이전트가 한 말 (검증 안 됨)"** 으로 라벨링해 실제 명령·위험 등급보다 시각적으로 낮은 위치·작은 글씨로 표시한다(`android.md` §2.2, `desktop.md` §6) |
@@ -589,7 +591,7 @@ Codex **hooks 경로**의 `tool_name` 값과 이벤트별 `tool_use_id` 제공 �
 
 ## 7. 한국어 요약 템플릿 (`summarize::ko`, 골든 `protocol/fixtures/summaries_ko.json`)
 
-어조: 해요체, 진행형 "~하고 있어요", 결과 "~했어요". `headline ≤ 40자`, `detail ≤ 200자`. 경로는 basename(+상위 1단계), 명령은 `{cmd60}`(선행 `cd X &&`/`env VAR=` 제거 → 60자 → `…`, 토큰 패턴 `***`).
+어조: 해요체, 진행형 "~하고 있어요", 결과 "~했어요". `headline ≤ 40자`, `detail ≤ 200자`. 경로는 basename(+상위 1단계), 명령은 `{cmd60}`(선행 `cd X &&`/`env VAR=` 제거 → 토큰 패턴 `***` 마스킹 → 60자 초과 시 59자 + `…`). **모든 `headline`/`detail`은 템플릿을 채운 뒤 마지막에 한도로 절단한다(초과 시 앞 39자 + `…`; `detail` 은 199자 + `…`).** 그래서 `{cmd60}` 이 길면 헤드라인에서 한 번 더 잘린다(예: `테스트를 돌리고 있어요 (cargo test -p agentnest-c…`). 정확한 규칙과 골든 케이스는 `protocol/fixtures/summaries_ko.json`(`_format.rules`)이 규범이다.
 
 | 입력 | `title`(승인 카드) | `headline` | `detail` |
 | --- | --- | --- | --- |
@@ -721,6 +723,6 @@ Kotlin: `Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls =
 
 ## 11. 스키마 배치와 라운드트립
 
-- `protocol/schema/envelope.schema.json`이 `type`별 payload를 `oneOf`로 참조. 예제 `protocol/examples/<type>.<n>.json`(유효) + `protocol/examples/invalid/<type>.<n>.json`(반드시 거부: `decision`에 `allow_for_session`, `v: 2`, 음수 `seq`, `nonce_b64` 누락 등).
+- `protocol/schema/envelope.schema.json`이 `type`별 payload 스키마(`c2s/<type>`, `s2c/<type>` = **payload 만** 기술)를 `if/then` 분기로 참조한다(`oneOf` 는 알 수 없는 `type` 을 무시해야 하는 전방 호환 규칙과 충돌하므로 쓰지 않는다; 재생 가능 타입은 `seq` 필수). 공용 정의(ID·타임스탬프·공용 enum)는 `model/common.schema.json`. 예제 `protocol/examples/<type>.<n>.json`(유효, 전체 봉투) + `protocol/examples/model/*`·`qr/*`(봉투 없는 모델/QR 페이로드) + `protocol/examples/invalid/<type>.<n>.json`(반드시 거부: `decision`에 `allow_for_session`, `v: 2`, 음수 `seq`, `nonce_b64` 누락 등; `invalid/_index.json` 이 파일별 사유·오류 위치·Rust 타입도 거부해야 하는지를 기록). `protocol/examples/forward_compat/` 은 **스키마엔 위반하지만 읽기 쪽이 관대하게 받아야 하는** 파일(알 수 없는 enum·필드; §10) 이라 스키마 검증 대상이 아니다. 스키마의 enum 은 v1 값으로 닫혀 있고(`decision` 은 3값), 전방 호환은 읽기 구현(Rust `Unknown(String)`, Kotlin `UNKNOWN`)의 책임이다. `$id` 는 가상의 `https://agentnest.example/protocol/schema/…` 이며 네트워크로 가져오지 않는다.
 - Rust(`jsonschema 0.58.6`, default-features=false)와 Kotlin(kotlinx.serialization 디코드 → 재인코딩 비교)이 **같은 파일**을 읽는다. 한쪽만 통과하면 CI 실패.
 - `protocol/vectors/`: `pair` canonical 바이트열·HMAC·SAS, `tool_input_sha256` canonical JSON 케이스. Phase 3 ECDSA 벡터는 그때 추가.

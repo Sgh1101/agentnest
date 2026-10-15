@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "snapshot_request",
+  "id": "01929f2a-7c00-7b3c-9e4d-00000000006c",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "reason": "pull_to_refresh"
+  }
+}

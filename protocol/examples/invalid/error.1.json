@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "error",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000001",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "code": "E_UNKNOWN",
+    "message": "x",
+    "fatal": false
+  }
+}

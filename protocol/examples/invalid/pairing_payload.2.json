@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "pc_id": "pc_8252e6280a3d81d1",
+  "pc_name": "DESKTOP-HOME",
+  "hosts": [
+    "192.168.0.10",
+    "10.8.0.2"
+  ],
+  "port": 47832,
+  "spki_pin": "sha256/abc",
+  "pairing_id": "p_3f9c2b1ea8d04c77",
+  "pairing_secret": "PH3xtFr5K5p_eeUvT-rN8XCPxRr9HpAGz8OqMr24H-w",
+  "expires_at": "2026-10-15T09:14:33Z"
+}

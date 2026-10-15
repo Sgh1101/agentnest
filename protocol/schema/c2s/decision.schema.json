@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/decision.schema.json",
+  "title": "decision payload",
+  "description": "protocol.md 4.10. The four binding fields are echoed verbatim from approval_request.",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "../model/common.schema.json#/$defs/RequestId"
+    },
+    "session_key": {
+      "$ref": "../model/common.schema.json#/$defs/SessionKey"
+    },
+    "nonce_b64": {
+      "$ref": "../model/common.schema.json#/$defs/B64_16"
+    },
+    "tool_input_sha256": {
+      "$ref": "../model/common.schema.json#/$defs/Sha256Hex"
+    },
+    "decision": {
+      "$ref": "../model/common.schema.json#/$defs/Decision"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200,
+          "description": "user-entered deny reason; sanitised by the PC before it reaches the agent"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decided_at": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    },
+    "auth": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "$ref": "../model/common.schema.json#/$defs/AuthMethod"
+            },
+            "authenticated_at": {
+              "anyOf": [
+                {
+                  "$ref": "../model/common.schema.json#/$defs/Timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "method"
+          ],
+          "description": "A claim by the phone, not cryptographic proof in Phase 1 (security.md 6.4)",
+          "title": "DecisionAuth"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "extra_confirmation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "method": {
+              "$ref": "../model/common.schema.json#/$defs/ExtraConfirmationMethod"
+            },
+            "completed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "method",
+            "completed"
+          ],
+          "title": "ExtraConfirmationProof"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "signature_b64": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/B64Std"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "request_id",
+    "session_key",
+    "nonce_b64",
+    "tool_input_sha256",
+    "decision",
+    "decided_at"
+  ]
+}

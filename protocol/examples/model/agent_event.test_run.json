@@ -1,0 +1,34 @@
+{
+  "event_id": "01929f1a-7a00-7b3c-9e4d-000000000010",
+  "seq": 1815,
+  "ts": "2026-10-15T09:12:33.120Z",
+  "agent_kind": "claude_code",
+  "session_key": "claude_code:7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f",
+  "kind": "test_run",
+  "category": "command",
+  "severity": "info",
+  "summary": {
+    "headline": "테스트를 시작했어요"
+  },
+  "detail": {
+    "command": "cargo test",
+    "command_class": "test",
+    "runner": "cargo"
+  },
+  "source": {
+    "channel": "claude_code.hook.http",
+    "native_ids": {
+      "session_id": "7f1e2d3c-4b5a-4c6d-8e7f-0a1b2c3d4e5f"
+    },
+    "native_event": "PreToolUse"
+  },
+  "redacted": false,
+  "state_hint": "testing",
+  "project": {
+    "project_key": "c:/dev/agentnest",
+    "name": "agentnest",
+    "path_hint": "…\\dev\\agentnest",
+    "repo": "owner/agentnest",
+    "branch": "feat/pairing"
+  }
+}

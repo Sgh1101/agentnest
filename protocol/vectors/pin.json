@@ -1,0 +1,19 @@
+{
+  "description": "Server identity derivations (security.md 3 / 4.1). spki_pin = 'sha256/' + base64(SHA-256(DER SubjectPublicKeyInfo)) (standard alphabet, padded; OkHttp pin format). pc_id = 'pc_' + first 8 bytes of SHA-256(SPKI) as lowercase hex.",
+  "cases": [
+    {
+      "name": "server_key",
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004839627216528cc0a6a5765be82e6563841d947f2ffb7c25c4c0e234a28f7a426f49da79fa76927fd6b6e5cec5301a50ddce66604e1b9ae2926bf6883b991edea",
+      "spki_pin": "sha256/glLmKAo9gdGvAGIYNxNEvncjE6SNAheIa/dX4bFINbU=",
+      "pc_id": "pc_8252e6280a3d81d1",
+      "sha256_hex": "8252e6280a3d81d1af006218371344be772313a48d0217886bf757e1b14835b5"
+    },
+    {
+      "name": "device_key",
+      "spki_hex": "3059301306072a8648ce3d020106082a8648ce3d03010703420004ec8e9aa8694be804de352c609ccb9024732347389cd5aff9d69f7ba19300c11970b781f57b864f9a28c7180fde4ced371e653828d5069d0d0f803da1cb7e2fb2",
+      "spki_pin": "sha256/HQgUeeP2uls/su9T9LLZF+Ul5xCoF3q5d8x6D4FmHa4=",
+      "pc_id": "pc_1d081479e3f6ba5b",
+      "sha256_hex": "1d081479e3f6ba5b3fb2ef53f4b2d917e525e710a8177ab977cc7a0f81661dae"
+    }
+  ]
+}

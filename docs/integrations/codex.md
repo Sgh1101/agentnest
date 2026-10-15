@@ -73,7 +73,7 @@ pub enum RawObservation {
     Event(AgentEvent),
     ApprovalOpened { draft: ApprovalDraft, responder: Box<dyn ApprovalResponder> },
     ApprovalClosedByAgent { binding: NativeBinding, reason: AgentCloseReason },
-    ApprovalOutcomeObserved { binding: NativeBinding, observed: ObservedResult, evidence_event_id: Uuid },
+    ApprovalOutcomeObserved { binding: NativeBinding, observed: ObservedResult, evidence_event_id: String /* UUIDv7 문자열 — adapter-api 는 uuid 크레이트에 의존하지 않는다 */ },
     SessionMeta { session_key: SessionKey, patch: SessionMetaPatch },
     Health(AdapterHealth),
 }
@@ -124,7 +124,7 @@ pub trait ApprovalResponder: Send + Sync {
 }
 ```
 
-- **허용 생성 경로 유일성(I5)의 강제 방식**: 어댑터 크레이트(claude_code/codex)의 응답자는 `match reply.as_wire() { ReplyKind::Allow => …, ReplyKind::Deny{…} => … }`로 **번역만** 하므로 코드에 `ApprovalReply::Allow` 같은 문자열이 존재하지 않는다(그런 variant가 없다). 검사는 (1) `compile_fail` doctest — 외부에서 `ApprovalReply(Inner::Allow)`·`ApprovalReply::allow()`(증명 없이)·`ApplyProof(())` 리터럴이 컴파일되지 않음, (2) CI grep — `ApplyProof::mint`의 비테스트 호출이 `approvals/broker.rs`의 `apply_decision` 성공 분기 1곳뿐(`testing-and-ci.md` §2), (3) (보조, [추정] 구현 시 확인) `clippy.toml`의 `disallowed-methods`로 `ApplyProof::mint`를 금지하고 그 한 줄에만 `#[allow]`. 서로 다른 크레이트라 `pub(crate)`로는 막을 수 없어 `mint`는 `#[doc(hidden)] pub`이며, 2·3번이 이를 보완한다.
+- **허용 생성 경로 유일성(I5)의 강제 방식**: 어댑터 크레이트(claude_code/codex)의 응답자는 `match reply.as_wire() { ReplyKind::Allow => …, ReplyKind::Deny{…} => … }`로 **번역만** 하므로 코드에 `ApprovalReply::Allow` 같은 문자열이 존재하지 않는다(그런 variant가 없다). 검사는 (1) `compile_fail` doctest — 외부에서 `ApprovalReply(Inner::Allow)`·`ApprovalReply::allow()`(증명 없이)·`ApplyProof(())` 리터럴이 컴파일되지 않음, (2) CI grep — `ApplyProof::mint`의 비테스트 호출이 `approvals/broker.rs`의 `apply_decision` 성공 분기 1곳뿐(`testing-and-ci.md` §2), (3) `desktop/clippy.toml`의 `disallowed-methods`가 `ApplyProof::mint`를 금지하므로(구현·검증됨) 유일한 호출 한 줄에만 `#[allow(clippy::disallowed_methods)]`가 붙는다. 이 grep 이 빗나가지 않도록 adapter-api 의 `src/` 주석에는 해당 리터럴을 쓰지 않고, compile_fail 예제는 `tests/compile_fail.md` 에 둔다. 서로 다른 크레이트라 `pub(crate)`로는 막을 수 없어 `mint`는 `#[doc(hidden)] pub`이며, 2·3번이 이를 보완한다.
 - 레지스트리(`agentnest-core::adapters::Registry`)는 설정 순서대로 `start`. Cargo feature: `adapter-claude-code`(기본 on), `adapter-codex-hooks`(기본 on), `codex-daemon-observer`(**기본 off**), `codex-rollout`(off), `adapter-mock`(dev; 픽스처 JSONL 재생으로 폰/데스크톱 E2E).
 - 어댑터는 `AgentEvent.summary`를 직접 쓰지 않고 `summarize::ko`를 호출한다.
 

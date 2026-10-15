@@ -1,0 +1,186 @@
+{
+  "description": "tool_input_sha256 = lowercase hex SHA-256 of the canonical JSON (RFC 8785 JCS: keys sorted by UTF-16 code units, no whitespace, minimal string escaping, numbers as ECMAScript Number::toString of the IEEE-754 double) of the tool_input value, UTF-8 encoded. input_json is the exact source text (it must be parsed, not compared as a string); duplicate keys: last one wins. The phone never computes this hash; it only echoes it.",
+  "cases": [
+    {
+      "name": "keys_sorted",
+      "input_json": "{\"b\":1,\"a\":2}",
+      "canonical_json": "{\"a\":2,\"b\":1}",
+      "sha256_hex": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+    },
+    {
+      "name": "nested_and_array_order_kept",
+      "input_json": "{\"z\":[3,1,2],\"a\":{\"y\":true,\"x\":null}}",
+      "canonical_json": "{\"a\":{\"x\":null,\"y\":true},\"z\":[3,1,2]}",
+      "sha256_hex": "b34ddc7cc6dc5c7cc19db4e3526c205b9b295fa8787094d1eff680e929a5504e"
+    },
+    {
+      "name": "whitespace_removed",
+      "input_json": "  {\n  \"a\" : [ 1 , 2 ] ,\t\"b\" : \"x y\"\n}  ",
+      "canonical_json": "{\"a\":[1,2],\"b\":\"x y\"}",
+      "sha256_hex": "7cbf9a1925627414ac77c5981864910898c7d4e7bfcb7a1f141c20abf7bd66df"
+    },
+    {
+      "name": "empty_containers",
+      "input_json": "{\"a\":{},\"b\":[]}",
+      "canonical_json": "{\"a\":{},\"b\":[]}",
+      "sha256_hex": "aeeba1e56a144077f89e26c930dad7cf933e9383cfb8e33ddff618233b29be76"
+    },
+    {
+      "name": "scalars_top_level_string",
+      "input_json": "\"plain\"",
+      "canonical_json": "\"plain\"",
+      "sha256_hex": "945603a8f587786b463c3f94fce115c0fae88fac2728cc96ddf5981cf7f61741"
+    },
+    {
+      "name": "scalars_top_level_null",
+      "input_json": "null",
+      "canonical_json": "null",
+      "sha256_hex": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "name": "unicode_korean_raw",
+      "input_json": "{\"command\":\"echo 테스트\"}",
+      "canonical_json": "{\"command\":\"echo 테스트\"}",
+      "sha256_hex": "ca4c83b095855cd00d0c056ff6e3547908a29e010239ccb67e3944a08424a460"
+    },
+    {
+      "name": "unicode_escape_input_becomes_raw",
+      "input_json": "{\"k\":\"\\u00e9\\uac00\"}",
+      "canonical_json": "{\"k\":\"é가\"}",
+      "sha256_hex": "1bee29f2a7ecce23d604ec31ca6fc7063fd74674b51ae58a41cc19d475ba4147"
+    },
+    {
+      "name": "surrogate_pair_escape_becomes_raw_emoji",
+      "input_json": "{\"k\":\"\\ud83d\\ude00\"}",
+      "canonical_json": "{\"k\":\"😀\"}",
+      "sha256_hex": "f073f1f05c0a1e01bf604e8ec5f389a64fdeb334e00f9456008269e852b1ff4a"
+    },
+    {
+      "name": "control_chars_escaped",
+      "input_json": "{\"k\":\"a\\u0001b\\n\\t\\r\\b\\f\\u001f\"}",
+      "canonical_json": "{\"k\":\"a\\u0001b\\n\\t\\r\\b\\f\\u001f\"}",
+      "sha256_hex": "77e0d7cd03f396ea25d648c9aa5a6678f0408475143567b318fedfd260cc218d",
+      "note": "short escapes only for \\b \\t \\n \\f \\r; other control chars < 0x20 as \\u00xx lowercase hex"
+    },
+    {
+      "name": "solidus_not_escaped",
+      "input_json": "{\"k\":\"a\\/b\"}",
+      "canonical_json": "{\"k\":\"a/b\"}",
+      "sha256_hex": "2df8c51747b2319a3820aea161c47aa9641e8d555a69da59ed5c7c4a1b5f6e3d"
+    },
+    {
+      "name": "quote_and_backslash",
+      "input_json": "{\"k\":\"say \\\"hi\\\" \\\\ bye\"}",
+      "canonical_json": "{\"k\":\"say \\\"hi\\\" \\\\ bye\"}",
+      "sha256_hex": "1dac8820e5b21ddef004de403c5f8d0bba08086c0078441c327bf2aeaf1fc647"
+    },
+    {
+      "name": "del_and_line_separator_raw",
+      "input_json": "{\"k\":\"\\u007f\\u2028\"}",
+      "canonical_json": "{\"k\":\" \"}",
+      "sha256_hex": "b596fdfa64aa3f9367a95414fc0fa5bac99b6e6bed77a61746717f28a5a24b60",
+      "note": "U+007F and U+2028 are emitted raw (no escaping above 0x1f)"
+    },
+    {
+      "name": "key_order_utf16_not_utf8",
+      "input_json": "{\"\\ud83d\\ude00\":1,\"\\uffee\":2}",
+      "canonical_json": "{\"😀\":1,\"￮\":2}",
+      "sha256_hex": "cda86a39aa13f4f09297af0d55c78cca4c3f85a55acbc96a3d4e4b5ffe20ce0c",
+      "note": "RFC 8785 sorts keys by UTF-16 code units: U+FFEE (0xFFEE) sorts AFTER U+1F600 (0xD83D 0xDE00), unlike UTF-8 byte order"
+    },
+    {
+      "name": "key_order_ascii_case",
+      "input_json": "{\"b\":1,\"B\":2,\"a\":3,\"A\":4,\"_\":5,\"1\":6}",
+      "canonical_json": "{\"1\":6,\"A\":4,\"B\":2,\"_\":5,\"a\":3,\"b\":1}",
+      "sha256_hex": "5fa1c33adb89ebdd5fc955e8c395e209c66ca0c38170f1f03c59456e3e5d7f7a"
+    },
+    {
+      "name": "duplicate_keys_last_wins",
+      "input_json": "{\"a\":1,\"a\":2}",
+      "canonical_json": "{\"a\":2}",
+      "sha256_hex": "7e8059f495589fcd981232cc11d00b00da3802c01d688fa1cf1f6bed6e5bb33c"
+    },
+    {
+      "name": "int_basic",
+      "input_json": "{\"a\":0,\"b\":-1,\"c\":120000}",
+      "canonical_json": "{\"a\":0,\"b\":-1,\"c\":120000}",
+      "sha256_hex": "2d634910bf378b49108b31dc42bd2e6f42bdfd4aa4852712d35b0f854966c789"
+    },
+    {
+      "name": "negative_zero",
+      "input_json": "{\"a\":-0}",
+      "canonical_json": "{\"a\":0}",
+      "sha256_hex": "45b619e97b5d9b029af4522e9ffb02fa99ff2bf226c82ee22a7cc10269a557e8",
+      "note": "-0 canonicalises to 0"
+    },
+    {
+      "name": "float_integral_drops_fraction",
+      "input_json": "{\"a\":1.0,\"b\":100.00,\"c\":1E2}",
+      "canonical_json": "{\"a\":1,\"b\":100,\"c\":100}",
+      "sha256_hex": "777404ad3ff9c58d4095108e24913e1a87a8a4c98d652b80758e1b4e5b3b157e"
+    },
+    {
+      "name": "float_fraction",
+      "input_json": "{\"a\":1.5,\"b\":0.1,\"c\":-2.25,\"d\":0.000001}",
+      "canonical_json": "{\"a\":1.5,\"b\":0.1,\"c\":-2.25,\"d\":0.000001}",
+      "sha256_hex": "0e907707ed56da4d8c3f56901aaa046f1dc4bcca56aed8222c23d2c5a96092ea"
+    },
+    {
+      "name": "float_small_exponent",
+      "input_json": "{\"a\":1e-7,\"b\":4.5e-7,\"c\":1.5e-10}",
+      "canonical_json": "{\"a\":1e-7,\"b\":4.5e-7,\"c\":1.5e-10}",
+      "sha256_hex": "bc5ee857826a2e0ae515ad0d15175774cc7b5cb1fcd21c80ddf7c920e7e83891"
+    },
+    {
+      "name": "float_large_exponent",
+      "input_json": "{\"a\":1e21,\"b\":1.5e300,\"c\":123456789012345680000,\"d\":1e20}",
+      "canonical_json": "{\"a\":1e+21,\"b\":1.5e+300,\"c\":123456789012345680000,\"d\":100000000000000000000}",
+      "sha256_hex": "9733a6e105d2f59957be2f0f81e21edcfc2b6507030ee50270c066c6f947bbab"
+    },
+    {
+      "name": "float_shortest_roundtrip",
+      "input_json": "{\"a\":0.30000000000000004,\"b\":5e-324,\"c\":1.7976931348623157e308}",
+      "canonical_json": "{\"a\":0.30000000000000004,\"b\":5e-324,\"c\":1.7976931348623157e+308}",
+      "sha256_hex": "093f0af54369f85811876a750e475643441ab118023d2850a2205a437110b241"
+    },
+    {
+      "name": "integer_above_2_53_becomes_double",
+      "input_json": "{\"a\":9007199254740993,\"b\":18446744073709551615}",
+      "canonical_json": "{\"a\":9007199254740992,\"b\":18446744073709552000}",
+      "sha256_hex": "2ed1ed53efb61eb36988c8f95cd8a309fa2f8a89fcd0da3cd8e385b47f67c713",
+      "note": "all numbers go through IEEE-754 double (RFC 8785): 9007199254740993 -> 9007199254740992"
+    },
+    {
+      "name": "bool_null_mix",
+      "input_json": "[true,false,null,\"\",0]",
+      "canonical_json": "[true,false,null,\"\",0]",
+      "sha256_hex": "6b20884da6e8742d5e834cf9f0ff491c90d7140af4e7db5019a0a5dd1781e26f"
+    },
+    {
+      "name": "realistic_bash",
+      "input_json": "{\"command\":\"rm -rf node_modules && pnpm install\",\"description\":\"node_modules 폴더를 지우고 다시 설치합니다.\",\"timeout\":120000}",
+      "canonical_json": "{\"command\":\"rm -rf node_modules && pnpm install\",\"description\":\"node_modules 폴더를 지우고 다시 설치합니다.\",\"timeout\":120000}",
+      "sha256_hex": "0dbdb60a81ef304257600735d90805bc23e6123c31237fbc53b396da82d115f1"
+    },
+    {
+      "name": "approval_request_example_1",
+      "input_json": "{\"command\":\"rm -rf node_modules && pnpm install\",\"description\":\"node_modules 폴더를 지우고 다시 설치합니다.\"}",
+      "canonical_json": "{\"command\":\"rm -rf node_modules && pnpm install\",\"description\":\"node_modules 폴더를 지우고 다시 설치합니다.\"}",
+      "sha256_hex": "940519b4cf559666e1068256e714a63ef4b8df29e78fc02b9b75079bbeae4032",
+      "note": "tool_input of protocol/examples/approval_request.1.json (its tool_input_sha256 must equal sha256_hex)"
+    },
+    {
+      "name": "approval_request_example_2",
+      "input_json": "{\"input\":\"*** Begin Patch\\n*** Update File: src/pairing.rs\\n*** End Patch\"}",
+      "canonical_json": "{\"input\":\"*** Begin Patch\\n*** Update File: src/pairing.rs\\n*** End Patch\"}",
+      "sha256_hex": "a1b5f040275ff2e75b5bbbfe96102aa9b840fb4a8ea076d75119cdee05bfa72d",
+      "note": "tool_input of protocol/examples/approval_request.2.json (Codex hooks, UNVERIFIED shape)"
+    },
+    {
+      "name": "realistic_edit",
+      "input_json": "{\"file_path\":\"C:\\\\dev\\\\agentnest\\\\src\\\\main.rs\",\"old_string\":\"fn main() {}\\n\",\"new_string\":\"fn main() {\\n    println!(\\\"hi\\\");\\n}\\n\"}",
+      "canonical_json": "{\"file_path\":\"C:\\\\dev\\\\agentnest\\\\src\\\\main.rs\",\"new_string\":\"fn main() {\\n    println!(\\\"hi\\\");\\n}\\n\",\"old_string\":\"fn main() {}\\n\"}",
+      "sha256_hex": "37cdf7c04d030b206b445675391e3e487ddcd1c7fa10866cbd15e381c1304fe9"
+    }
+  ]
+}

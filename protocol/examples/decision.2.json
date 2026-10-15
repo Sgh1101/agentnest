@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "type": "decision",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000070",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "request_id": "ar_01929f1b-0a11-7b3c-9e4d-00000000002b",
+    "session_key": "codex:thr_01HZX3Q9N4K7",
+    "nonce_b64": "dHTB5+2SmvWA/mbkYLBgOQ==",
+    "tool_input_sha256": "a1b5f040275ff2e75b5bbbfe96102aa9b840fb4a8ea076d75119cdee05bfa72d",
+    "decision": "deny",
+    "reason": "지금은 수정하지 마",
+    "decided_at": "2026-10-15T12:35:41.000Z",
+    "auth": {
+      "method": "none"
+    }
+  }
+}

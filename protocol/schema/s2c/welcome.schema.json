@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/welcome.schema.json",
+  "title": "welcome payload",
+  "description": "protocol.md 4.5. approval_ttl_s is the effective TTL (min of setting and installed hook timeout - 30).",
+  "type": "object",
+  "properties": {
+    "pc": {
+      "type": "object",
+      "properties": {
+        "pc_id": {
+          "$ref": "../model/common.schema.json#/$defs/PcId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "app_version": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "os": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "pc_id",
+        "name",
+        "app_version"
+      ],
+      "title": "PcInfo"
+    },
+    "protocol": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_client_version": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "version",
+        "minor",
+        "min_client_version"
+      ]
+    },
+    "hosts": {
+      "type": "object",
+      "properties": {
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "../model/common.schema.json#/$defs/Host"
+          },
+          "maxItems": 8
+        },
+        "port": {
+          "$ref": "../model/common.schema.json#/$defs/Port"
+        }
+      },
+      "required": [
+        "addresses",
+        "port"
+      ]
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "maxItems": 32,
+      "uniqueItems": true,
+      "description": "open set: events approvals snapshot resync events_history claude_code codex_observe codex_approve codex_approve_hooks; readers hide UI for missing ones"
+    },
+    "server_time": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    },
+    "heartbeat": {
+      "type": "object",
+      "properties": {
+        "client_ping_interval_s": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "server_idle_close_s": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "client_ping_interval_s",
+        "server_idle_close_s"
+      ]
+    },
+    "resync": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "replay",
+            "snapshot",
+            "none"
+          ]
+        },
+        "from_seq": {
+          "anyOf": [
+            {
+              "$ref": "../model/common.schema.json#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to_seq": {
+          "anyOf": [
+            {
+              "$ref": "../model/common.schema.json#/$defs/Seq"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mode"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "approval_ttl_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 180
+        },
+        "max_frame_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "snapshot_max_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "events_page_max_bytes": {
+          "type": "integer",
+          "minimum": 1024
+        }
+      },
+      "required": [
+        "approval_ttl_s",
+        "max_frame_bytes",
+        "snapshot_max_bytes",
+        "events_page_max_bytes"
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "remote_approval": {
+          "type": "object",
+          "properties": {
+            "critical": {
+              "enum": [
+                "extra_confirmation",
+                "local_only"
+              ]
+            },
+            "high": {
+              "enum": [
+                "hold"
+              ]
+            }
+          },
+          "required": [
+            "critical",
+            "high"
+          ]
+        },
+        "deny_requires_auth": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "remote_approval",
+        "deny_requires_auth"
+      ]
+    }
+  },
+  "required": [
+    "pc",
+    "protocol",
+    "hosts",
+    "capabilities",
+    "server_time",
+    "heartbeat",
+    "resync",
+    "limits",
+    "policy"
+  ]
+}

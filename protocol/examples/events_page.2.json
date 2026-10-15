@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "type": "events_page",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000089",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "in_reply_to": "01929f2a-7c00-7b3c-9e4d-000000000067",
+    "events": [],
+    "has_more": false,
+    "detail_omitted": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "type": "pair",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000065",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "pairing_id": "p_3f9c2b1ea8d04c77",
+    "challenge_b64": "INp2R/LVlw3RUnoDCQOm5g==",
+    "device": {
+      "name": "Galaxy S25",
+      "platform": "android",
+      "model": "SM-S938N",
+      "os_version": "16",
+      "app_version": "0.1.0"
+    },
+    "device_pubkey_spki_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7I6aqGlL6ATeNSxgnMuQJHMjRzic1a/51p97oZMAwRlwt4H1e4ZPmijHGA/eTO03HmU4KNUGnQ0PgD2hy34vsg==",
+    "proof_b64": "c2hvcnQ=",
+    "protocol": 1
+  }
+}

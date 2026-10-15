@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/error.schema.json",
+  "title": "error payload",
+  "description": "protocol.md 4.14 / 9.1",
+  "type": "object",
+  "properties": {
+    "code": {
+      "enum": [
+        "E_PROTO_VERSION",
+        "E_AUTH_REQUIRED",
+        "E_AUTH_FAILED",
+        "E_DEVICE_REVOKED",
+        "E_PAIR_FAILED",
+        "E_PAIR_REJECTED",
+        "E_PAIR_BUSY",
+        "E_RATE_LIMITED",
+        "E_BAD_MESSAGE",
+        "E_RESUME_TOO_OLD",
+        "E_INTERNAL"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "message_ko": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "in_reply_to": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/Uuid7"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "fatal": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "fatal"
+  ]
+}

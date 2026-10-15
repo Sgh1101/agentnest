@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/approval_seen.schema.json",
+  "title": "approval_seen payload",
+  "description": "protocol.md 4.14",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "$ref": "../model/common.schema.json#/$defs/RequestId"
+    },
+    "seen_at": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    }
+  },
+  "required": [
+    "request_id",
+    "seen_at"
+  ]
+}

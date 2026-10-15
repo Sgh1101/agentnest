@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/model/risk.schema.json",
+  "title": "Risk",
+  "description": "protocol.md 6.1; classification rules in integrations/claude-code.md 7",
+  "type": "object",
+  "properties": {
+    "level": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "maxItems": 16
+    },
+    "reasons_ko": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "maxItems": 16
+    },
+    "extra_confirmation": {
+      "$ref": "common.schema.json#/$defs/ExtraConfirmation"
+    }
+  },
+  "required": [
+    "level",
+    "reasons",
+    "reasons_ko",
+    "extra_confirmation"
+  ]
+}

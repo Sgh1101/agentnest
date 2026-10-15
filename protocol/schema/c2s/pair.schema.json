@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/c2s/pair.schema.json",
+  "title": "pair payload",
+  "description": "protocol.md 4.2",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../model/common.schema.json#/$defs/PairingId"
+    },
+    "challenge_b64": {
+      "$ref": "../model/common.schema.json#/$defs/B64_16"
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "NFC-normalised, <= 64 UTF-8 bytes (enforced by canonical_pair_bytes)"
+        },
+        "platform": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "os_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 32
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "app_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 32
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "platform"
+      ],
+      "title": "DeviceInfo"
+    },
+    "device_pubkey_spki_b64": {
+      "anyOf": [
+        {
+          "$ref": "../model/common.schema.json#/$defs/B64Std"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "proof_b64": {
+      "$ref": "../model/common.schema.json#/$defs/B64_32"
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "pairing_id",
+    "challenge_b64",
+    "device",
+    "proof_b64",
+    "protocol"
+  ]
+}

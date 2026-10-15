@@ -1,0 +1,55 @@
+[package]
+name = "agentnest-core"
+version = "0.1.0"
+description = "AgentNest daemon core: collectors, normalization, approvals broker, pairing and the WSS link"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["adapter-claude-code", "adapter-codex-hooks"]
+adapter-claude-code = []
+adapter-codex-hooks = []
+# UNVERIFIED (Phase 0): Codex shared daemon socket subscription. Default off.
+codex-daemon-observer = []
+# UNVERIFIED (Phase 0): Codex rollout JSONL backfill. Default off.
+codex-rollout = []
+# Dev: replays fixture JSONL through the adapter API.
+adapter-mock = []
+
+[dependencies]
+agentnest-protocol = { path = "../agentnest-protocol" }
+agentnest-adapter-api = { path = "../agentnest-adapter-api" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+ring = { workspace = true }
+rcgen = { workspace = true }
+subtle = { workspace = true }
+zeroize = { workspace = true }
+rusqlite = { workspace = true }
+rusqlite_migration = { workspace = true }
+qrcode = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+time = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+futures-util = { workspace = true }
+directories = { workspace = true }
+local-ip-address = { workspace = true }
+
+[dev-dependencies]
+tokio-tungstenite = { workspace = true }
+tempfile = { workspace = true }
+jsonschema = { workspace = true }

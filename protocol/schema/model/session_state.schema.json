@@ -1,0 +1,392 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/model/session_state.schema.json",
+  "title": "SessionState",
+  "description": "protocol.md 5.3",
+  "type": "object",
+  "properties": {
+    "session_key": {
+      "$ref": "common.schema.json#/$defs/SessionKey"
+    },
+    "agent_kind": {
+      "$ref": "common.schema.json#/$defs/AgentKind"
+    },
+    "agent_label": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "project": {
+      "$ref": "project_ref.schema.json"
+    },
+    "state": {
+      "$ref": "agent_state.schema.json"
+    },
+    "state_since": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "headline": {
+      "type": "string",
+      "maxLength": 40
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "started_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "turn": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt_preview": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "active"
+      ],
+      "title": "Turn"
+    },
+    "permission_mode": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 64
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "remote_approval": {
+      "$ref": "common.schema.json#/$defs/RemoteApproval"
+    },
+    "pending_approval_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/RequestId"
+      },
+      "maxItems": 64
+    },
+    "counters": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files_modified": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commands": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tests": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "tools",
+        "files_modified",
+        "commands",
+        "tests",
+        "errors"
+      ],
+      "title": "Counters"
+    },
+    "recent_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path_hint": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "op": {
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "edit",
+              "read"
+            ]
+          },
+          "at": {
+            "$ref": "common.schema.json#/$defs/Timestamp"
+          }
+        },
+        "required": [
+          "path_hint",
+          "op",
+          "at"
+        ]
+      },
+      "maxItems": 5,
+      "description": "newest first, de-duplicated by path"
+    },
+    "recent_commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "command_preview": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "command_class": {
+            "$ref": "common.schema.json#/$defs/CommandClass"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "$ref": "common.schema.json#/$defs/Timestamp"
+          }
+        },
+        "required": [
+          "command_preview",
+          "command_class",
+          "at"
+        ]
+      },
+      "maxItems": 3,
+      "description": "newest first"
+    },
+    "last_test": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "running",
+                "passed",
+                "failed"
+              ]
+            },
+            "command_class": {
+              "$ref": "common.schema.json#/$defs/CommandClass"
+            },
+            "runner": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "at": {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            }
+          },
+          "required": [
+            "status",
+            "command_class",
+            "at"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_used_pct": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pr_number": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pr_url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "p0": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p1": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "state": {
+                  "enum": [
+                    "none",
+                    "running",
+                    "completed",
+                    "unavailable"
+                  ]
+                }
+              },
+              "required": [
+                "p0",
+                "p1",
+                "state"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "SessionMeta"
+    },
+    "last_event_seq": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/$defs/Seq"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "last_event_at": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "ended": {
+      "type": "boolean"
+    },
+    "stale": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "session_key",
+    "agent_kind",
+    "agent_label",
+    "project",
+    "state",
+    "state_since",
+    "headline",
+    "started_at",
+    "turn",
+    "remote_approval",
+    "pending_approval_ids",
+    "counters",
+    "last_event_at",
+    "ended",
+    "stale"
+  ]
+}

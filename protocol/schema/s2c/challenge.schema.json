@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/s2c/challenge.schema.json",
+  "title": "challenge payload",
+  "description": "protocol.md 4.1. The only PreAuth server frame; carries no PC name or version.",
+  "type": "object",
+  "properties": {
+    "challenge_b64": {
+      "$ref": "../model/common.schema.json#/$defs/B64_16"
+    },
+    "pc_id": {
+      "$ref": "../model/common.schema.json#/$defs/PcId"
+    },
+    "server_time": {
+      "$ref": "../model/common.schema.json#/$defs/Timestamp"
+    },
+    "expires_in_ms": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "challenge_b64",
+    "pc_id",
+    "server_time",
+    "expires_in_ms"
+  ]
+}

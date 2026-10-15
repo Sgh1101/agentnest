@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "error",
+  "id": "01929f2a-7c00-7b3c-9e4d-00000000008e",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "code": "E_RATE_LIMITED",
+    "message": "too many decisions",
+    "message_ko": "잠시 후 다시 시도해 주세요.",
+    "in_reply_to": "01929f2b-0000-7b3c-9e4d-00000000c3d2",
+    "fatal": false
+  }
+}

@@ -1,0 +1,1274 @@
+{
+  "_format": {
+    "description": "Mood / focus resolution (docs/protocol.md 5.5, docs/character.md 2.1). Shared by Rust `state::focus` and Kotlin `MoodResolver`. Hysteresis (1.5 s minimum hold, upgrade-immediately) is NOT part of this file; it needs a clock and is tested separately.",
+    "input": {
+      "now": "RFC 3339",
+      "link": "connected | offline | reconnecting | pc_unreachable | suspended (other LinkState values are not specified here)",
+      "sessions[]": "session_key, agent_kind, state (AgentState, may be unknown), state_since, last_event_at, ended?"
+    },
+    "focus_priority": [
+      "awaiting_approval",
+      "awaiting_input",
+      "error",
+      "testing",
+      "writing_code",
+      "reviewing",
+      "working",
+      "completed",
+      "idle",
+      "disconnected"
+    ],
+    "rules": [
+      "link != connected overrides everything: offline -> sleepy; reconnecting / pc_unreachable / suspended -> worried (no badge, focus not asserted).",
+      "ended sessions are excluded; no live session -> blink_slow with focus null.",
+      "focus = live session with the lowest rank in focus_priority; ties: newest last_event_at. Unknown states rank as 'working'.",
+      "mood by focus state: awaiting_approval -> raise_hand badge '!' (count of awaiting_approval sessions); awaiting_input -> raise_hand badge '?' (count of awaiting_input sessions); error -> flustered; testing -> tools; writing_code -> typing (variant full); reviewing -> magnifier; working/unknown -> typing (variant weak); completed -> celebrate while now - state_since < 4 s else blink_slow; idle -> blink_slow; disconnected -> worried."
+    ],
+    "expect": {
+      "mood": "KongiMood",
+      "badge": "'!' | '?' | null",
+      "badge_count": "number of sessions behind the badge",
+      "variant": "typing only: full | weak",
+      "focus_session_key": "null when no live session",
+      "focus_state": "the focus session's raw state string"
+    }
+  },
+  "cases": [
+    {
+      "name": "no_sessions",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [],
+      "expect": {
+        "mood": "blink_slow",
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": null,
+        "focus_state": null
+      }
+    },
+    {
+      "name": "single_awaiting_approval",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "!",
+        "badge_count": 1,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "awaiting_approval",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "single_awaiting_input",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_input",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "?",
+        "badge_count": 1,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "awaiting_input",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "single_error",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "error",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "error",
+        "mood": "flustered"
+      }
+    },
+    {
+      "name": "single_testing",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "testing",
+        "mood": "tools"
+      }
+    },
+    {
+      "name": "single_writing_code",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "writing_code",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "writing_code",
+        "mood": "typing",
+        "variant": "full"
+      }
+    },
+    {
+      "name": "single_reviewing",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "reviewing",
+        "mood": "magnifier"
+      }
+    },
+    {
+      "name": "single_working",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "working",
+        "mood": "typing",
+        "variant": "weak"
+      }
+    },
+    {
+      "name": "single_idle",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "idle",
+        "mood": "blink_slow"
+      }
+    },
+    {
+      "name": "single_disconnected",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "disconnected",
+        "mood": "worried"
+      }
+    },
+    {
+      "name": "completed_within_4s_celebrates",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:57.000Z",
+          "last_event_at": "2026-10-15T11:59:57.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "completed",
+        "mood": "celebrate"
+      }
+    },
+    {
+      "name": "completed_after_4s_is_blink_slow",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "completed",
+        "mood": "blink_slow"
+      },
+      "note": "focus stays 'completed' (rank 7); only the mood falls back after 4 s"
+    },
+    {
+      "name": "unknown_state_renders_as_working",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "hyperdrive",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "hyperdrive",
+        "mood": "typing",
+        "variant": "weak"
+      },
+      "note": "unknown AgentState => working => typing (weak variant)"
+    },
+    {
+      "name": "unknown_state_beats_idle",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "hyperdrive",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "codex:b",
+        "focus_state": "hyperdrive",
+        "mood": "typing",
+        "variant": "weak"
+      }
+    },
+    {
+      "name": "ladder_0_top_is_awaiting_approval",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:awaiting_approval",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:awaiting_input",
+          "agent_kind": "claude_code",
+          "state": "awaiting_input",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:error",
+          "agent_kind": "claude_code",
+          "state": "error",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:testing",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:writing_code",
+          "agent_kind": "claude_code",
+          "state": "writing_code",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:reviewing",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "!",
+        "badge_count": 1,
+        "focus_session_key": "claude_code:awaiting_approval",
+        "focus_state": "awaiting_approval",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "ladder_1_top_is_awaiting_input",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:awaiting_input",
+          "agent_kind": "claude_code",
+          "state": "awaiting_input",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:error",
+          "agent_kind": "claude_code",
+          "state": "error",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:testing",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:writing_code",
+          "agent_kind": "claude_code",
+          "state": "writing_code",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:reviewing",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "?",
+        "badge_count": 1,
+        "focus_session_key": "claude_code:awaiting_input",
+        "focus_state": "awaiting_input",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "ladder_2_top_is_error",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:error",
+          "agent_kind": "claude_code",
+          "state": "error",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:testing",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:writing_code",
+          "agent_kind": "claude_code",
+          "state": "writing_code",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:reviewing",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:error",
+        "focus_state": "error",
+        "mood": "flustered"
+      }
+    },
+    {
+      "name": "ladder_3_top_is_testing",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:testing",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:writing_code",
+          "agent_kind": "claude_code",
+          "state": "writing_code",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:reviewing",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:testing",
+        "focus_state": "testing",
+        "mood": "tools"
+      }
+    },
+    {
+      "name": "ladder_4_top_is_writing_code",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:writing_code",
+          "agent_kind": "claude_code",
+          "state": "writing_code",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:reviewing",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:writing_code",
+        "focus_state": "writing_code",
+        "mood": "typing",
+        "variant": "full"
+      }
+    },
+    {
+      "name": "ladder_5_top_is_reviewing",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:reviewing",
+          "agent_kind": "claude_code",
+          "state": "reviewing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:reviewing",
+        "focus_state": "reviewing",
+        "mood": "magnifier"
+      }
+    },
+    {
+      "name": "ladder_6_top_is_working",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:working",
+          "agent_kind": "claude_code",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:working",
+        "focus_state": "working",
+        "mood": "typing",
+        "variant": "weak"
+      }
+    },
+    {
+      "name": "ladder_7_top_is_completed",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:completed",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:completed",
+        "focus_state": "completed",
+        "mood": "celebrate"
+      }
+    },
+    {
+      "name": "ladder_8_top_is_idle",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:idle",
+          "agent_kind": "claude_code",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:idle",
+        "focus_state": "idle",
+        "mood": "blink_slow"
+      }
+    },
+    {
+      "name": "ladder_9_top_is_disconnected",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:disconnected",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:disconnected",
+        "focus_state": "disconnected",
+        "mood": "worried"
+      }
+    },
+    {
+      "name": "approval_beats_input_badge_is_bang",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_input",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "!",
+        "badge_count": 1,
+        "focus_session_key": "codex:b",
+        "focus_state": "awaiting_approval",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "two_approvals_badge_count_and_newest_is_primary",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "!",
+        "badge_count": 2,
+        "focus_session_key": "codex:b",
+        "focus_state": "awaiting_approval",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "two_inputs_question_badge",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_input",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "awaiting_input",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        },
+        {
+          "session_key": "codex:c",
+          "agent_kind": "codex",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "badge": "?",
+        "badge_count": 2,
+        "focus_session_key": "codex:b",
+        "focus_state": "awaiting_input",
+        "mood": "raise_hand"
+      }
+    },
+    {
+      "name": "tie_break_by_last_event_at",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        },
+        {
+          "session_key": "claude_code:c",
+          "agent_kind": "claude_code",
+          "state": "testing",
+          "state_since": "2026-10-15T11:59:30.000Z",
+          "last_event_at": "2026-10-15T11:59:30.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "codex:b",
+        "focus_state": "testing",
+        "mood": "tools"
+      }
+    },
+    {
+      "name": "completed_within_4s_loses_to_working",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "working",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "codex:b",
+        "focus_state": "working",
+        "mood": "typing",
+        "variant": "weak"
+      }
+    },
+    {
+      "name": "completed_within_4s_beats_idle",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "completed",
+          "state_since": "2026-10-15T11:59:58.000Z",
+          "last_event_at": "2026-10-15T11:59:58.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "completed",
+        "mood": "celebrate"
+      }
+    },
+    {
+      "name": "disconnected_loses_to_idle",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "codex:b",
+        "focus_state": "idle",
+        "mood": "blink_slow"
+      }
+    },
+    {
+      "name": "all_disconnected_is_worried",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "disconnected",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "claude_code:a",
+        "focus_state": "disconnected",
+        "mood": "worried"
+      }
+    },
+    {
+      "name": "ended_sessions_are_ignored",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z",
+          "ended": true
+        },
+        {
+          "session_key": "codex:b",
+          "agent_kind": "codex",
+          "state": "idle",
+          "state_since": "2026-10-15T11:59:00.000Z",
+          "last_event_at": "2026-10-15T11:59:00.000Z"
+        }
+      ],
+      "expect": {
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": "codex:b",
+        "focus_state": "idle",
+        "mood": "blink_slow"
+      }
+    },
+    {
+      "name": "only_ended_sessions_means_no_sessions",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "connected",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "error",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z",
+          "ended": true
+        }
+      ],
+      "expect": {
+        "mood": "blink_slow",
+        "badge": null,
+        "badge_count": 0,
+        "focus_session_key": null,
+        "focus_state": null
+      }
+    },
+    {
+      "name": "link_offline_overrides_pending_approval",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "offline",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "mood": "sleepy",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_offline_without_sessions",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "offline",
+      "sessions": [],
+      "expect": {
+        "mood": "sleepy",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_reconnecting_overrides_pending_approval",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "reconnecting",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "mood": "worried",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_reconnecting_without_sessions",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "reconnecting",
+      "sessions": [],
+      "expect": {
+        "mood": "worried",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_pc_unreachable_overrides_pending_approval",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "pc_unreachable",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "mood": "worried",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_pc_unreachable_without_sessions",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "pc_unreachable",
+      "sessions": [],
+      "expect": {
+        "mood": "worried",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_suspended_overrides_pending_approval",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "suspended",
+      "sessions": [
+        {
+          "session_key": "claude_code:a",
+          "agent_kind": "claude_code",
+          "state": "awaiting_approval",
+          "state_since": "2026-10-15T11:59:50.000Z",
+          "last_event_at": "2026-10-15T11:59:50.000Z"
+        }
+      ],
+      "expect": {
+        "mood": "worried",
+        "badge": null,
+        "badge_count": 0
+      }
+    },
+    {
+      "name": "link_suspended_without_sessions",
+      "now": "2026-10-15T12:00:00.000Z",
+      "link": "suspended",
+      "sessions": [],
+      "expect": {
+        "mood": "worried",
+        "badge": null,
+        "badge_count": 0
+      }
+    }
+  ]
+}

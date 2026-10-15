@@ -1,0 +1,1427 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/model/agent_event.schema.json",
+  "title": "AgentEvent",
+  "description": "protocol.md 5.1/5.2: normalised agent event. 'detail' required fields per kind follow the 5.2 table.",
+  "type": "object",
+  "properties": {
+    "event_id": {
+      "$ref": "common.schema.json#/$defs/Uuid7"
+    },
+    "seq": {
+      "$ref": "common.schema.json#/$defs/Seq"
+    },
+    "ts": {
+      "$ref": "common.schema.json#/$defs/Timestamp"
+    },
+    "agent_kind": {
+      "$ref": "common.schema.json#/$defs/AgentKind"
+    },
+    "session_key": {
+      "$ref": "common.schema.json#/$defs/SessionKey"
+    },
+    "actor": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "agent_type": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "is_subagent": {
+              "type": "boolean"
+            }
+          },
+          "title": "Actor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "project": {
+      "anyOf": [
+        {
+          "$ref": "project_ref.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "enum": [
+        "session_started",
+        "session_ended",
+        "prompt_submitted",
+        "turn_started",
+        "turn_completed",
+        "turn_failed",
+        "turn_interrupted",
+        "tool_started",
+        "tool_completed",
+        "tool_failed",
+        "file_read",
+        "file_modified",
+        "command_started",
+        "command_completed",
+        "command_failed",
+        "test_run",
+        "test_passed",
+        "test_failed",
+        "subagent_started",
+        "subagent_stopped",
+        "task_created",
+        "task_completed",
+        "approval_requested",
+        "approval_resolved",
+        "permission_denied_auto",
+        "notification",
+        "idle",
+        "context_compacted",
+        "review_started",
+        "review_completed",
+        "review_finding",
+        "token_usage_updated",
+        "session_meta_updated",
+        "agent_error",
+        "adapter_status"
+      ]
+    },
+    "category": {
+      "enum": [
+        "lifecycle",
+        "turn",
+        "tool",
+        "file",
+        "command",
+        "approval",
+        "error",
+        "review",
+        "notification",
+        "usage",
+        "adapter"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "debug",
+        "info",
+        "notice",
+        "warning",
+        "error"
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "headline": {
+          "type": "string",
+          "maxLength": 40,
+          "minLength": 1,
+          "description": "Korean, <= 40 chars; built by the PC"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "headline"
+      ],
+      "title": "EventSummary"
+    },
+    "state_hint": {
+      "anyOf": [
+        {
+          "$ref": "agent_state.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "detail": {
+      "type": "object",
+      "description": "per-kind bounded object (8 KiB total, 2 KiB per string); never file bodies, full stdout or prompts"
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "$ref": "common.schema.json#/$defs/SourceChannel"
+        },
+        "native_event": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "native_ids": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "maxProperties": 16
+        }
+      },
+      "required": [
+        "channel"
+      ],
+      "title": "EventSource"
+    },
+    "redacted": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "event_id",
+    "seq",
+    "ts",
+    "agent_kind",
+    "session_key",
+    "kind",
+    "category",
+    "severity",
+    "summary",
+    "detail",
+    "source",
+    "redacted"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "session_started"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          },
+          "detail": {
+            "required": [
+              "source_reason"
+            ],
+            "properties": {
+              "source_reason": {
+                "enum": [
+                  "startup",
+                  "resume",
+                  "clear",
+                  "compact",
+                  "fork"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "session_ended"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          },
+          "detail": {
+            "required": [
+              "reason"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "prompt_submitted"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "turn"
+          },
+          "detail": {
+            "required": [
+              "prompt_preview",
+              "prompt_len",
+              "auto_turn_suspect"
+            ],
+            "properties": {
+              "prompt_preview": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "prompt_len": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "auto_turn_suspect": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "turn_started"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "turn"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "turn_completed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "turn"
+          },
+          "detail": {
+            "required": [
+              "background_tasks",
+              "session_crons"
+            ],
+            "properties": {
+              "background_tasks": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "session_crons": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "turn_failed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "error"
+          },
+          "detail": {
+            "required": [
+              "error_code"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "turn_interrupted"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "turn"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tool_started"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "tool"
+          },
+          "detail": {
+            "required": [
+              "tool_name",
+              "tool_input_summary"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tool_completed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "tool"
+          },
+          "detail": {
+            "required": [
+              "tool_name"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "tool_failed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "error"
+          },
+          "detail": {
+            "required": [
+              "tool_name",
+              "error",
+              "is_interrupt"
+            ],
+            "properties": {
+              "error": {
+                "type": "string",
+                "maxLength": 2048
+              },
+              "is_interrupt": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "file_read"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "file"
+          },
+          "detail": {
+            "required": [
+              "file_path"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "file_modified"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "file"
+          },
+          "detail": {
+            "required": [
+              "file_path",
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "enum": [
+                  "create",
+                  "update",
+                  "delete",
+                  "edit"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "command_started"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "command"
+          },
+          "detail": {
+            "required": [
+              "command",
+              "command_class",
+              "cwd_hint",
+              "run_in_background"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "command_class": {
+                "enum": [
+                  "test",
+                  "build",
+                  "vcs",
+                  "package",
+                  "fs",
+                  "network",
+                  "shell"
+                ]
+              },
+              "run_in_background": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "command_completed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "command"
+          },
+          "detail": {
+            "required": [
+              "command",
+              "command_class"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "command_class": {
+                "enum": [
+                  "test",
+                  "build",
+                  "vcs",
+                  "package",
+                  "fs",
+                  "network",
+                  "shell"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "command_failed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "error"
+          },
+          "detail": {
+            "required": [
+              "command",
+              "error"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "error": {
+                "type": "string",
+                "maxLength": 2048
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "test_run"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "command"
+          },
+          "detail": {
+            "required": [
+              "command",
+              "command_class",
+              "runner"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "command_class": {
+                "enum": [
+                  "test",
+                  "build",
+                  "vcs",
+                  "package",
+                  "fs",
+                  "network",
+                  "shell"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "test_passed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "command"
+          },
+          "detail": {
+            "required": [
+              "command",
+              "command_class",
+              "runner"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "command_class": {
+                "enum": [
+                  "test",
+                  "build",
+                  "vcs",
+                  "package",
+                  "fs",
+                  "network",
+                  "shell"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "test_failed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "command"
+          },
+          "detail": {
+            "required": [
+              "command",
+              "command_class",
+              "runner"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "command_class": {
+                "enum": [
+                  "test",
+                  "build",
+                  "vcs",
+                  "package",
+                  "fs",
+                  "network",
+                  "shell"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "subagent_started"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          },
+          "detail": {
+            "required": [
+              "agent_id",
+              "agent_type"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "subagent_stopped"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          },
+          "detail": {
+            "required": [
+              "agent_id",
+              "agent_type"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "task_created"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "turn"
+          },
+          "detail": {
+            "required": [
+              "task_id",
+              "task_subject"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "task_completed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "turn"
+          },
+          "detail": {
+            "required": [
+              "task_id",
+              "task_subject"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "approval_requested"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "approval"
+          },
+          "detail": {
+            "required": [
+              "request_id",
+              "risk",
+              "tool_name",
+              "title",
+              "channel"
+            ],
+            "properties": {
+              "channel": {
+                "enum": [
+                  "remote",
+                  "local_only",
+                  "no_device"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "approval_resolved"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "approval"
+          },
+          "detail": {
+            "required": [
+              "request_id",
+              "outcome",
+              "resolved_by"
+            ],
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "allowed",
+                  "denied",
+                  "denied_and_stopped",
+                  "expired",
+                  "handed_off_local",
+                  "superseded",
+                  "failed"
+                ]
+              },
+              "resolved_by": {
+                "enum": [
+                  "phone",
+                  "desktop",
+                  "timeout",
+                  "agent",
+                  "system"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "permission_denied_auto"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "approval"
+          },
+          "detail": {
+            "required": [
+              "tool_name",
+              "reason"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "notification"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "notification"
+          },
+          "detail": {
+            "required": [
+              "notification_type",
+              "message"
+            ],
+            "properties": {
+              "message": {
+                "type": "string",
+                "maxLength": 300
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "idle"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          },
+          "detail": {
+            "required": [
+              "idle_seconds"
+            ],
+            "properties": {
+              "idle_seconds": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "context_compacted"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          },
+          "detail": {
+            "required": [
+              "trigger"
+            ],
+            "properties": {}
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "review_started"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "review"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "review_completed"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "review"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "review_finding"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "review"
+          },
+          "detail": {
+            "required": [
+              "priority",
+              "title",
+              "body_preview"
+            ],
+            "properties": {
+              "priority": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "token_usage_updated"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "usage"
+          },
+          "detail": {
+            "required": [
+              "total_tokens",
+              "input_tokens",
+              "cached_input_tokens",
+              "output_tokens",
+              "reasoning_output_tokens"
+            ],
+            "properties": {
+              "total_tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "input_tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "cached_input_tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "output_tokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reasoning_output_tokens": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "session_meta_updated"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "lifecycle"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "agent_error"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "error"
+          },
+          "detail": {
+            "required": [
+              "message"
+            ],
+            "properties": {
+              "message": {
+                "type": "string",
+                "maxLength": 300
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "adapter_status"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "adapter"
+          },
+          "detail": {
+            "required": [
+              "status",
+              "mode",
+              "detail"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "connected",
+                  "degraded",
+                  "disconnected",
+                  "not_configured"
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "hooks_http",
+                  "hooks_cli",
+                  "daemon_observer",
+                  "rollout_tail",
+                  "none"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    }
+  ]
+}

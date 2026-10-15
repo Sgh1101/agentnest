@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentnest.example/protocol/schema/model/project_ref.schema.json",
+  "title": "ProjectRef",
+  "description": "protocol.md 5.1",
+  "type": "object",
+  "properties": {
+    "project_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "lowercase, '/'-normalised path key"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "path_hint": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 256,
+          "description": "last two path segments only"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repo": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 256,
+          "description": "owner/name"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 256
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "project_key",
+    "name"
+  ]
+}

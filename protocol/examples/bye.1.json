@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "bye",
+  "id": "01929f2a-7c00-7b3c-9e4d-000000000090",
+  "ts": "2026-10-15T09:12:33.120Z",
+  "payload": {
+    "reason": "device_revoked",
+    "reconnect": false,
+    "message_ko": "PC에서 이 기기의 연결을 해제했어요."
+  }
+}
