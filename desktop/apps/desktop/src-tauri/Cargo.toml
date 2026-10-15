@@ -1,0 +1,38 @@
+[package]
+name = "agentnest-desktop"
+version = "0.1.0"
+description = "AgentNest desktop shell: Tauri 2 glue around agentnest-core (daemon) and agentnest-shell-api (all shell logic)"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "agentnest_desktop_lib"
+
+[[bin]]
+name = "agentnest-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+agentnest-core = { path = "../../../crates/agentnest-core" }
+agentnest-protocol = { path = "../../../crates/agentnest-protocol" }
+agentnest-shell-api = { path = "../../../crates/agentnest-shell-api" }
+# `tray-icon`: the tray is built in Rust (no JS tray permissions). `image-png`: tray icons are decoded from embedded PNGs.
+tauri = { version = "2.12.4", features = ["tray-icon", "image-png"] }
+tauri-plugin-notification = "2.7.0"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-store = "2.5.0"
+tauri-plugin-log = "2.10.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+# desktop only (single-instance must be registered first; autostart is a desktop plugin)
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-single-instance = "2.5.4"

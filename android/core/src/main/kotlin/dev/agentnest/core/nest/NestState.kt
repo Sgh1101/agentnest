@@ -27,6 +27,11 @@ data class ApprovalCard(
     val receivedAt: Instant,
     val inFlight: InFlightDecision? = null,
     val lastResult: DecisionResultPayload? = null,
+    /**
+     * True when a later frame carried a DIFFERENT binding (nonce / hash / session) for this `request_id`. The original
+     * body is kept for display but the card is never actionable again: the user must handle it on the PC.
+     */
+    val bindingConflict: Boolean = false,
 ) {
     /** True while only the id is known. */
     val isLoading: Boolean get() = request == null

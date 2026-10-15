@@ -8,6 +8,7 @@ import dev.agentnest.core.protocol.AckMessage
 import dev.agentnest.core.protocol.AckPayload
 import dev.agentnest.core.protocol.AdapterStatusMessage
 import dev.agentnest.core.protocol.AgentEvent
+import dev.agentnest.core.protocol.ApprovalBinding
 import dev.agentnest.core.protocol.ApprovalOutcome
 import dev.agentnest.core.protocol.ApprovalRequest
 import dev.agentnest.core.protocol.ApprovalRequestMessage
@@ -16,6 +17,7 @@ import dev.agentnest.core.protocol.ChallengeMessage
 import dev.agentnest.core.protocol.ClientMessage
 import dev.agentnest.core.protocol.Decision
 import dev.agentnest.core.protocol.DecisionResultMessage
+import dev.agentnest.core.protocol.DecisionResultPayload
 import dev.agentnest.core.protocol.DecisionResultReason
 import dev.agentnest.core.protocol.ErrorMessage
 import dev.agentnest.core.protocol.EventMessage
@@ -83,7 +85,7 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
             ReduceResult(updated)
         }
         is DecisionResultMessage -> ReduceResult(applyDecisionResult(state, message, now))
-        is ErrorMessage -> ReduceResult(state.copy(lastError = message.payload))
+        is ErrorMessage -> ReduceResult(applyError(state, message))
         is EventMessage -> sequenced(state, message.meta, now) { s -> applyEvent(s, message.payload, now) }
         is SessionStateMessage -> sequenced(state, message.meta, now) { s ->
             touch(s.copy(sessions = s.sessions + (message.payload.sessionKey to message.payload)), now)
@@ -240,7 +242,12 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
         val acked = ArrayList<String>()
         for (id in allIds) {
             val existing = state.approvals[id]
-            val body = bodies[id] ?: existing?.request
+            val incoming = bodies[id]
+            val known = existing?.request
+            // A different binding for a known request_id is never adopted: keep the old body, lock the card.
+            val conflict = existing?.bindingConflict == true ||
+                (incoming != null && known != null && ApprovalBinding.of(incoming) != ApprovalBinding.of(known))
+            val body = if (conflict && known != null) known else incoming ?: known
             if (body != null && !serverNow.isBefore(body.expiresAt.instant)) continue // never resurrect an expired card
             cards[id] = ApprovalCard(
                 requestId = id,
@@ -248,8 +255,9 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
                 receivedAt = existing?.receivedAt ?: now,
                 inFlight = existing?.inFlight,
                 lastResult = existing?.lastResult,
+                bindingConflict = conflict,
             )
-            if (bodies.containsKey(id)) acked += id
+            if (incoming != null && !conflict) acked += id
         }
         var history = state.history
         for ((id, card) in state.approvals) {
@@ -322,12 +330,22 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
         if (request.requestId in state.resolvedIds) return ReduceResult(state)
         if (!serverNow.isBefore(request.expiresAt.instant)) return ReduceResult(state) // expired: never actionable
         val existing = state.approvals[request.requestId]
+        val known = existing?.request
+        if (existing != null && known != null && ApprovalBinding.of(request) != ApprovalBinding.of(known)) {
+            // Same request_id, different nonce / hash / session: drop the new body, lock the card, ask for the truth.
+            val locked = existing.copy(bindingConflict = true)
+            val next = state.copy(approvals = state.approvals + (request.requestId to locked))
+            if (existing.bindingConflict) return ReduceResult(next)
+            val resync = startResync(next, now, "binding_conflict")
+            return ReduceResult(refreshMood(resync.state, now), resync.outbound)
+        }
         val card = ApprovalCard(
             requestId = request.requestId,
             request = request,
             receivedAt = existing?.receivedAt ?: now,
             inFlight = existing?.inFlight,
             lastResult = existing?.lastResult,
+            bindingConflict = existing?.bindingConflict == true,
         )
         val next = touch(state.copy(approvals = state.approvals + (request.requestId to card)), now)
         return ReduceResult(refreshMood(next, now), listOf(ack(now, listOf(request.requestId))))
@@ -342,6 +360,25 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
             touch(state.copy(approvals = state.approvals - payload.requestId, history = history, resolvedIds = resolved), now),
             now,
         )
+    }
+
+    /**
+     * An `error` frame that answers our in-flight decision (`in_reply_to` = the decision's message id) ends that
+     * attempt: the card is unblocked (the request is still pending, the user may retry) and the error is recorded.
+     */
+    private fun applyError(state: NestState, message: ErrorMessage): NestState {
+        val replyTo = message.payload.inReplyTo
+        val base = state.copy(lastError = message.payload)
+        if (replyTo == null) return base
+        val entry = base.approvals.entries.firstOrNull { it.value.inFlight?.messageId == replyTo } ?: return base
+        val result = DecisionResultPayload(
+            requestId = entry.key,
+            inReplyTo = replyTo,
+            accepted = false,
+            reason = DecisionResultReason.UNKNOWN,
+            messageKo = message.payload.messageKo ?: ERROR_REPLY_KO,
+        )
+        return base.copy(approvals = base.approvals + (entry.key to entry.value.copy(inFlight = null, lastResult = result)))
     }
 
     private fun applyDecisionResult(state: NestState, message: DecisionResultMessage, now: Instant): NestState {
@@ -394,6 +431,7 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
         private val EXPIRED_CARD_GRACE: Duration = Duration.ofSeconds(10)
         private val ENDED_SESSION_RETENTION: Duration = Duration.ofMinutes(10)
         private const val EXPIRED_MESSAGE_KO = "시간이 지나 PC에서 직접 처리하도록 넘겼어요"
+        private const val ERROR_REPLY_KO = "PC가 결정을 받지 못했어요. 다시 시도해 주세요"
         private const val CLOSED_BY_SNAPSHOT_KO = "PC에서 처리됐거나 시간이 지났어요"
     }
 }

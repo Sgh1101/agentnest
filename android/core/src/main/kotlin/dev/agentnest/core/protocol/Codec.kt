@@ -5,7 +5,9 @@ import dev.agentnest.core.crypto.B64
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonNamingStrategy
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -65,10 +67,10 @@ object Codec {
         "pair_pending" to { m, p -> PairPendingMessage(m, json.decodeFromJsonElement(PairPendingPayload.serializer(), p)) },
         "pair_result" to { m, p -> PairResultMessage(m, json.decodeFromJsonElement(PairResultPayload.serializer(), p)) },
         "welcome" to { m, p -> WelcomeMessage(m, json.decodeFromJsonElement(WelcomePayload.serializer(), p)) },
-        "snapshot" to { m, p -> SnapshotMessage(m, json.decodeFromJsonElement(SnapshotPayload.serializer(), p)) },
+        "snapshot" to { m, p -> SnapshotMessage(m, dropInvalidCards(json.decodeFromJsonElement(SnapshotPayload.serializer(), strictSnapshot(p)))) },
         "event" to { m, p -> EventMessage(m, json.decodeFromJsonElement(AgentEvent.serializer(), p)) },
         "session_state" to { m, p -> SessionStateMessage(m, json.decodeFromJsonElement(SessionState.serializer(), p)) },
-        "approval_request" to { m, p -> ApprovalRequestMessage(m, json.decodeFromJsonElement(ApprovalRequest.serializer(), p)) },
+        "approval_request" to { m, p -> ApprovalRequestMessage(m, json.decodeFromJsonElement(ApprovalRequest.serializer(), strictApproval(p))) },
         "approval_resolved" to { m, p ->
             ApprovalResolvedMessage(m, json.decodeFromJsonElement(ApprovalResolvedPayload.serializer(), p))
         },
@@ -107,8 +109,8 @@ object Codec {
         } catch (e: IllegalArgumentException) {
             return DecodeResult.Invalid("not a JSON object")
         }
-        val version = (envelope["v"] as? JsonPrimitive)?.longOrNull
-            ?: return DecodeResult.Invalid("missing v")
+        val version = (envelope["v"] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull
+            ?: return DecodeResult.Invalid("missing or non-numeric v")
         if (version != PROTOCOL_VERSION.toLong()) return DecodeResult.Invalid("unsupported protocol version $version")
         val type = (envelope["type"] as? JsonPrimitive)?.contentOrNull
             ?: return DecodeResult.Invalid("missing type")
@@ -121,7 +123,8 @@ object Codec {
             val seqElement = envelope["seq"]
             val seq: Long? = when {
                 seqElement == null || seqElement is kotlinx.serialization.json.JsonNull -> null
-                else -> (seqElement as? JsonPrimitive)?.longOrNull ?: return DecodeResult.Invalid("seq is not an integer")
+                else -> (seqElement as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull
+                    ?: return DecodeResult.Invalid("seq is not an integer")
             }
             if (seq != null && seq < 0) return DecodeResult.Invalid("negative seq")
             if (type in replayableTypes && seq == null) return DecodeResult.Invalid("$type requires seq")
@@ -136,8 +139,6 @@ object Codec {
         }
     }
 
-    private val REQUEST_ID = Regex("^ar_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
-    private val SHA256_HEX = Regex("^[0-9a-f]{64}$")
     private val SAS_PATTERN = Regex("^[0-9]{6}$")
     private const val MAX_REASON_CHARS = 200
     private const val MAX_DEVICE_NAME_BYTES = 64
@@ -157,17 +158,17 @@ object Codec {
     private fun validate(message: WireMessage): String? = when (message) {
         is DecisionMessage -> {
             val p = message.payload
+            val bindingProblem = ApprovalBinding.problem(p.requestId, p.sessionKey, p.nonceB64, p.toolInputSha256)
             when {
                 p.decision == Decision.UNKNOWN -> "unknown decision"
                 p.auth?.method == AuthMethod.UNKNOWN -> "unknown auth method"
                 p.extraConfirmation?.method == ExtraConfirmationLevel.UNKNOWN -> "unknown extra confirmation method"
-                !REQUEST_ID.matches(p.requestId) -> "malformed request_id"
-                !SHA256_HEX.matches(p.toolInputSha256) -> "tool_input_sha256 must be lowercase hex"
-                rawLength(p.nonceB64) != 16 -> "nonce_b64 must be 16 bytes"
+                bindingProblem != null -> bindingProblem
                 (p.reason?.codePointCount(0, p.reason.length) ?: 0) > MAX_REASON_CHARS -> "reason too long"
                 else -> null
             }
         }
+        is ApprovalRequestMessage -> ApprovalBinding.problem(message.payload)
         is EventMessage -> if (message.payload.seq < 0) "negative event seq" else null
         is HelloMessage -> when {
             message.payload.lastSeq < 0 -> "negative last_seq"
@@ -212,14 +213,41 @@ object Codec {
         else -> null
     }
 
+
+    /**
+     * `risk.extra_confirmation: null` must not silently become `none` through `coerceInputValues`: it is rewritten to
+     * `"unknown"`, which the gate treats as the strongest requirement (fail-closed).
+     */
+    private fun strictApproval(element: JsonElement): JsonElement {
+        val obj = element as? JsonObject ?: return element
+        val risk = obj["risk"] as? JsonObject ?: return element
+        if (risk["extra_confirmation"] !is JsonNull) return element
+        val fixedRisk = JsonObject(risk + ("extra_confirmation" to JsonPrimitive("unknown")))
+        return JsonObject(obj + ("risk" to fixedRisk))
+    }
+
+    private fun strictSnapshot(element: JsonElement): JsonElement {
+        val obj = element as? JsonObject ?: return element
+        val cards = obj["pending_approvals"] as? JsonArray ?: return element
+        return JsonObject(obj + ("pending_approvals" to JsonArray(cards.map(::strictApproval))))
+    }
+
+    /** Cards with malformed binding fields (and malformed ids) in a snapshot are dropped instead of shown. */
+    private fun dropInvalidCards(payload: SnapshotPayload): SnapshotPayload = payload.copy(
+        pendingApprovals = payload.pendingApprovals.filter { ApprovalBinding.problem(it) == null },
+        pendingApprovalIdsComplete = payload.pendingApprovalIdsComplete.filter { ApprovalBinding.requestIdProblem(it) == null },
+    )
+
     /** Decodes a frame that must be a PC -> phone message; client message types are rejected as invalid. */
     fun decodeServer(text: String): DecodeResult = when (val r = decode(text)) {
         is DecodeResult.Decoded -> if (r.message is ServerMessage) r else DecodeResult.Invalid("unexpected client message ${r.message.type}")
         else -> r
     }
 
-    /** Encodes a phone -> PC message into one text frame. Throws if the frame would exceed 32 KiB. */
+    /** Encodes a phone -> PC message into one text frame. Throws if the frame would exceed 32 KiB or a decision is malformed. */
     fun encode(message: ClientMessage): String {
+        // A decision is validated exactly like a received one: the phone never emits what it would refuse to read.
+        if (message is DecisionMessage) validate(message)?.let { throw IllegalArgumentException("invalid decision: $it") }
         val payload: JsonElement = when (message) {
             is PairMessage -> json.encodeToJsonElement(PairPayload.serializer(), message.payload)
             is HelloMessage -> json.encodeToJsonElement(HelloPayload.serializer(), message.payload)

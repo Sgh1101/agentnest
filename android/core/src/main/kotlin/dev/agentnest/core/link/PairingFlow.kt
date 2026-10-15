@@ -105,7 +105,7 @@ class PairingFlow(
         return when (message) {
             is ChallengeMessage -> onChallenge(message, now)
             is PairPendingMessage -> onPairPending(message, now)
-            is PairResultMessage -> onPairResult(message)
+            is PairResultMessage -> onPairResult(message, now)
             is ErrorMessage -> fail(failureForError(message.payload.code), emptyList())
             else -> fail(PairingFailure.PROTOCOL, listOf(PairingEffect.Close(CLOSE_NORMAL, "unexpected message")))
         }
@@ -178,12 +178,20 @@ class PairingFlow(
         return listOf(PairingEffect.ShowSas(computed))
     }
 
-    private fun onPairResult(message: PairResultMessage): List<PairingEffect> {
+    private fun onPairResult(message: PairResultMessage, now: Instant): List<PairingEffect> {
         val payload = message.payload
         if (phase !is PairingPhase.ShowingSas && phase != PairingPhase.WaitingForPairPending) {
             return fail(PairingFailure.PROTOCOL, listOf(close("unexpected pair_result")))
         }
         if (!payload.ok) return fail(failureForError(payload.errorCode ?: ""), emptyList())
+        // Success counts only after the SAS was computed locally, compared and shown (security.md 4.2 / I7). A
+        // pair_result{ok} straight after the challenge would skip the human check entirely.
+        if (phase !is PairingPhase.ShowingSas) {
+            return fail(
+                PairingFailure.PROTOCOL,
+                listOf(PairingEffect.Send(unpair(now)), close("pair_result before sas")),
+            )
+        }
         val deviceId = payload.deviceId
         val token = payload.deviceToken
         val pc = payload.pc

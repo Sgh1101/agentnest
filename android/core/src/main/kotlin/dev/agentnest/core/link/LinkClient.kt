@@ -41,6 +41,12 @@ interface LinkSideEffects {
 
     /** Raise a `security` channel notification. */
     fun securityAlert(kind: SecurityAlertKind)
+
+    /**
+     * Persist the link's security counters (pin-mismatch rounds, suspension, auth failures, NeedsRepair) and hand
+     * them back as `initialCounters` on the next start. The default does nothing (counters then reset on restart).
+     */
+    fun persistCounters(counters: LinkCounters) = Unit
 }
 
 /**
@@ -66,6 +72,7 @@ class LinkClient(
     initialState: NestState? = null,
     private val tickInterval: Duration = Duration.ofSeconds(1),
     private val onError: (Throwable) -> Unit = {},
+    initialCounters: LinkCounters = LinkCounters(),
 ) {
     private sealed interface Input {
         data class Link(val event: LinkEvent) : Input
@@ -76,10 +83,11 @@ class LinkClient(
         data object Refresh : Input
     }
 
-    private val inbox = Channel<Input>(Channel.UNLIMITED)
+    /** An input that never reaches the processing coroutine (stop, scope cancelled) still answers its caller: false. */
+    private val inbox = Channel<Input>(Channel.UNLIMITED, onUndeliveredElement = ::completeUndelivered)
     private val state = MutableStateFlow(initialState ?: reducer.initial(clock.instant()))
     private val incomingFlow = MutableSharedFlow<ServerMessage>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    private val machine = LinkStateMachine(hosts, credentials, { state.value.lastSeq }, config, backoff, ids)
+    private val machine = LinkStateMachine(hosts, credentials, { state.value.lastSeq }, config, backoff, ids, initialCounters)
     private var connection: WsConnection? = null
     private var jobs: List<Job> = emptyList()
 
@@ -98,19 +106,22 @@ class LinkClient(
     /** Starts processing. [paired] says whether credentials exist; if so the client connects right away. */
     fun start(paired: Boolean) {
         check(jobs.isEmpty()) { "already started" }
-        jobs = listOf(
-            scope.launch {
-                for (input in inbox) {
-                    try {
-                        process(input)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // A bug in one input must not brick the link; report it and keep going.
-                        onError(e)
-                    }
+        val processor = scope.launch {
+            for (input in inbox) {
+                try {
+                    process(input)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // A bug in one input must not brick the link; report it and keep going.
+                    onError(e)
                 }
-            },
+            }
+        }
+        // However the processor ends (stop, scope cancelled, failure): queued senders must not wait forever.
+        processor.invokeOnCompletion { inbox.cancel() }
+        jobs = listOf(
+            processor,
             scope.launch {
                 while (isActive) {
                     delay(tickInterval.toMillis())
@@ -125,7 +136,7 @@ class LinkClient(
     fun stop() {
         jobs.forEach { it.cancel() }
         jobs = emptyList()
-        inbox.close()
+        inbox.cancel() // drops queued inputs; every waiting send / submitDecision returns false
         connection?.cancel()
         connection = null
     }
@@ -156,8 +167,13 @@ class LinkClient(
         inbox.trySend(Input.Refresh)
     }
 
-    /** Sends any client message (for example `approval_seen`, `events_request`). Returns false while not connected. */
+    /**
+     * Sends a non-decision client message (for example `approval_seen`, `events_request`). Returns false while not
+     * connected. A [DecisionMessage] is refused here: decisions only go through [submitDecision], which checks the
+     * card and the in-flight guard.
+     */
     suspend fun send(message: ClientMessage): Boolean {
+        if (message is DecisionMessage) return false
         val result = CompletableDeferred<Boolean>()
         if (inbox.trySend(Input.Send(message, result)).isFailure) return false
         return result.await()
@@ -174,6 +190,14 @@ class LinkClient(
     }
 
     // ---------------------------------------------------------------------------------------------
+
+    private fun completeUndelivered(input: Input) {
+        when (input) {
+            is Input.Send -> input.result.complete(false)
+            is Input.Decision -> input.result.complete(false)
+            else -> Unit
+        }
+    }
 
     private fun post(event: LinkEvent) {
         inbox.trySend(Input.Link(event))
@@ -213,18 +237,32 @@ class LinkClient(
                 state.value = result.state
                 result.outbound.forEach(::sendIfConnected)
             }
-            is Input.Send -> input.result.complete(sendIfConnected(input.message))
+            is Input.Send -> input.result.complete(
+                try {
+                    sendIfConnected(input.message)
+                } catch (e: Exception) {
+                    onError(e)
+                    false
+                },
+            )
             is Input.Decision -> {
-                val request = input.message.payload.requestId
-                val card = state.value.approvals[request]
-                val allowed = card != null && card.inFlight == null && machine.state is LinkState.Connected
-                val sent = allowed && sendIfConnected(input.message)
-                if (sent) {
-                    state.value = reducer.markDecisionSent(
-                        state.value, request, input.message.meta.id, input.message.payload.decision, now,
-                    )
+                var sent = false
+                try {
+                    val request = input.message.payload.requestId
+                    val card = state.value.approvals[request]
+                    val allowed = card != null && card.inFlight == null && machine.state is LinkState.Connected
+                    sent = allowed && sendIfConnected(input.message)
+                    if (sent) {
+                        state.value = reducer.markDecisionSent(
+                            state.value, request, input.message.meta.id, input.message.payload.decision, now,
+                        )
+                    }
+                } catch (e: Exception) {
+                    onError(e)
+                    sent = false
+                } finally {
+                    input.result.complete(sent)
                 }
-                input.result.complete(sent)
             }
         }
     }
@@ -278,6 +316,7 @@ class LinkClient(
                 LinkEffect.WipeDeviceToken -> sideEffects.wipeDeviceToken()
                 LinkEffect.WipePairing -> sideEffects.wipePairing()
                 is LinkEffect.SecurityAlert -> sideEffects.securityAlert(effect.kind)
+                is LinkEffect.PersistCounters -> sideEffects.persistCounters(effect.counters)
             }
         }
     }

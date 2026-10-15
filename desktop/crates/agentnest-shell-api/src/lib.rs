@@ -41,6 +41,11 @@ pub mod pump;
 pub mod settings;
 pub mod tray;
 
+#[cfg(test)]
+mod api_tests;
+#[cfg(test)]
+mod contract_tests;
+
 pub use api::{ShellApi, ShellApiOptions};
 pub use error::IpcError;
 pub use events::{Envelope, ShellAction};

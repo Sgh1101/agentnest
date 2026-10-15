@@ -79,6 +79,9 @@ sealed interface LinkEffect {
     /** Delete token, pin, pc_id, address book and the Keystore entries. */
     data object WipePairing : LinkEffect
     data class SecurityAlert(val kind: SecurityAlertKind) : LinkEffect
+
+    /** Store [counters] so the pin-mismatch / auth-failure bookkeeping survives a process restart. */
+    data class PersistCounters(val counters: LinkCounters) : LinkEffect
 }
 
 /** Inputs of [LinkStateMachine]. Socket events carry the id of the connection they belong to; stale ones are ignored. */

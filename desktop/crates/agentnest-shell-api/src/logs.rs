@@ -7,9 +7,11 @@
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use agentnest_core::config::LogLevel;
 use agentnest_core::redact::{clip, mask};
+use regex::Regex;
 use thiserror::Error;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -118,9 +120,24 @@ fn read_tail_lines(path: &Path, max_lines: usize) -> io::Result<Vec<String>> {
     Ok(lines[skip..].iter().map(|l| (*l).to_owned()).collect())
 }
 
+/// `Authorization: Bearer <token>` and `Bearer <token>` / `Basic <token>`: the shared redactor masks `Authorization:`
+/// but would leave the token after the scheme word, so the log view masks the whole header value itself.
+fn auth_header_pattern() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)(authorization\s*[:=]\s*)?\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}|authorization\s*[:=]\s*\S+")
+            .ok()
+    })
+    .as_ref()
+}
+
 /// Masks and bounds one log line for display.
 pub fn sanitize_line(line: &str) -> String {
     let cleaned: String = line.chars().filter(|c| !c.is_control() || *c == '\t').collect();
+    let cleaned = match auth_header_pattern() {
+        Some(re) => re.replace_all(&cleaned, "<redacted>").into_owned(),
+        None => cleaned,
+    };
     clip(&mask(&cleaned).text, LINE_MAX_CHARS)
 }
 

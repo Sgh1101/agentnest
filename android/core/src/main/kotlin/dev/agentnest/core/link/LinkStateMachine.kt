@@ -42,6 +42,23 @@ data class LinkConfig(
 )
 
 /**
+ * The security counters of the link that must survive process death (docs/android.md 3.2): without them, killing the
+ * service would reset "3 pin mismatches -> 1 h suspension -> NeedsRepair" and "3 auth failures -> NeedsRepair" to zero.
+ * [pinMismatchRounds] counts connection ROUNDS in which every host failed the pin check.
+ */
+data class LinkCounters(
+    val authFailures: Int = 0,
+    val pinMismatchRounds: Int = 0,
+    val suspensions: Int = 0,
+    val suspendedUntil: Instant? = null,
+    val needsRepair: RepairReason? = null,
+) {
+    /** True when nothing is remembered (the stored copy can be cleared). */
+    val isClear: Boolean
+        get() = authFailures == 0 && pinMismatchRounds == 0 && suspensions == 0 && suspendedUntil == null && needsRepair == null
+}
+
+/**
  * Connection lifecycle of the phone <-> PC link (docs/android.md 3.2). Pure: it does no I/O and never reads a
  * clock; callers pass `now` and execute the returned [LinkEffect]s. Not thread-safe; drive it from one thread.
  *
@@ -58,6 +75,7 @@ class LinkStateMachine(
     private val config: LinkConfig = LinkConfig(),
     private val backoff: BackoffPolicy = BackoffPolicy(),
     private val ids: () -> String = Uuid7Generator()::next,
+    initialCounters: LinkCounters = LinkCounters(),
 ) {
     /** The current state. */
     var state: LinkState = LinkState.Unpaired
@@ -73,9 +91,14 @@ class LinkStateMachine(
     private var hostIndex = 0
     private var currentHost = ""
     private var failures = 0
-    private var authFailures = 0
-    private var pinMismatches = 0
-    private var suspensions = 0
+    private var authFailures = initialCounters.authFailures
+    private var pinMismatches = initialCounters.pinMismatchRounds
+    private var suspensions = initialCounters.suspensions
+    private var suspendedUntil: Instant? = initialCounters.suspendedUntil
+    private var needsRepairReason: RepairReason? = initialCounters.needsRepair
+    private var roundAttempts = 0
+    private var roundPinMismatches = 0
+    private var persisted = initialCounters
     private var authFailedThisConnection = false
     private var phaseStartedAt: Instant = Instant.EPOCH
     private var lastReceivedAt: Instant = Instant.EPOCH
@@ -91,8 +114,11 @@ class LinkStateMachine(
     fun handle(event: LinkEvent, now: Instant): List<LinkEffect> {
         val effects = ArrayList<LinkEffect>()
         when (event) {
-            is LinkEvent.Start -> if (event.paired) startFresh(now, effects) else state = LinkState.Unpaired
-            LinkEvent.Paired -> startFresh(now, effects)
+            is LinkEvent.Start -> if (event.paired) startPaired(now, effects) else state = LinkState.Unpaired
+            LinkEvent.Paired -> {
+                resetCounters(effects) // a fresh pairing starts with a clean slate
+                startFresh(now, effects)
+            }
             LinkEvent.ConnectNow -> if (isRetryable()) startFresh(now, effects)
             LinkEvent.NetworkAvailable -> if (isRetryable()) startFresh(now, effects)
             LinkEvent.NetworkLost -> onNetworkLost(effects)
@@ -118,6 +144,28 @@ class LinkStateMachine(
     private fun isRetryable(): Boolean =
         state is LinkState.Reconnecting || state is LinkState.PcUnreachable || state is LinkState.Offline
 
+    /** App / service start: a remembered NeedsRepair or a still-running suspension is restored instead of reconnecting. */
+    private fun startPaired(now: Instant, effects: MutableList<LinkEffect>) {
+        needsRepairReason?.let { reason ->
+            state = LinkState.NeedsRepair(reason)
+            return
+        }
+        val until = suspendedUntil
+        if (until != null && now.isBefore(until)) {
+            nextRetryAt = until
+            state = LinkState.Suspended(until)
+            effects += LinkEffect.ScheduleWake(until)
+            return
+        }
+        if (until != null) {
+            // The suspension ran out while the service was down: forget it (suspensions stays 1, so a repeat escalates).
+            pinMismatches = 0
+            suspendedUntil = null
+            persistCounters(effects)
+        }
+        startFresh(now, effects)
+    }
+
     private fun startFresh(now: Instant, effects: MutableList<LinkEffect>) {
         failures = 0
         unreachableSince = null
@@ -128,6 +176,8 @@ class LinkStateMachine(
     private fun beginRound(now: Instant, effects: MutableList<LinkEffect>) {
         hostQueue = hosts.candidates()
         hostIndex = 0
+        roundAttempts = 0
+        roundPinMismatches = 0
         if (hostQueue.isEmpty()) {
             roundFailed(now, LinkError.Unreachable, effects)
         } else {
@@ -152,11 +202,27 @@ class LinkStateMachine(
     /** The current host did not work; try the next one, or finish the round. */
     private fun attemptFailed(now: Instant, error: LinkError, effects: MutableList<LinkEffect>) {
         activeConn = null
+        roundAttempts++
+        if (error == LinkError.PinMismatch) roundPinMismatches++
         hostIndex++
         if (hostIndex < hostQueue.size) startAttempt(now, effects) else roundFailed(now, error, effects)
     }
 
     private fun roundFailed(now: Instant, error: LinkError, effects: MutableList<LinkEffect>) {
+        // A pin mismatch counts ONCE per round, and only when no host of the round did anything else: a stale
+        // address now owned by another device must not drive the link to Suspended / NeedsRepair on its own.
+        val pinRound = roundAttempts > 0 && roundPinMismatches == roundAttempts
+        roundAttempts = 0
+        roundPinMismatches = 0
+        if (pinRound) {
+            pinMismatches++
+            if (pinMismatches >= config.pinMismatchesForSuspend) {
+                // The first time: wait an hour. If the mismatch persists after that, the identity change is confirmed.
+                if (suspensions >= 1) enterIdentityChanged(effects) else enterSuspended(now, effects)
+                return
+            }
+            persistCounters(effects)
+        }
         failures++
         scheduleRetry(now, error, effects)
     }
@@ -206,6 +272,8 @@ class LinkStateMachine(
         activeConn = null
         nextRetryAt = null
         state = LinkState.NeedsRepair(reason)
+        needsRepairReason = reason
+        persistCounters(effects)
         effects += LinkEffect.SecurityAlert(SecurityAlertKind.REPEATED_AUTH_FAILURE)
     }
 
@@ -214,6 +282,8 @@ class LinkStateMachine(
         activeConn = null
         nextRetryAt = null
         state = LinkState.NeedsRepair(RepairReason.IDENTITY_CHANGED)
+        needsRepairReason = RepairReason.IDENTITY_CHANGED
+        persistCounters(effects)
         effects += LinkEffect.SecurityAlert(SecurityAlertKind.PC_IDENTITY_CHANGED)
     }
 
@@ -223,7 +293,9 @@ class LinkStateMachine(
         suspensions++
         val until = now.plus(config.pinSuspension)
         nextRetryAt = until
+        suspendedUntil = until
         state = LinkState.Suspended(until)
+        persistCounters(effects)
         effects += LinkEffect.SecurityAlert(SecurityAlertKind.PC_IDENTITY_CHANGED)
         effects += LinkEffect.ScheduleWake(until)
     }
@@ -233,6 +305,7 @@ class LinkStateMachine(
         if (authFailedThisConnection) return
         authFailedThisConnection = true
         authFailures++
+        persistCounters(effects)
         if (authFailures >= config.authFailuresForRepair) enterNeedsRepair(RepairReason.AUTH_FAILED, effects)
     }
 
@@ -264,6 +337,7 @@ class LinkStateMachine(
                 countAuthFailure(effects)
                 if (state !is LinkState.NeedsRepair) {
                     activeConn = null
+                    roundAttempts++ // an auth failure is not a pin mismatch: this round no longer counts as one
                     roundFailed(now, LinkError.AuthFailed, effects)
                 }
             }
@@ -288,14 +362,6 @@ class LinkStateMachine(
             TransportFailureKind.TLS -> LinkError.Tls
             TransportFailureKind.PROTOCOL -> LinkError.ProtocolViolation
             TransportFailureKind.UNREACHABLE -> LinkError.Unreachable
-        }
-        if (failure.kind == TransportFailureKind.PIN_MISMATCH) {
-            pinMismatches++
-            if (pinMismatches >= config.pinMismatchesForSuspend) {
-                // The first time: wait an hour. If the mismatch persists after that, the identity change is confirmed.
-                if (suspensions >= 1) enterIdentityChanged(effects) else enterSuspended(now, effects)
-                return
-            }
         }
         if (wasConnected) connectionLost(now, error, effects) else attemptFailed(now, error, effects)
     }
@@ -350,9 +416,7 @@ class LinkStateMachine(
     private fun onWelcome(message: WelcomeMessage, now: Instant, effects: MutableList<LinkEffect>) {
         state = LinkState.Connected(message.payload.pc, now, null)
         failures = 0
-        authFailures = 0
-        pinMismatches = 0
-        suspensions = 0
+        resetCounters(effects)
         unreachableSince = null
         nextRetryAt = null
         lastAckedSeq = lastSeq()
@@ -427,6 +491,8 @@ class LinkStateMachine(
             }
             is LinkState.Suspended -> if (!now.isBefore(current.until)) {
                 pinMismatches = 0
+                suspendedUntil = null
+                persistCounters(effects)
                 startFresh(now, effects)
             }
             is LinkState.Connecting, LinkState.Challenged -> {
@@ -469,14 +535,12 @@ class LinkStateMachine(
         activeConn = null
         nextRetryAt = null
         failures = 0
-        authFailures = 0
-        pinMismatches = 0
-        suspensions = 0
         unreachableSince = null
         hosts = HostBookState()
         state = LinkState.Unpaired
         effects += LinkEffect.WipePairing
         effects += LinkEffect.PersistHosts(hosts)
+        resetCounters(effects)
     }
 
     private fun onUserUnpair(now: Instant, effects: MutableList<LinkEffect>) {
@@ -493,6 +557,7 @@ class LinkStateMachine(
         state = LinkState.Unpaired
         effects += LinkEffect.WipePairing
         effects += LinkEffect.PersistHosts(hosts)
+        resetCounters(effects)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -500,6 +565,25 @@ class LinkStateMachine(
     // ---------------------------------------------------------------------------------------------
 
     private fun meta(now: Instant) = FrameMeta(ids(), Ts.of(now))
+
+    private fun currentCounters() = LinkCounters(authFailures, pinMismatches, suspensions, suspendedUntil, needsRepairReason)
+
+    /** Emits [LinkEffect.PersistCounters] when the counters differ from what was last handed to the app. */
+    private fun persistCounters(effects: MutableList<LinkEffect>) {
+        val now = currentCounters()
+        if (now == persisted) return
+        persisted = now
+        effects += LinkEffect.PersistCounters(now)
+    }
+
+    private fun resetCounters(effects: MutableList<LinkEffect>) {
+        authFailures = 0
+        pinMismatches = 0
+        suspensions = 0
+        suspendedUntil = null
+        needsRepairReason = null
+        persistCounters(effects)
+    }
 
     private fun send(message: dev.agentnest.core.protocol.ClientMessage, now: Instant, effects: MutableList<LinkEffect>) {
         lastSentAt = now

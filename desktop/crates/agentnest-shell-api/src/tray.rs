@@ -147,7 +147,7 @@ pub enum TrayItem {
     },
     /// A checkable entry; clicking it requests `id` (which encodes the new value).
     Check {
-        /// Menu id (ends with `:1` / `:0`, the value that clicking requests).
+        /// Menu id (ends with `:1` / `:0`, the value that clicking requests: `link:0` sets `link.enabled=false`).
         id: String,
         /// Label.
         label: String,
@@ -610,8 +610,10 @@ mod tests {
         assert!(m.labels().iter().any(|l| l == "데몬 오류 — 재시작"));
         assert!(m.ids().contains(&"restart".to_owned()));
         assert!(!m.ids().contains(&"pair".to_owned()));
-        let mut i = TrayInput::default();
-        i.daemon_error = true;
+        let i = TrayInput {
+            daemon_error: true,
+            ..TrayInput::default()
+        };
         assert_eq!(icon_for(&i), TrayIcon::Red);
     }
 
@@ -620,14 +622,14 @@ mod tests {
         let mut i = TrayInput::default();
         let m = TrayModel::build(&i);
         assert!(m.ids().contains(&"pause:1".to_owned()));
-        assert!(m.ids().contains(&"link:1".to_owned()), "link:1 = disconnect phones");
+        assert!(m.ids().contains(&"link:0".to_owned()), "link:0 = set link.enabled to false (disconnect phones)");
         assert!(m.ids().contains(&"autostart:1".to_owned()));
         i.remote_paused = true;
         i.link_enabled = false;
         i.autostart = true;
         let m = TrayModel::build(&i);
         assert!(m.ids().contains(&"pause:0".to_owned()));
-        assert!(m.ids().contains(&"link:0".to_owned()));
+        assert!(m.ids().contains(&"link:1".to_owned()));
         assert!(m.ids().contains(&"autostart:0".to_owned()));
         // the pairing entry disappears while the link is off
         assert!(!m.ids().contains(&"pair".to_owned()));
@@ -692,10 +694,12 @@ mod tests {
 
     #[test]
     fn the_status_line_follows_the_documented_form() {
-        let mut i = TrayInput::default();
-        i.claude_connected = true;
-        i.codex = CodexLine::HooksWaiting;
-        i.devices_online = 1;
+        let mut i = TrayInput {
+            claude_connected: true,
+            codex: CodexLine::HooksWaiting,
+            devices_online: 1,
+            ..TrayInput::default()
+        };
         assert_eq!(status_line(&i), "Claude Code ● 연결됨 / Codex ○ hooks / 폰 1대 온라인");
         i.link_enabled = false;
         assert!(status_line(&i).ends_with("폰 연결 꺼짐"));
@@ -707,8 +711,10 @@ mod tests {
 
     #[test]
     fn the_first_run_hint_shows_only_when_nothing_more_urgent_applies() {
-        let mut i = TrayInput::default();
-        i.onboarding_pending = true;
+        let mut i = TrayInput {
+            onboarding_pending: true,
+            ..TrayInput::default()
+        };
         assert_eq!(TrayModel::build(&i).tooltip, "AgentNest — 첫 설정을 마쳐 주세요");
         i.pending = vec![PendingBrief::from_card(&card("ar_1", "low", "none", &["allow"]))];
         assert_eq!(TrayModel::build(&i).tooltip, "AgentNest — 승인 대기 1건");

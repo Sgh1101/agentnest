@@ -3,6 +3,8 @@ package dev.agentnest.core.approval
 import dev.agentnest.core.link.ClockSkew
 import dev.agentnest.core.link.LinkState
 import dev.agentnest.core.nest.ApprovalCard
+import dev.agentnest.core.nest.NestState
+import dev.agentnest.core.protocol.ApprovalBinding
 import dev.agentnest.core.protocol.ApprovalRequest
 import dev.agentnest.core.protocol.AuthMethod
 import dev.agentnest.core.protocol.Decision
@@ -30,6 +32,9 @@ enum class DecisionBlock(val messageKo: String) {
     AUTH_STALE("인증한 지 시간이 지났어요. 다시 인증해 주세요"),
     AUTH_BEFORE_REQUEST("이 요청 전에 한 인증은 쓸 수 없어요. 다시 인증해 주세요"),
     EXTRA_CONFIRMATION_REQUIRED("위험한 작업이라 추가 확인이 필요해요"),
+    RESYNCING("PC와 다시 맞추는 중이에요. 잠시 뒤에 다시 시도해 주세요"),
+    BINDING_CHANGED("이 요청의 내용이 중간에 바뀌었어요. PC에서 직접 확인해 주세요"),
+    MALFORMED_REQUEST("올바르지 않은 요청이라 PC에서 직접 처리해야 해요"),
 }
 
 /** Whether a decision can currently be started for a card. */
@@ -58,14 +63,31 @@ data class UserGateResult(
     val extraConfirmation: ExtraConfirmationLevel = ExtraConfirmationLevel.NONE,
 )
 
-/** Everything the validator needs besides the card. */
+/**
+ * Everything the validator needs besides the card. [awaitingSnapshot] is `NestState.resync.awaitingSnapshot`: between
+ * `welcome` and the snapshot every card may be stale (resolved on the PC while offline), so none is actionable.
+ * It has no default on purpose: a caller must decide.
+ */
 data class DecisionContext(
     val now: Instant,
     val clockSkewMs: Long,
     val link: LinkState,
     val session: SessionState?,
     val policy: Policy,
-)
+    val awaitingSnapshot: Boolean,
+) {
+    companion object {
+        /** The context for [request] on the freshest [state]. Fail-closed: a missing policy never relaxes anything. */
+        fun from(state: NestState, request: ApprovalRequest, now: Instant): DecisionContext = DecisionContext(
+            now = now,
+            clockSkewMs = state.clockSkewMs,
+            link = state.link,
+            session = state.sessions[request.sessionKey],
+            policy = state.welcome?.policy ?: Policy(),
+            awaitingSnapshot = state.resync.awaitingSnapshot,
+        )
+    }
+}
 
 /** Outcome of [DecisionValidator.validate]. */
 sealed interface Validation {
@@ -119,7 +141,10 @@ object DecisionValidator {
             else -> ExtraConfirmationLevel.NONE
         }
         // Hold / re-confirm guard the allow-type decisions; a plain deny only ever needs authentication (if at all).
-        val extra = if (decision == Decision.DENY) ExtraConfirmationLevel.NONE else strongest(byLevel, request.risk.extraConfirmation.effective)
+        val declared = strongest(byLevel, request.risk.extraConfirmation.effective)
+        // Invisible / direction-changing characters in what the user is asked to read: at least a long press.
+        val atLeast = if (ApprovalDisplay.hiddenCharCount(request) > 0) strongest(declared, ExtraConfirmationLevel.HOLD) else declared
+        val extra = if (decision == Decision.DENY) ExtraConfirmationLevel.NONE else atLeast
         return ApprovalGate(decision, requiresAuth = true, extraConfirmation = extra)
     }
 
@@ -145,6 +170,9 @@ object DecisionValidator {
     private fun blockFor(card: ApprovalCard, decision: Decision, ctx: DecisionContext): DecisionBlock? {
         if (ctx.link !is LinkState.Connected) return DecisionBlock.OFFLINE
         val request = card.request ?: return DecisionBlock.LOADING
+        if (ctx.awaitingSnapshot) return DecisionBlock.RESYNCING
+        if (card.bindingConflict) return DecisionBlock.BINDING_CHANGED
+        if (ApprovalBinding.problem(request) != null) return DecisionBlock.MALFORMED_REQUEST
         if (decision == Decision.UNKNOWN) return DecisionBlock.UNKNOWN_DECISION
         if (!hasTimeLeft(request, ctx.now, ctx.clockSkewMs)) return DecisionBlock.EXPIRED
         if (card.inFlight != null) return DecisionBlock.IN_FLIGHT
