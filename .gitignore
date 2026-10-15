@@ -19,6 +19,10 @@ node_modules/
 dist/
 .pnpm-store/
 *.tsbuildinfo
+# Committed placeholder so `cargo check -p agentnest-desktop` works without a frontend build
+!desktop/apps/desktop/dist/
+desktop/apps/desktop/dist/*
+!desktop/apps/desktop/dist/index.html
 
 # --- Tauri ---
 desktop/apps/desktop/src-tauri/gen/

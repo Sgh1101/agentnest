@@ -102,6 +102,17 @@ desktop/apps/desktop/
 
 이벤트(`Emitter::emit`): `daemon-event{kind: "event"|"session_state"|"approval"|"device"|"pairing"|"adapter"|"link", payload}`. 고빈도 `event`는 100 ms 창으로 배열 배치(이벤트 시스템은 고처리량용이 아님 [검증]; 필요 시 `tauri::ipc::Channel`).
 
+### 3.1 프런트엔드 계약 보충 (`desktop/apps/desktop/src/api` 가 가정하는 형태 — Rust 셸은 이 형태를 구현한다)
+
+- **인자 이름**: 위 표의 snake_case(`request_id`, `tool_input_sha256`, `confirm_ack`, `name_typed`, `pairing_id` …)가 기준이다. Tauri 기본값(camelCase)과 어긋나지 않도록 커맨드에 `#[tauri::command(rename_all = "snake_case")]`를 쓴다(프런트는 두 철자를 모두 보내므로 어느 쪽이어도 동작하지만 snake_case가 규범). `hooks_*`는 평평한 인자 `agent`, `mode`를 받는다. `events_recent`는 `session_key`를 생략할 수 있다(`Option<String>`).
+- **오류**: 커맨드는 `Err`로 `{ "code": "UPPER_SNAKE", "message"?: string }`를 직렬화해 반환한다. UI는 `code`만 한국어로 옮겨 보이고 `message` 자유 문장은 표시하지 않는다. 사용하는 코드: `UNKNOWN_REQUEST` `ALREADY_RESOLVED` `INPUT_HASH_MISMATCH` `EXPIRED` `NOT_ALLOWED` `EXTRA_CONFIRMATION_REQUIRED`(`security.md` §6.2.1과 같은 사유), `RISK_NOT_ACCEPTED` `PAIRING_BUSY` `PAIRING_NOT_FOUND` `PAIRING_NOT_PENDING` `LINK_DISABLED` `NAME_MISMATCH` `DEVICE_NOT_FOUND` `INVALID_SETTING` `UNKNOWN_SETTING` `ELEVATION_DENIED` `DAEMON_NOT_RUNNING` `INTERNAL`.
+- **표에 없던 커맨드 2개**: `approvals_history(limit: number)` → `[{request_id, title, tool_name, risk_level, outcome, resolved_by, resolved_device_name|null, resolved_at}]`(승인 화면 "최근 50건 기록"), `logs_tail(limit: number)` → `string[]`(로그 화면 "최근 200줄", 레댁션본).
+- **`daemon_status` 추가 필드**: `remote_approval_paused: bool`(트레이 일시정지 상태), `last_event_at: {claude_code: ts|null, codex: ts|null}`(상태 화면 "마지막 이벤트"·첫 이벤트 수신 확인). `approvals_pending`의 `nonce_b64`는 UI가 받지 않으므로 생략해도 된다(보내도 폐기).
+- **`settings_get`/`settings_set(key, value)`**: 평평한 점 표기 키 — `approval.ttl_s`(60~180 정수), `approval.deny_requires_auth`, `approval.critical_remote`(`extra_confirmation`\|`local_only`), `approval.daemon_down_deny`, `app.notifications`, `app.log_level`(`error`\|`warn`\|`info`\|`debug`), `onboarding.completed`, `onboarding.codex_steps_done`(`hooks_json`\|`trust`\|`doctor` 배열), `risk.accepted`(읽기 전용, 쓰기는 `risk_accept`). `settings_set`은 갱신된 전체 설정 객체를 반환하고 범위 밖 값은 `INVALID_SETTING`, 그 외 키는 `UNKNOWN_SETTING`. **`app.autostart`는 JS의 `tauri-plugin-autostart`가 직접 다루므로 Rust 설정에 없다.** `link.enabled`는 `link_set_enabled`로만 바꾼다.
+- **`daemon-event` payload**(`kind` → payload): `event` → `AgentEvent[]`(배치; 단일 객체도 허용) · `session_state` → `SessionState` · `approval` → `{op:"requested", approval: ApprovalRequest+delivery}` \| `{op:"delivery", request_id, delivery}` \| `{op:"resolved", resolved: approval_resolved payload}` · `device` → `{op:"paired"\|"online"\|"offline"\|"revoked"\|"updated", device}` · `pairing` → `{op:"pending_sas", pairing_id, sas, device:{name,platform,model|null}, confirm_timeout_ms}` \| `{op:"completed", pairing_id, device_id}` \| `{op:"ended", pairing_id, reason:"expired"\|"cancelled"\|"rejected"\|"failed"\|"timeout"\|"link_disabled"}` · `adapter` → `adapter_status` payload · `link` → `{enabled, remote_approval_paused}`. 셸은 `pairing`/`pending_sas`에서 메인 창을 `show()+set_focus()` 한다(SAS 모달은 창이 보여야 의미가 있다).
+- **방화벽 차단 규칙**: 진단 화면은 `block_rule_present`일 때 `firewall_rule_remove` 후 `firewall_rule_create`를 안내한다 — `firewall_rule_remove`는 AgentNest 이름의 허용 규칙뿐 아니라 이 앱 exe에 대한 차단 규칙도 지운다고 가정한다.
+- **`deny_and_stop`과 게이트**: 데스크톱 UI는 `allow`와, `auth_required_for`에 든 `deny_and_stop`에 길게 누르기(+`critical`은 재확인)를 적용하고 `confirm_ack=true`를 보낸다. 일반 `deny`는 게이트 없이 `confirm_ack=false`(`security.md` §6.2 단계 8과 같은 해석).
+
 ---
 
 ## 4. 트레이
