@@ -1,0 +1,37 @@
+name: release-desktop
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/apps/desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop -> target"
+      - name: frontend install
+        working-directory: desktop/apps/desktop
+        run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop/apps/desktop
+          tagName: desktop-v__VERSION__
+          releaseName: "AgentNest Desktop v__VERSION__"
+          releaseDraft: true
+          args: --target x86_64-pc-windows-msvc

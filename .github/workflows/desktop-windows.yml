@@ -1,0 +1,55 @@
+name: desktop-windows
+
+on:
+  push:
+    branches: [main, "ccr-*"]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: desktop-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/apps/desktop/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop -> target"
+
+      - name: frontend install
+        working-directory: desktop/apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: frontend typecheck and test
+        working-directory: desktop/apps/desktop
+        run: |
+          pnpm typecheck
+          pnpm test
+
+      - name: core tests on Windows (paths, ACL)
+        working-directory: desktop
+        run: cargo test -p agentnest-core
+
+      - name: build Tauri app
+        uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: desktop/apps/desktop
+          uploadWorkflowArtifacts: true
+          args: --target x86_64-pc-windows-msvc

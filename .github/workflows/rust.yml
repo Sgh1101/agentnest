@@ -1,0 +1,82 @@
+name: rust
+
+on:
+  push:
+    branches: [main, "ccr-*"]
+  pull_request:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop -> target"
+
+      - name: fmt
+        working-directory: desktop
+        run: cargo fmt --all --check
+
+      - name: clippy
+        working-directory: desktop
+        run: cargo clippy --workspace --exclude agentnest-desktop --all-targets -- -D warnings
+
+      - name: test (pure crates)
+        working-directory: desktop
+        run: cargo test --workspace --exclude agentnest-desktop
+
+      - name: test (adapter-api test-util constructors)
+        working-directory: desktop
+        run: cargo test -p agentnest-adapter-api --features test-util
+
+      - name: test (feature-flagged adapter code)
+        working-directory: desktop
+        run: cargo test -p agentnest-core --features codex-daemon-observer,codex-rollout
+
+      - name: Tauri shell type check (windows msvc target, no link)
+        working-directory: desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
+
+      - name: single crypto backend (no aws-lc-rs)
+        working-directory: desktop
+        run: |
+          cargo tree --workspace > /dev/null
+          if cargo tree --workspace --target all -i aws-lc-rs > /dev/null 2>&1; then
+            echo "aws-lc-rs is in the dependency graph; ring must be the only backend" >&2
+            exit 1
+          fi
+
+      - name: exactly one Allow-reply creation site
+        run: |
+          set -eu
+          mint=$(grep -rn 'ApplyProof::mint' desktop/crates | grep -v '/tests/' | grep -v 'cfg(test)' | grep -v 'test-util' | grep -v '^\S*:[0-9]*:\s*//' || true)
+          echo "$mint"
+          test "$(printf '%s\n' "$mint" | grep -c .)" -eq 1
+          allow=$(grep -rn 'ApprovalReply::allow(' desktop/crates | grep -v '/tests/' | grep -v 'cfg(test)' | grep -v 'test-util' | grep -v '^\S*:[0-9]*:\s*//' || true)
+          echo "$allow"
+          test "$(printf '%s\n' "$allow" | grep -c .)" -le 1
+
+      - name: release build must not enable adapter-api test-util
+        working-directory: desktop
+        run: |
+          if cargo tree --workspace -e features -i agentnest-adapter-api 2>/dev/null | grep -q 'test-util'; then
+            echo "test-util feature is enabled in the default workspace graph" >&2
+            exit 1
+          fi
