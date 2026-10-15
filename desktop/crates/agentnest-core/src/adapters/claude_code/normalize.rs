@@ -17,7 +17,9 @@ use agentnest_protocol::{
 use serde_json::{json, Map, Value};
 use thiserror::Error;
 
-use crate::normalize::hook::{count_field, first_line, int_field, raw_text, str_field, Hook};
+use crate::normalize::hook::{
+    count_field, first_line, int_field, raw_text, str_field, tool_input_with_truncation_marker, Hook,
+};
 use crate::normalize::path;
 use crate::normalize::post::{build_event, EventDraft};
 use crate::normalize::NormalizeEnv;
@@ -759,7 +761,8 @@ pub fn permission_request_draft(
         project: h.cwd.map(|c| ctx.env.projects.resolve(c)),
         cwd: h.cwd.map(str::to_owned),
         tool_name: tool.to_owned(),
-        tool_input: h.tool_input.clone(),
+        // a cut input (CLI relay) carries the truncation marker, which makes the classifier say `critical`
+        tool_input: tool_input_with_truncation_marker(h.tool_input, hook),
         origin: ctx.channel.clone(),
         permission_mode: h.permission_mode.map(str::to_owned),
         available_decisions: vec![Decision::Allow, Decision::Deny, Decision::DenyAndStop],
@@ -779,7 +782,7 @@ pub fn pre_tool_use_risk(hook: &Value) -> Option<Risk> {
     }
     Some(classify(
         h.tool_name.unwrap_or(""),
-        h.tool_input,
+        &tool_input_with_truncation_marker(h.tool_input, hook),
         h.cwd,
         h.permission_mode,
     ))

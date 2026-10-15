@@ -22,7 +22,8 @@ use agentnest_protocol::{
 use serde_json::{json, Map, Value};
 
 use crate::normalize::hook::{
-    first_line, int_field, raw_text, str_field, Hook, RAW_TEXT_MAX_BYTES,
+    first_line, int_field, raw_text, str_field, tool_input_with_truncation_marker, Hook,
+    RAW_TEXT_MAX_BYTES,
 };
 use crate::normalize::path;
 use crate::normalize::post::{build_event, EventDraft};
@@ -480,7 +481,7 @@ pub fn permission_request_draft(
         project: h.cwd.map(|c| env.projects.resolve(c)),
         cwd: h.cwd.map(str::to_owned),
         tool_name: tool.to_owned(),
-        tool_input: h.tool_input.clone(),
+        tool_input: tool_input_with_truncation_marker(h.tool_input, hook),
         origin: SourceChannel::CodexHookCli,
         permission_mode: h.permission_mode.map(str::to_owned),
         available_decisions: vec![Decision::Allow, Decision::Deny],

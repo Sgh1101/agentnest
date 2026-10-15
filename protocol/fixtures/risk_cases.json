@@ -1089,6 +1089,55 @@
       }
     },
     {
+      "name": "input_too_large_pos_bash_33000_chars",
+      "rule": "input_too_large",
+      "polarity": "positive",
+      "tool_name": "Bash",
+      "tool_input": {
+        "command": ""
+      },
+      "cwd": "C:\\dev\\agentnest",
+      "permission_mode": "default",
+      "expand": {
+        "/command": {
+          "repeat": " ",
+          "count": 33000
+        }
+      },
+      "expect": {
+        "level": "critical",
+        "reasons": [
+          "input_too_large"
+        ],
+        "extra_confirmation": "hold_and_reconfirm"
+      }
+    },
+    {
+      "name": "input_too_large_pos_write_40000_chars",
+      "rule": "input_too_large",
+      "polarity": "positive",
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "C:\\dev\\agentnest\\big.txt",
+        "content": ""
+      },
+      "cwd": "C:\\dev\\agentnest",
+      "permission_mode": "default",
+      "expand": {
+        "/content": {
+          "repeat": "x",
+          "count": 40000
+        }
+      },
+      "expect": {
+        "level": "critical",
+        "reasons": [
+          "input_too_large"
+        ],
+        "extra_confirmation": "hold_and_reconfirm"
+      }
+    },
+    {
       "name": "input_too_large_neg_bash_4800_chars",
       "rule": "input_too_large",
       "polarity": "negative",
@@ -1113,7 +1162,7 @@
       }
     },
     {
-      "name": "input_too_large_neg_write_60000_chars",
+      "name": "input_too_large_neg_write_30000_chars",
       "rule": "input_too_large",
       "polarity": "negative",
       "tool_name": "Write",
@@ -1126,7 +1175,7 @@
       "expand": {
         "/content": {
           "repeat": "x",
-          "count": 60000
+          "count": 30000
         }
       },
       "expect": {
