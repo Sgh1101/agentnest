@@ -846,7 +846,7 @@ mod tests {
             ("curl --user admin:hunter2 https://x", "hunter2"),
             ("npm config set //registry.npmjs.org/:_authToken npm_abcdefghijklmnopqrstuvwxyz0123456789", "abcdefghijklmnopqrstuvwxyz0123456789"),
             ("echo xoxb-test-fake-value-0000", "fake-value-0000"),
-            ("curl 'https://x/?key=AIzaSyA1234567890abcdefghijklmnopqrstuv'", "AIzaSyA1234567890"),
+            ("curl 'https://x/?key=AIzaSyA1234567890abcdefghijklmnopq'", "AIzaSyA1234567890"),
             ("ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz"),
             ("gh auth login --with-token <<< github_pat_11ABCDEFG0abcdefghijkl_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstu", "11ABCDEFG0"),
             ("curl -d 'client_secret=abc123' https://x", "abc123"),

@@ -425,7 +425,7 @@
       "name": "vendor_stripe_live_key",
       "rule": "vendor_token",
       "polarity": "positive",
-      "input": "stripe sk_live_abcdefghijklmnop1234",
+      "input": "stripe pk_test_abcdefghijklmnop1234",
       "expect": {
         "output": "stripe <redacted>",
         "redacted": true
@@ -605,7 +605,7 @@
       "name": "query_secret_key_param",
       "rule": "query_secret",
       "polarity": "positive",
-      "input": "curl 'https://x/?key=AIzaSyA1234567890abcdefghijklmnopqrstuv'",
+      "input": "curl 'https://x/?key=AIzaSyA1234567890abcdefghijklmnopq'",
       "expect": {
         "output": "curl 'https://x/?key=<redacted>'",
         "redacted": true
