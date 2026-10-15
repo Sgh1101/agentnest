@@ -24,12 +24,13 @@ class ApprovalNotifier(private val context: Context) {
     fun show(request: ApprovalRequest, remainingSeconds: Long, silent: Boolean) {
         if (remainingSeconds <= 0) return
         val text = NotificationTexts.approval(request, remainingSeconds)
-        val publicVersion = NotificationCompat.Builder(context, ChannelIds.APPROVALS)
+        val channel = if (silent) ChannelIds.APPROVALS_QUIET else ChannelIds.APPROVALS
+        val publicVersion = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_kongi)
             .setContentTitle(NotificationTexts.APPROVAL_PUBLIC.title)
             .setContentText(NotificationTexts.APPROVAL_PUBLIC.body)
             .build()
-        val notification: Notification = NotificationCompat.Builder(context, ChannelIds.APPROVALS)
+        val notification: Notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_kongi)
             .setContentTitle(text.title)
             .setContentText(text.body)
@@ -39,7 +40,6 @@ class ApprovalNotifier(private val context: Context) {
             .setPublicVersion(publicVersion)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
-            .setSilent(silent)
             .setTimeoutAfter(remainingSeconds * 1000L)
             .setGroup(GROUP)
             .setContentIntent(openDetail(request.requestId))
@@ -65,6 +65,7 @@ class ApprovalNotifier(private val context: Context) {
             .setContentText(text.body)
             .setGroup(GROUP)
             .setGroupSummary(true)
+            .setSilent(true)
             .setAutoCancel(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(openApp())

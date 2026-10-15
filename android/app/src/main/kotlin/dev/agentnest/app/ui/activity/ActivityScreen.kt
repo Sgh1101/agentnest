@@ -46,6 +46,11 @@ fun ActivityScreen(nest: NestState, controller: AppController, modifier: Modifie
     var filter by remember { mutableStateOf(EventFilter.ALL) }
     var pager by remember { mutableStateOf(EventsPager()) }
 
+    // A request that was in flight when the link dropped will never be answered: allow asking again.
+    val connected = nest.link is LinkState.Connected
+    LaunchedEffect(connected) {
+        if (!connected) pager = pager.cancelPending()
+    }
     LaunchedEffect(Unit) {
         controller.incoming.collect { message ->
             if (message is EventsPageMessage) pager = pager.onPage(message)

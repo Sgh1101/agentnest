@@ -31,7 +31,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
@@ -254,6 +258,13 @@ class LinkService : Service() {
                 }
             },
             mainScope.launch {
+                // Approval history to disk, at most a couple of writes per burst of changes.
+                repo.nest.map { it.history }.distinctUntilChanged().collectLatest { history ->
+                    delay(HISTORY_SAVE_DELAY_MS)
+                    container.saveHistory(history)
+                }
+            },
+            mainScope.launch {
                 repo.incoming.collect { message ->
                     when (message) {
                         is EventMessage -> onEvent(message.payload)
@@ -317,6 +328,7 @@ class LinkService : Service() {
 
     companion object {
         private const val TAG = "LinkService"
+        private const val HISTORY_SAVE_DELAY_MS = 500L
 
         /** Start or nudge the link (also the default for a null intent after a system restart). */
         const val ACTION_START = "dev.agentnest.app.action.START"

@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -51,6 +52,11 @@ fun SettingsScreen(
     actions: SettingsActions,
     modifier: Modifier = Modifier,
 ) {
+    // System queries are cheap but not free: refresh them every ten seconds instead of on every clock tick.
+    val refreshKey = now.epochSecond / 10
+    val notificationsAllowed = remember(refreshKey) { controller.notificationsAllowed() }
+    val authReady = remember(refreshKey) { controller.authAvailability() == AuthAvailability.READY }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -79,7 +85,7 @@ fun SettingsScreen(
 
         SectionLabel(S.SECTION_NOTIFICATIONS)
         InfoCard(modifier = Modifier.padding(horizontal = 16.dp)) {
-            if (!controller.notificationsAllowed()) {
+            if (!notificationsAllowed) {
                 Text(S.NOTIFICATIONS_OFF_WARNING, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                 Button(onClick = controller::requestNotificationPermission) { Text(S.ALLOW_NOTIFICATIONS) }
             }
@@ -108,7 +114,7 @@ fun SettingsScreen(
             )
             KeyValueRow(
                 S.DEVICE_LOCK,
-                if (controller.authAvailability() == AuthAvailability.READY) S.AVAILABLE else S.SETUP_DEVICE_LOCK,
+                if (authReady) S.AVAILABLE else S.SETUP_DEVICE_LOCK,
             )
         }
 

@@ -3,6 +3,8 @@ package dev.agentnest.app.data
 import dev.agentnest.core.link.HostBookState
 import dev.agentnest.core.link.LinkClient
 import dev.agentnest.core.link.LinkState
+import dev.agentnest.core.nest.ApprovalHistory
+import dev.agentnest.core.nest.ApprovalHistoryEntry
 import dev.agentnest.core.nest.NestReducer
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.ClientMessage
@@ -67,15 +69,21 @@ class NestRepository(
      * exist; the link then reads "connecting" until the service reports otherwise. No-op while a client is attached.
      */
     @Synchronized
-    fun restore(snapshot: SnapshotMessage?, savedAt: Instant?, paired: Boolean) {
+    fun restore(
+        snapshot: SnapshotMessage?,
+        savedAt: Instant?,
+        paired: Boolean,
+        history: List<ApprovalHistoryEntry> = emptyList(),
+    ) {
         if (client != null) return
         val now = clock.instant()
         val link: LinkState = if (paired) LinkState.Connecting("", 1) else LinkState.Unpaired
-        state.value = if (paired && snapshot != null) {
+        val base = if (paired && snapshot != null) {
             reducer.restoreFromCache(snapshot, savedAt ?: now, now, link)
         } else {
             reducer.initial(now, link)
         }
+        state.value = if (paired && history.isNotEmpty()) base.copy(history = ApprovalHistory(history)) else base
         pausedFlow.value = false
     }
 
@@ -112,7 +120,11 @@ class NestRepository(
         client = null
         if (!had) return
         val current = state.value
-        if (current.link is LinkState.Unpaired) return
+        if (current.link is LinkState.Unpaired) {
+            // Unpaired / re-paired: nothing of the old PC may stay on screen.
+            state.value = reducer.initial(clock.instant(), LinkState.Unpaired)
+            return
+        }
         state.value = reducer.onLink(current, LinkState.Offline, clock.instant())
         if (markPaused) pausedFlow.value = true
     }

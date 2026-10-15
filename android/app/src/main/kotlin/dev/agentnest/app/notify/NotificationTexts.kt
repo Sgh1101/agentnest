@@ -16,6 +16,9 @@ import java.time.Instant
 /** Notification channel ids (docs/android.md 5). */
 object ChannelIds {
     const val APPROVALS = "approvals"
+
+    /** Same importance as [APPROVALS] but without sound or vibration (setting "알림 소리" off). */
+    const val APPROVALS_QUIET = "approvals_quiet"
     const val ALERTS = "alerts"
     const val COMPLETIONS = "completions"
     const val LINK = "link"

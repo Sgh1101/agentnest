@@ -6,6 +6,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import dev.agentnest.app.data.AppSettings
+import dev.agentnest.app.data.ApprovalHistoryStore
 import dev.agentnest.app.data.NestRepository
 import dev.agentnest.app.data.PairedInfo
 import dev.agentnest.app.data.PairingData
@@ -53,6 +54,7 @@ class AppContainer(private val app: Application) {
     val settings = AppSettings(app, scope)
     val pairingStore = PairingStore(app)
     val snapshotCache = SnapshotCache(app)
+    val historyStore = ApprovalHistoryStore(app)
     val vault = TokenVault()
     val deviceKey = DeviceKey()
     val repository = NestRepository(scope)
@@ -86,7 +88,8 @@ class AppContainer(private val app: Application) {
         scope.launch {
             val data = pairingStore.load()
             val cached = snapshotCache.load()
-            repository.restore(cached?.first, cached?.second, paired = data != null)
+            val history = historyStore.load()
+            repository.restore(cached?.first, cached?.second, paired = data != null, history = history)
             if (data != null && data.sealedToken == null) repository.markRevoked()
             ready.value = true
         }
@@ -155,6 +158,7 @@ class AppContainer(private val app: Application) {
                 ),
             )
             snapshotCache.clear()
+            historyStore.clear()
             settings.setKeyResetNotice(false)
         }
     }
@@ -168,6 +172,7 @@ class AppContainer(private val app: Application) {
     suspend fun wipePairingLocal() {
         pairingStore.wipeAll()
         snapshotCache.clear()
+        historyStore.clear()
         vault.deleteKey()
         deviceKey.delete()
     }
@@ -182,6 +187,11 @@ class AppContainer(private val app: Application) {
     /** Caches a snapshot for the next cold start. */
     fun saveSnapshot(message: SnapshotMessage) {
         scope.launch(storeDispatcher) { snapshotCache.save(message, Instant.now()) }
+    }
+
+    /** Keeps the approval history on disk (called with the latest history after every change). */
+    suspend fun saveHistory(history: dev.agentnest.core.nest.ApprovalHistory) {
+        withContext(storeDispatcher) { historyStore.save(history) }
     }
 
     /** Queues a notification deep link for the UI. */

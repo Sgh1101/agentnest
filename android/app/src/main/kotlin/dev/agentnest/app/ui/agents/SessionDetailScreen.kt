@@ -53,6 +53,11 @@ fun SessionDetailScreen(
     val scope = rememberCoroutineScope()
     var pager by remember(sessionKey) { mutableStateOf(EventsPager(sessionKey = sessionKey)) }
 
+    // A request that was in flight when the link dropped will never be answered: allow asking again.
+    val connected = nest.link is LinkState.Connected
+    LaunchedEffect(connected) {
+        if (!connected) pager = pager.cancelPending()
+    }
     LaunchedEffect(sessionKey) {
         controller.incoming.collect { message ->
             if (message is EventsPageMessage) pager = pager.onPage(message)

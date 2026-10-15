@@ -44,22 +44,26 @@ android/core/src/main/kotlin/dev/agentnest/core/
 └── util/       HostAddress(DNS 없는 주소 문법·사설 대역 판정), Uuid7Generator
 
 android/app/src/main/kotlin/dev/agentnest/app/
-├── AgentNestApp.kt           Application: 알림 채널 생성, 수동 DI, NestRepository 단일 인스턴스
-├── MainActivity.kt           FragmentActivity 상속(BiometricPrompt 요구 [검증]) + setContent
-├── nav/AppNav.kt             NavKey(sealed): Home, Agents, SessionDetail(key), Approvals, ApprovalDetail(id), ApprovalHistory, Projects, Activity, Settings, Pairing, ManualHost, Devices, NotificationPrefs, CharacterPrefs; BackHandler
-├── ui/home/                  HomeScreen(3층), KongiHeader, ActionCard, SessionCardList
-├── ui/agents/                AgentsScreen, SessionDetailScreen(타임라인)
-├── ui/approvals/             ApprovalsScreen, ApprovalDetailScreen, ApprovalHistoryScreen, HoldToConfirmButton, ExtraConfirmSheet
-├── ui/projects/              ProjectsScreen(Phase 1: 세션에서 유추한 프로젝트 목록만)
-├── ui/activity/              ActivityScreen(필터: 오류/완료/승인/파일/명령)
-├── ui/settings/              SettingsScreen, PairingScreen, DevicesScreen, NotificationPrefsScreen, CharacterPrefsScreen
-├── character/                KongiCanvas, KongiSpec, KongiAnimator, SoundCues   (character.md)
-├── service/                  LinkService(FGS connectedDevice), BootReceiver
-├── notify/                   Channels, ApprovalNotifier, AlertNotifier, LinkNotifier
+├── AgentNestApp.kt / AppContainer.kt   Application: 알림 채널 생성, 수동 DI(AppContainer), NestRepository 단일 인스턴스
+├── MainActivity.kt / ActivityHost.kt   FragmentActivity 상속(BiometricPrompt 요구 [검증]) + setContent, Activity가 필요한 기능(인증·QR·권한)의 호스트
+├── AndroidAppController.kt             화면이 보는 `ui/AppController` 인터페이스의 Android 구현(저장소·볼트·서비스·Activity 연결)
+├── nav/                      Screen(sealed, 저장 가능한 encode/decode), NavState(스택), DeepLink(`agentnest://approval/{id}`); BackHandler는 `ui/AgentNestRoot`
+├── ui/                       AgentNestRoot(탭+수동 내비), AppController, Labels·Format·Strings(한국어 상수)
+│   ├── home/                 HomeScreen(3층), 승인 ActionCard
+│   ├── agents/               AgentsScreen, SessionCard, SessionDetailScreen(타임라인)
+│   ├── approvals/            ApprovalsScreen(+ApprovalHistoryScreen), ApprovalDetailScreen, HoldToConfirmButton, ExtraConfirmDialog(재확인 다이얼로그)
+│   ├── projects/ activity/   ProjectsScreen(세션에서 유추), ActivityScreen(필터·EventsPager 페이징)
+│   ├── settings/             SettingsScreen, PairingScreen, DevicesScreen(IP 직접 입력·QR 주소 갱신·연결 해제), DiagnosticsScreen
+│   └── common/ theme/        LinkBanner(상태별 복구 동작), Components, Material 3 테마
+├── character/                KongiCanvas(단일 Canvas), KongiSpec·KongiMotion(순수, JVM 테스트), MotionPolicy
+├── service/                  LinkService(FGS connectedDevice), LinkSideEffectsImpl, BootReceiver
+├── notify/                   Channels(6개: `approvals_quiet`는 '알림 소리' 끔용 무음 변형), ApprovalNotifier, AlertNotifier, LinkNotifier, NotificationTexts(순수 문구·알림 정책)
+├── approval/                 DecisionSubmitter(검증→인증→DecisionBuilder→전송의 유일한 경로), ApprovalStatus(진행·결과 문구)
 ├── auth/BiometricGate.kt
-├── vault/                    TokenVault(Keystore AES-GCM), DeviceKey(Keystore EC P-256 — Phase 1은 공개키 등록만), PairingStore(DataStore)
+├── vault/                    TokenVault(Keystore AES-GCM), DeviceKey(Keystore EC P-256)
+├── pairing/                  PairingSession(호스트 순회+PairingFlow 구동), PairingController, PairingUiState
 ├── qr/                       QrScanner(interface), GmsQrScanner (zxing 폴백은 별도 모듈 가능)
-└── data/                     NestRepository(StateFlow<NestState>), SnapshotCache(DataStore, 콜드스타트), EventCache(최근 200건), ApprovalHistoryStore(DataStore, 최근 50건)
+└── data/                     NestRepository(StateFlow<NestState>), PairingStore·AppSettings(DataStore), SnapshotCache(콜드스타트; 이벤트 200건 포함, 승인 카드는 저장 안 함), ApprovalHistoryStore(최근 50건)
 ```
 
 아키텍처: `LinkService`가 소켓을 소유하고 수신 메시지를 `NestRepository`로 보내며, `NestReducer.reduce(state, message)`(순수 함수)가 `StateFlow<NestState>`를 갱신한다. Activity는 바인드 없이 Repository를 구독한다. ViewModel은 화면별 파생만.
@@ -213,7 +217,7 @@ sealed interface LinkState {
 
 ### 4.3 QR
 
-`QrScanner.scan(): Result<QrPayload>` → `GmsQrScanner`(`GmsBarcodeScannerOptions` `FORMAT_QR_CODE`, 카메라 권한 불필요 [추정: 샘플 구조]). 파싱: `agentnest://pair?d=` → base64url → JSON → 검증(`v==1`, `spki_pin` `sha256/`+44자, hosts 1~8, port 1024~65535, `expires_at` 미래, `pc_id` ↔ 핀 일관성). 실패 시 "AgentNest 페어링 QR이 아니에요". `pairing_secret`은 ViewModel 메모리에만, 종료 시 `fill(0)`.
+`QrScanner.scan(): QrScanResult`(원문 텍스트) → `QrPayload.parse` → `GmsQrScanner`(`GmsBarcodeScannerOptions` `FORMAT_QR_CODE`, 카메라 권한 불필요 [검증: Google 샘플 매니페스트에 CAMERA 없음]). 파싱: `agentnest://pair?d=` → base64url → JSON → 검증(`v==1`, `spki_pin` `sha256/`+44자, hosts 1~8, port 1024~65535, `expires_at` 미래, `pc_id` ↔ 핀 일관성). 실패 시 "AgentNest 페어링 QR이 아니에요". `pairing_secret`은 ViewModel 메모리에만, 종료 시 `fill(0)`.
 
 ---
 
@@ -221,7 +225,7 @@ sealed interface LinkState {
 
 | 채널 id | 중요도 | 내용 | 소리/진동 | 취소 |
 | --- | --- | --- | --- | --- |
-| `approvals` | HIGH(헤드업) | 제목 "승인 필요 · Claude Code", 본문 = `title` + 위험 등급 + 남은 시간. **명령 전문 없음**(잠금 화면). **인라인 허용/거부 액션 없음**(탭 → ApprovalDetail). `setTimeoutAfter(expires_at − now)` | on(설정) | `approval_resolved`, 만료, 앱에서 열람 |
+| `approvals` (+`approvals_quiet`) | HIGH(헤드업) | 제목 "승인 필요 · Claude Code", 본문 = `title` + 위험 등급 + 남은 시간. **명령 전문 없음**(잠금 화면). **인라인 허용/거부 액션 없음**(탭 → ApprovalDetail). `setTimeoutAfter(expires_at − now)` | on(설정) | `approval_resolved`, 만료, 앱에서 열람 |
 | `alerts` | DEFAULT | 오류(`turn_failed`, `agent_error`, `test_failed`), Codex P0/P1 리뷰(**리뷰 소스가 활성일 때만** — hooks 기본 모드에서는 발생하지 않음, `codex.md` §8) | 진동 | 세션당 60초 1건 |
 | `completions` | LOW | `turn_completed`(30초 이상 턴만) | 없음 | 조용한 시간 무음 |
 | `link` | MIN | FGS 상시: "연결됨 · DESKTOP-HOME" / "다시 연결 중 (3회, 8초 후)" / "오프라인". 액션: 다시 연결, 일시정지 | 없음 | 서비스 종료 |

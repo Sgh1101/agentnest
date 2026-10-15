@@ -30,7 +30,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.approval.ApprovalLogic
+import dev.agentnest.app.approval.AuthAvailability
 import dev.agentnest.app.approval.ApprovalStatus
+import dev.agentnest.app.approval.SubmitOutcome
 import dev.agentnest.app.character.KongiCanvas
 import dev.agentnest.app.character.KongiSpec
 import dev.agentnest.app.character.MotionLevel
@@ -96,6 +98,7 @@ fun HomeScreen(
 ) {
     val pending = nest.pendingCards(now)
     val unpaired = nest.link is LinkState.Unpaired && inputs.paired == null
+    val authReady = remember(now.epochSecond / 10) { controller.authAvailability() == AuthAvailability.READY }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -112,6 +115,13 @@ fun HomeScreen(
             )
         }
         item { KongiHeader(nest, now, inputs, unpaired, actions.onStartPairing) }
+        if (!authReady && inputs.paired != null) {
+            item {
+                InfoCard(modifier = Modifier.padding(horizontal = 16.dp), container = ToneTheme.colors(Tone.WARNING, isDarkTheme()).container) {
+                    Text(S.DEVICE_LOCK_WARNING)
+                }
+            }
+        }
         if (inputs.keyResetNotice && unpaired) {
             item {
                 InfoCard(modifier = Modifier.padding(horizontal = 16.dp), container = ToneTheme.colors(Tone.DANGER, isDarkTheme()).container) {
@@ -185,26 +195,28 @@ private fun StatusRow(nest: NestState, now: Instant, inputs: HomeInputs, onRefre
         connected -> if (pcName.isNullOrBlank()) S.CONNECTED else "${S.CONNECTED} · $pcName"
         else -> S.NOT_CONNECTED
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        StatusDot(ToneTheme.solid(tone, dark), modifier = Modifier.padding(end = 8.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-        if (nest.link is LinkState.Connected) {
-            IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = S.REFRESH) }
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(ToneTheme.solid(tone, dark), modifier = Modifier.padding(end = 8.dp))
+            Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            if (nest.link is LinkState.Connected) {
+                IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = S.REFRESH) }
+            }
         }
-    }
-    val lastSync = nest.lastSyncAt
-    if (nest.fromCache && lastSync != null) {
-        Text(
-            text = "${S.LAST_CHECKED} ${RelativeTime.ago(lastSync, now)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
+        val lastSync = nest.lastSyncAt
+        if (nest.fromCache && lastSync != null) {
+            Text(
+                text = "${S.LAST_CHECKED} ${RelativeTime.ago(lastSync, now)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+        }
     }
 }
 
@@ -298,9 +310,10 @@ private fun ActionCard(
                     onClick = {
                         if (!busy) {
                             busy = true
+                            message = null
                             scope.launch {
                                 val outcome = controller.decide(card.requestId, Decision.DENY, ExtraConfirmationLevel.NONE)
-                                message = ApprovalStatus.submitted(outcome, Decision.DENY)
+                                message = if (outcome is SubmitOutcome.Sent) null else ApprovalStatus.submitted(outcome, Decision.DENY)
                                 busy = false
                             }
                         }

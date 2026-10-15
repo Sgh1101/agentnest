@@ -1,6 +1,7 @@
 package dev.agentnest.app.ui.agents
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,15 +43,17 @@ fun AgentsScreen(
         }
         for (group in groups) {
             item(key = "head-${group.kind.wire}") {
-                SectionLabel(Labels.agent(group.kind, group.label))
-                val adapter = nest.adapters[group.kind]
-                if (adapter != null && adapter.status != AdapterStatusKind.CONNECTED && !adapter.detail.isNullOrBlank()) {
-                    Text(
-                        text = adapter.detail.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
+                Column {
+                    SectionLabel(Labels.agent(group.kind, group.label))
+                    val adapter = nest.adapters[group.kind]
+                    if (adapter != null && adapter.status != AdapterStatusKind.CONNECTED && !adapter.detail.isNullOrBlank()) {
+                        Text(
+                            text = adapter.detail.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    }
                 }
             }
             items(group.sessions, key = { it.sessionKey }) { session ->

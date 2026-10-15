@@ -24,6 +24,11 @@
         android:theme="@style/Theme.AgentNest"
         android:usesCleartextTraffic="false">
 
+        <!-- Pre-downloads the code scanner module at install time (same value the Google sample declares). -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <!-- FragmentActivity subclass (BiometricPrompt needs one). singleTask: notification deep links reuse the instance.
              configChanges: Compose handles rotation/dark mode in place, so a running pairing is not torn down. -->
         <activity

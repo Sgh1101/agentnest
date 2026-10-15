@@ -92,13 +92,14 @@ private fun BadgeRow(session: SessionState, nest: NestState) {
     val review = session.meta.review?.let {
         Labels.review(it.p0, it.p1, it.state, nest.adapters[session.agentKind]?.detail)
     }
-    val lastTest = session.lastTest
-    val test = lastTest?.let { Labels.test(it.status) }
-    if (remote == null && review == null && test == null) return
+    val testChip: Pair<String, Tone>? = session.lastTest?.let { t ->
+        Labels.test(t.status)?.let { label -> label to Labels.testTone(t.status) }
+    }
+    if (remote == null && review == null && testChip == null) return
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (remote != null) ToneChip(remote, Tone.WARNING)
         if (review != null) ToneChip(review, Tone.INFO)
-        if (test != null && lastTest != null) ToneChip(test, Labels.testTone(lastTest.status))
+        if (testChip != null) ToneChip(testChip.first, testChip.second)
     }
 }
 

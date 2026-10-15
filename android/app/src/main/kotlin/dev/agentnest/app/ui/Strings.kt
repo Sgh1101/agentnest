@@ -49,6 +49,7 @@ object S {
     const val PAIR_PC = "PC 연결하기"
     const val LAST_CHECKED = "마지막 확인"
     const val LAST_ACTIVITY = "마지막 활동"
+    const val DEVICE_LOCK_WARNING = "원격 승인에는 기기 잠금이 필요해요. 설정에서 화면 잠금(PIN, 패턴, 지문 등)을 켜 주세요."
     const val KEY_RESET_NOTICE = "기기 보안 키가 바뀌어 저장된 연결 정보를 지웠어요. 다시 페어링해 주세요."
     const val APPROVAL_NEEDED = "승인 필요"
     const val NEEDS_APPROVAL_COUNT = "승인 필요"

@@ -70,6 +70,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.biometric)
     implementation(libs.kotlinx.coroutines.android)
+    // UNVERIFIED (Phase 0) P3: version 16.1.0 is taken from Google's sample; isolated behind the QrScanner interface.
     implementation(libs.play.code.scanner)
 
     testImplementation(libs.junit)

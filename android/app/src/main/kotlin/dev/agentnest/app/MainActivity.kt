@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import dev.agentnest.app.approval.UserAuthenticator
@@ -30,6 +31,7 @@ class MainActivity : FragmentActivity(), ActivityHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         container.controller.attach(this)
         handleIntent(intent)
         setContent { AgentNestRoot(container.controller) }

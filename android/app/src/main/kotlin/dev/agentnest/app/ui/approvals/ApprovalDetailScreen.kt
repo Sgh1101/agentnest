@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import dev.agentnest.app.approval.ApprovalLogic
 import dev.agentnest.app.approval.ApprovalStatus
 import dev.agentnest.app.approval.AuthAvailability
+import dev.agentnest.app.approval.SubmitOutcome
 import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.Labels
 import dev.agentnest.app.ui.S
@@ -48,6 +49,7 @@ import dev.agentnest.core.approval.ApprovalGate
 import dev.agentnest.core.approval.DecisionBlock
 import dev.agentnest.core.approval.DecisionValidator
 import dev.agentnest.core.approval.Enablement
+import dev.agentnest.core.link.LinkState
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.ApprovalRequest
 import dev.agentnest.core.protocol.Decision
@@ -81,7 +83,7 @@ fun ApprovalDetailScreen(
     Column(modifier = modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ScreenHeader(title = S.APPROVAL_TITLE, onBack = onBack, modifier = Modifier.weight(1f))
-            if (request != null && card?.inFlight == null) {
+            if (request != null && card.inFlight == null) {
                 val left = DecisionValidator.secondsLeft(request, now, nest.clockSkewMs)
                 Text(
                     text = "${RelativeTime.countdown(left)} ${S.REMAINING}",
@@ -94,7 +96,11 @@ fun ApprovalDetailScreen(
             card != null && request != null -> ApprovalBody(requestId, request, nest, now, controller)
             card != null -> EmptyHint(S.APPROVAL_LOADING)
             history != null -> ResolvedBody(history.title, ApprovalStatus.resolved(history), history.outcome)
-            else -> EmptyHint(S.APPROVAL_GONE)
+            else -> {
+                // Right after a notification tap the snapshot may not have arrived yet: say "loading", not "gone".
+                val synced = nest.link is LinkState.Connected && !nest.fromCache && !nest.resync.awaitingSnapshot
+                EmptyHint(if (synced) S.APPROVAL_GONE else S.APPROVAL_LOADING)
+            }
         }
     }
 }
@@ -133,7 +139,8 @@ private fun ApprovalBody(
         message = null
         scope.launch {
             val outcome = controller.decide(requestId, decision, extra)
-            message = ApprovalStatus.submitted(outcome, decision)
+            // After a successful send the card's own progress line takes over (delivery, result, outcome).
+            message = if (outcome is SubmitOutcome.Sent) null else ApprovalStatus.submitted(outcome, decision)
             busy = false
         }
     }
