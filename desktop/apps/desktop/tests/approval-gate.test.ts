@@ -118,6 +118,34 @@ describe("HoldGate / SasGate / helpers", () => {
     expect(revokeNameMatches("", "")).toBe(false);
   });
 
+  it("visualize also catches Hangul fillers, soft hyphen, braille blank, deprecated format and tag characters", () => {
+    const cases: Array<[string, string]> = [
+      ["\u3164", "⟦U+3164⟧"],
+      ["\u115F", "⟦U+115F⟧"],
+      ["\u1160", "⟦U+1160⟧"],
+      ["\uFFA0", "⟦U+FFA0⟧"],
+      ["\u00AD", "⟦U+00AD⟧"],
+      ["\u2800", "⟦U+2800⟧"],
+      ["\u206A", "⟦U+206A⟧"],
+      ["\u206F", "⟦U+206F⟧"],
+      ["\u2028", "⟦U+2028⟧"],
+      ["\u180E", "⟦U+180E⟧"],
+      [String.fromCodePoint(0xe0000), "⟦U+E0000⟧"],
+      [String.fromCodePoint(0xe0041), "⟦U+E0041⟧"],
+      [String.fromCodePoint(0xe007f), "⟦U+E007F⟧"],
+    ];
+    for (const [ch, shown] of cases) {
+      const text = `ls${ch}-la`;
+      expect(hasSuspicious(text), shown).toBe(true);
+      expect(visualize(text), shown).toBe(`ls${shown}-la`);
+    }
+    // ordinary text, Korean, emoji, tab/newline and the neighbours of the ranges are left alone
+    for (const ok of ["ls -la", "한글 명령", "😀 ok", "a\tb\nc", "\u2065", "\uFFA1", "\u3163", "\u2801", String.fromCodePoint(0xe0080)]) {
+      expect(hasSuspicious(ok), JSON.stringify(ok)).toBe(false);
+      expect(visualize(ok)).toBe(ok);
+    }
+  });
+
   it("visualize makes bidi/zero-width characters visible and truncate is surrogate-safe", () => {
     const evil = "rm -rf /‮ txt.exe​";
     expect(hasSuspicious(evil)).toBe(true);

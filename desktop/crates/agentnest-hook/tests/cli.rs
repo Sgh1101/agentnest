@@ -81,6 +81,9 @@ enum Signing {
     WrongKey,
     /// A valid signature of a DIFFERENT request (a replayed answer).
     OtherNonce,
+    /// A valid signature for THIS request's nonce but for a different request body: what a process that sits on the
+    /// port gets when it forwards the CLI's proof with a body of its own and relays the daemon's signed answer.
+    OtherBody,
 }
 
 /// Serves exactly one request with the given status and body, signed like the daemon.
@@ -105,22 +108,33 @@ fn serve_once_signed(
             .header(hook_auth::HEADER_NONCE)
             .unwrap_or_default()
             .to_owned();
+        let digest = hook_auth::body_digest(&captured.body);
         let sig = match signing {
             Signing::Valid => Some(hook_auth::response_sig(
                 &hook_auth::derive_key(TOKEN),
                 &nonce,
+                &digest,
                 status,
                 body.as_bytes(),
             )),
             Signing::WrongKey => Some(hook_auth::response_sig(
                 &hook_auth::derive_key("an_hk_other"),
                 &nonce,
+                &digest,
                 status,
                 body.as_bytes(),
             )),
             Signing::OtherNonce => Some(hook_auth::response_sig(
                 &hook_auth::derive_key(TOKEN),
                 "some-other-request-nonce",
+                &digest,
+                status,
+                body.as_bytes(),
+            )),
+            Signing::OtherBody => Some(hook_auth::response_sig(
+                &hook_auth::derive_key(TOKEN),
+                &nonce,
+                &hook_auth::body_digest(b"{\"hook_event_name\":\"PermissionRequest\",\"tool_input\":{\"command\":\"echo harmless\"}}"),
                 status,
                 body.as_bytes(),
             )),
@@ -198,12 +212,23 @@ fn passthrough_prints_only_the_daemon_body_and_sends_the_headers() {
     );
     assert_eq!(got.header("x-agentnest-via"), Some("cli"));
     let key = hook_auth::derive_key(TOKEN);
+    let binding = |body: &[u8]| hook_auth::RequestBinding {
+        method: "POST",
+        path: "/v1/hooks/claude-code",
+        ts: got.header(hook_auth::HEADER_TS).unwrap(),
+        nonce: got.header(hook_auth::HEADER_NONCE).unwrap(),
+        via: "cli",
+        body_sha256: hook_auth::body_digest(body),
+    };
     assert!(hook_auth::verify_request_proof(
         &key,
-        "POST",
-        "/v1/hooks/claude-code",
-        got.header(hook_auth::HEADER_TS).unwrap(),
-        got.header(hook_auth::HEADER_NONCE).unwrap(),
+        &binding(&got.body),
+        got.header(hook_auth::HEADER_PROOF).unwrap(),
+    ));
+    // the proof covers the body: the same proof does not verify for another body
+    assert!(!hook_auth::verify_request_proof(
+        &key,
+        &binding(b"{\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Other\"}"),
         got.header(hook_auth::HEADER_PROOF).unwrap(),
     ));
     assert_eq!(
@@ -400,6 +425,10 @@ fn an_unsigned_or_wrongly_signed_answer_is_never_printed() {
         ("unsigned", Signing::None),
         ("signed with another token", Signing::WrongKey),
         ("signature of another request", Signing::OtherNonce),
+        (
+            "signature of the same nonce for another body (relay)",
+            Signing::OtherBody,
+        ),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let (port, _rx) = serve_once_signed(200, allow, signing);

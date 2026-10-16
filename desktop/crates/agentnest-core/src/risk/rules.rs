@@ -9,7 +9,7 @@
 
 use agentnest_protocol::{ExtraConfirmation, RiskLevel};
 
-use crate::normalize::path::{basename, extension, segments};
+use crate::normalize::path::{segments, short_name_matches, win_segment};
 
 /// Risk level in ascending order (so `max` picks the most severe).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -280,9 +280,60 @@ fn under(path: &str, prefix: &str) -> bool {
             .is_some_and(|r| r.starts_with('/'))
 }
 
+/// The segments of a normalised path as Windows would read them (trailing dots / spaces and alternate data streams
+/// removed, see [`win_segment`]), lower-cased. This widens what the predicates below match for every path, including
+/// POSIX ones, which can only raise a level, never lower it.
+fn clean_segments(path: &str) -> Vec<String> {
+    segments(path)
+        .into_iter()
+        .map(|s| win_segment(s).to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// `true` if `seg` is `name` or could be its 8.3 short form (`PROGRA~1`, `WINDOW~1`).
+fn seg_is(seg: &str, name: &str) -> bool {
+    seg == name || short_name_matches(seg, name)
+}
+
+/// `true` if the first segment below a drive root names a Windows system location (or could be its short name).
+fn is_windows_system_rest(rest: &str) -> bool {
+    let first = win_segment(rest.split('/').next().unwrap_or("")).to_lowercase();
+    [
+        "windows",
+        "program files",
+        "program files (x86)",
+        "programdata",
+    ]
+    .iter()
+    .any(|n| seg_is(&first, n))
+}
+
 /// System locations: `C:\Windows`, `Program Files`, `/etc`, `/usr`, `/bin`, ... and raw devices below `/dev`.
+///
+/// Recognised spellings beyond the plain ones: 8.3 short names (`C:\PROGRA~1\x`), the doubled POSIX root (`//etc/x`),
+/// administrative shares of any host (`\\srv\C$\Windows\x`) and the Windows device namespace (`\\.\PhysicalDrive0`).
 pub fn is_system_path(path: &str) -> bool {
     let p = path.to_lowercase();
+    // `\\.\X` / `\\?\X` that is not a drive path: a raw device
+    if p.starts_with("//./") {
+        return true;
+    }
+    if p.starts_with("//") {
+        // `//etc/x` is `/etc/x` on POSIX; `//host/c$/windows` is a drive of another machine
+        if is_system_path(&p[1..]) {
+            return true;
+        }
+        let mut parts = p[2..].splitn(3, '/');
+        let _host = parts.next();
+        let share = parts.next().unwrap_or("");
+        let rest = parts.next().unwrap_or("");
+        let sb = share.as_bytes();
+        return sb.len() == 2
+            && sb[0].is_ascii_alphabetic()
+            && sb[1] == b'$'
+            && is_windows_system_rest(rest);
+    }
     const POSIX: [&str; 9] = [
         "/etc", "/usr", "/bin", "/sbin", "/boot", "/lib", "/lib64", "/sys", "/proc",
     ];
@@ -312,38 +363,50 @@ pub fn is_system_path(path: &str) -> bool {
         None
     };
     match rest {
-        Some(r) => {
-            under(r, "windows")
-                || under(r, "program files")
-                || under(r, "program files (x86)")
-                || under(r, "programdata")
-        }
+        Some(r) => is_windows_system_rest(r),
         None => false,
     }
 }
 
 const KEY_BASENAMES: [&str; 4] = ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"];
 
+/// The lower-cased extension of a cleaned base name (`""` if none).
+fn ext_of(base: &str) -> &str {
+    match base.rfind('.') {
+        Some(i) if i > 0 => &base[i + 1..],
+        _ => "",
+    }
+}
+
+/// `true` if the cleaned segment is a `.ssh` / `.gnupg` style secret directory (or a short name of one).
+fn is_key_dir(seg: &str) -> bool {
+    seg_is(seg, ".ssh") || seg_is(seg, ".gnupg")
+}
+
 /// Key and certificate material: `.ssh/`, `.gnupg/`, `id_*`, `*.pem`, `*.pfx`, `*.key`, `*.p12`, `*.ppk`.
 pub fn is_secret_write_path(path: &str) -> bool {
-    let p = path.to_lowercase();
-    if segments(&p).iter().any(|s| *s == ".ssh" || *s == ".gnupg") {
+    let segs = clean_segments(path);
+    if segs.iter().any(|s| is_key_dir(s)) {
         return true;
     }
-    let base = basename(&p);
+    let base = segs.last().map(String::as_str).unwrap_or("");
     if KEY_BASENAMES.iter().any(|k| base.starts_with(k)) {
         return true;
     }
-    matches!(
-        extension(&p).as_str(),
-        "pem" | "pfx" | "key" | "p12" | "ppk"
-    )
+    matches!(ext_of(base), "pem" | "pfx" | "key" | "p12" | "ppk")
 }
 
-/// Files that hold secrets: `.env*`, `credentials`, `secrets`, `.npmrc`, `.pypirc`, `.netrc`, private keys.
+/// `true` if the base name has glob characters (a pattern, not a file name).
+fn has_glob(s: &str) -> bool {
+    s.contains(['*', '?', '['])
+}
+
+/// Files that hold secrets: `.env*`, `credentials`, `secrets`, `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`,
+/// `.pgpass`, `.docker/config.json`, `.kube/config`, the GitHub CLI `hosts.yml`, private keys and key containers
+/// (`*.pem`, `*.jks`, ...), `/proc/<pid>/environ`, and the glob spellings of these (`id_*`, `.env*`).
 pub fn is_secret_read_path(path: &str) -> bool {
-    let p = path.to_lowercase();
-    let base = basename(&p);
+    let segs = clean_segments(path);
+    let base = segs.last().map(String::as_str).unwrap_or("");
     if base == ".env" {
         return true;
     }
@@ -354,7 +417,13 @@ pub fn is_secret_read_path(path: &str) -> bool {
             "example" | "sample" | "template" | "dist" | "defaults"
         );
     }
-    if matches!(base, ".npmrc" | ".pypirc" | ".netrc" | "_netrc") {
+    if base.starts_with(".env") && has_glob(base) {
+        return true;
+    }
+    if matches!(
+        base,
+        ".npmrc" | ".pypirc" | ".netrc" | "_netrc" | ".git-credentials" | ".pgpass" | ".dockercfg"
+    ) {
         return true;
     }
     let stem_ok = |stem: &str| {
@@ -366,46 +435,116 @@ pub fn is_secret_read_path(path: &str) -> bool {
     if stem_ok("credentials") || stem_ok("secrets") {
         return true;
     }
-    if KEY_BASENAMES.contains(&base) {
+    if KEY_BASENAMES.contains(&base) || (base.starts_with("id_") && has_glob(base)) {
         return true;
     }
-    matches!(extension(&p).as_str(), "key" | "pfx" | "p12" | "ppk")
+    if segs.windows(2).any(|w| {
+        (w[0] == ".docker" && w[1] == "config.json")
+            || (w[0] == ".kube" && w[1] == "config")
+            || (w[0] == "gh" && w[1] == "hosts.yml")
+    }) {
+        return true;
+    }
+    if base == "environ" && segs.len() >= 3 && segs[0] == "proc" {
+        return true;
+    }
+    matches!(
+        ext_of(base),
+        "key" | "pfx" | "p12" | "ppk" | "pem" | "jks" | "keystore"
+    )
+}
+
+/// Directories that hold credentials as a whole: `~/.ssh`, `~/.aws`, `~/.gnupg`. A command that names the directory
+/// (`tar czf x.tgz ~/.ssh`, `cat ~/.aws/*`) reads every secret in it.
+pub fn is_secret_dir_path(path: &str) -> bool {
+    clean_segments(path)
+        .iter()
+        .any(|s| is_key_dir(s) || seg_is(s, ".aws"))
 }
 
 /// Locations whose reads are sensitive but not secrets themselves: `~/.ssh`, `~/.aws`, `%APPDATA%`, ...
 pub fn is_read_sensitive_path(path: &str) -> bool {
-    let p = path.to_lowercase();
-    segments(&p).iter().any(|s| {
-        matches!(
-            *s,
-            ".ssh" | ".aws" | ".gnupg" | ".kube" | ".azure" | "appdata"
-        )
+    clean_segments(path).iter().any(|s| {
+        [".ssh", ".aws", ".gnupg", ".kube", ".azure", "appdata"]
+            .iter()
+            .any(|n| seg_is(s, n))
     })
 }
 
-/// Build and policy files: `.github/workflows/*`, `*.gradle(.kts)`, `Cargo.toml`, `package.json`,
-/// `.claude/settings*.json`.
+/// Build and policy files, and every file an agent can edit to make something run later without another approval:
+/// `.github/workflows/*`, `*.gradle(.kts)`, `Cargo.toml`, `package.json`, `.claude/settings*.json`, `.claude/hooks/*`,
+/// `.mcp.json`, `.git/hooks/*`, `.git/config`, `.husky/*`, `.vscode/{tasks,launch,settings}.json`, `Makefile`,
+/// `setup.py`, `conftest.py`, `build.rs`, `.cargo/config(.toml)`, `.envrc`, `.pre-commit-config.yaml`.
 pub fn is_build_or_policy_file(path: &str) -> bool {
-    let p = path.to_lowercase();
-    let segs = segments(&p);
+    let segs = clean_segments(path);
+    let base = segs.last().map(String::as_str).unwrap_or("");
+    let parent = |name: &str| segs.len() >= 2 && seg_is(&segs[segs.len() - 2], name);
+    // `a/b/<something>`: the path lies below the directory pair `a/b`
+    let below_pair = |a: &str, b: &str| {
+        segs.len() >= 3
+            && segs[..segs.len() - 1]
+                .windows(2)
+                .any(|w| seg_is(&w[0], a) && seg_is(&w[1], b))
+    };
+    let below_dir =
+        |a: &str| segs.len() >= 2 && segs[..segs.len() - 1].iter().any(|s| seg_is(s, a));
     if segs
         .windows(2)
-        .any(|w| w[0] == ".github" && w[1] == "workflows")
+        .any(|w| seg_is(&w[0], ".github") && seg_is(&w[1], "workflows"))
     {
         return true;
     }
-    let base = basename(&p);
+    if below_dir(".husky") || below_pair(".git", "hooks") || below_pair(".claude", "hooks") {
+        return true;
+    }
+    if parent(".claude") && base.starts_with("settings") && base.ends_with(".json") {
+        return true;
+    }
+    if parent(".vscode") && matches!(base, "tasks.json" | "launch.json" | "settings.json") {
+        return true;
+    }
+    if parent(".git") && base == "config" {
+        return true;
+    }
+    if parent(".cargo") && matches!(base, "config" | "config.toml") {
+        return true;
+    }
     if base.ends_with(".gradle.kts")
         || base.ends_with(".gradle")
-        || base == "cargo.toml"
-        || base == "package.json"
+        || matches!(
+            base,
+            "cargo.toml"
+                | "package.json"
+                | ".mcp.json"
+                | "makefile"
+                | "gnumakefile"
+                | "setup.py"
+                | "conftest.py"
+                | "build.rs"
+                | ".envrc"
+                | ".pre-commit-config.yaml"
+                | ".gitconfig"
+        )
     {
         return true;
     }
-    if segs.len() >= 2
-        && segs[segs.len() - 2] == ".claude"
-        && base.starts_with("settings")
-        && base.ends_with(".json")
+    // 8.3 short forms of the file names above (`PACKAGE~1.JSO`, `CARGO~1.TOM`, `BUILD~1.KTS`)
+    if base.contains('~')
+        && [
+            "package.json",
+            "cargo.toml",
+            ".mcp.json",
+            "conftest.py",
+            "setup.py",
+            "build.rs",
+            ".envrc",
+            ".pre-commit-config.yaml",
+            "makefile",
+            "build.gradle",
+            "build.gradle.kts",
+        ]
+        .iter()
+        .any(|n| short_name_matches(base, n))
     {
         return true;
     }

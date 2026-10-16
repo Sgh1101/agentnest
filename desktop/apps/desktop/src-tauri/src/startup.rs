@@ -9,13 +9,13 @@
 //! 4. the daemon owns a private tokio runtime (`Daemon::start`), so Tauri keeps its own runtime and the two only talk
 //!    over channels.
 
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use agentnest_core::config::{AppConfig, Paths};
 use agentnest_core::daemon::{Daemon, DaemonOptions};
+use agentnest_core::redact::clip;
 use agentnest_core::state::timers::SystemClock;
 use agentnest_shell_api::first_run::{has_minimized_flag, show_window_at_start};
 use agentnest_shell_api::logs::init_global_logging;
@@ -50,20 +50,35 @@ fn network_ops() -> Arc<dyn NetworkOps> {
 }
 
 /// `agentnest-hook` next to the app if it is there (command hooks, Codex), else the bare name for `PATH`.
+///
+/// The installed sidecar lives only next to the app executable and is not on `PATH`, so falling back to the bare name
+/// means every command hook and the Codex draft would point at a program that cannot be found: log it once.
 fn hook_cli_path() -> String {
     let name = if cfg!(windows) {
         "agentnest-hook.exe"
     } else {
         "agentnest-hook"
     };
-    std::env::current_exe()
-        .ok()
+    let exe = std::env::current_exe().ok();
+    let beside = exe
+        .as_ref()
         .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
-        .filter(|p| p.exists())
-        .map_or_else(
-            || name.to_owned(),
-            |p: PathBuf| p.to_string_lossy().into_owned(),
-        )
+        .filter(|p| p.exists());
+    match beside {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => {
+            let looked_in = exe
+                .as_ref()
+                .and_then(|e| e.parent())
+                .map_or_else(String::new, |d| d.to_string_lossy().into_owned());
+            tracing::warn!(
+                sidecar = name,
+                looked_in = %clip(&looked_in, 120),
+                "the hook sidecar is not next to the app executable; falling back to the bare name (PATH)"
+            );
+            name.to_owned()
+        }
+    }
 }
 
 /// A failed start must not be silent in a windowless app: best-effort toast, then the error goes to `setup`'s caller.

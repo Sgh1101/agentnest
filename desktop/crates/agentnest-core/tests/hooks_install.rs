@@ -18,6 +18,8 @@ fn opts<'a>(deny: bool) -> InstallOptions<'a> {
         daemon_down_deny: deny,
         install_statusline: true,
         hook_cli: "agentnest-hook",
+        // the pure installer trusts this flag; the daemon sets it from `hook_cli_usable` (absolute existing file)
+        hook_cli_ready: true,
         backup_stamp: Some("20261015T091233Z"),
     }
 }

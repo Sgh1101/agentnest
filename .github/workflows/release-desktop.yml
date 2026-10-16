@@ -1,41 +1,124 @@
 name: release-desktop
 
+# The build job has read-only repository access and no release token: build scripts (cargo build.rs, pnpm lifecycle
+# scripts, the Tauri CLI) run there. Only the small release job below holds `contents: write`; it runs no project code,
+# it just uploads the installers that the build job produced as workflow artifacts.
 on:
   push:
     tags: ["desktop-v*"]
 
+permissions:
+  contents: read
+
 jobs:
-  release:
+  build:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: desktop/apps/desktop/pnpm-lock.yaml
+
+      # The tag `desktop-vX.Y.Z` and the version in tauri.conf.json (the installer's version) must be the same release.
+      - name: tag matches the Tauri app version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          case "$TAG" in
+            desktop-v[0-9]*) ;;
+            *) echo "unexpected tag: $TAG" >&2; exit 1 ;;
+          esac
+          tag_version="${TAG#desktop-v}"
+          conf_version="$(node -p "require('./desktop/apps/desktop/src-tauri/tauri.conf.json').version")"
+          echo "tag version: $tag_version, tauri.conf.json version: $conf_version"
+          if [ "$tag_version" != "$conf_version" ]; then
+            echo "tag $TAG does not match tauri.conf.json version $conf_version" >&2
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@1.97.0
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "desktop -> target"
+
+      # Fail when Cargo.lock is out of date (the tauri build step below cannot take --locked reliably).
+      - name: Cargo.lock is up to date
+        working-directory: desktop
+        run: cargo metadata --locked --format-version 1 --quiet > /dev/null
+
       - name: frontend install
         working-directory: desktop/apps/desktop
         run: pnpm install --frozen-lockfile
+
       - name: build the agentnest-hook sidecar
         working-directory: desktop
         shell: bash
-        run: tools/prepare-hook-sidecar.sh
+        run: |
+          set -eu
+          tools/prepare-hook-sidecar.sh
+          # a placeholder (empty file) must never be what gets bundled: the installed app starts command hooks from it
+          sidecar=apps/desktop/src-tauri/binaries/agentnest-hook-x86_64-pc-windows-msvc.exe
+          test -s "$sidecar" || { echo "sidecar $sidecar is missing or empty" >&2; exit 1; }
+          echo "sidecar size: $(wc -c < "$sidecar") bytes"
+
+      # No tagName / GITHUB_TOKEN here: this step only builds. The release job publishes the files.
       - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop/apps/desktop
-          tagName: desktop-v__VERSION__
-          releaseName: "AgentNest Desktop v__VERSION__"
-          releaseDraft: true
           args: --target x86_64-pc-windows-msvc
+
+      - name: collect the installers
+        shell: bash
+        run: |
+          set -eu
+          out=desktop/target/x86_64-pc-windows-msvc/release/bundle
+          ls -R "$out" || true
+          mkdir -p installers
+          cp "$out"/nsis/*.exe "$out"/msi/*.msi installers/
+          ls -l installers
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentnest-desktop-installers
+          path: installers/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentnest-desktop-installers
+          path: installers
+
+      - name: create or update the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          version="${TAG#desktop-v}"
+          ls -l installers
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" installers/* --clobber --repo "$REPO"
+          else
+            gh release create "$TAG" installers/* --repo "$REPO" --verify-tag --draft \
+              --title "AgentNest Desktop v$version" \
+              --notes "AgentNest Desktop v$version (draft: check the installers, then publish)."
+          fi

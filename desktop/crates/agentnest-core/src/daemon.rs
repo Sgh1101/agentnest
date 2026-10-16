@@ -30,7 +30,7 @@
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -132,7 +132,8 @@ pub struct DaemonOptions {
     pub lan_addrs: Option<Vec<IpAddr>>,
     /// `~/.claude/settings.json`; the user's real one if `None`.
     pub claude_settings_path: Option<PathBuf>,
-    /// Path of `agentnest-hook` for command hooks and the statusLine.
+    /// Path of `agentnest-hook` for command hooks and the statusLine. Only an absolute path of an existing file gets
+    /// command hooks installed; a bare name (no sidecar found) installs HTTP hooks only and shows a warning.
     pub hook_cli: String,
     /// PC display name; the host name if `None`.
     pub pc_name: Option<String>,
@@ -184,6 +185,24 @@ impl DaemonOptions {
     /// Options for tests and tools: everything below `dir`, ephemeral ports, loopback only, no logger.
     pub fn for_dir(dir: impl Into<PathBuf>) -> Self {
         let dir: PathBuf = dir.into();
+        // Command hooks are installed only for an absolute path of an existing file (a bare name could be hijacked), so
+        // the test options carry a placeholder program inside `dir`. It is never executed.
+        let hook_cli = {
+            let bin = dir.join("bin").join(if cfg!(windows) {
+                "agentnest-hook.exe"
+            } else {
+                "agentnest-hook"
+            });
+            let made = bin
+                .parent()
+                .is_some_and(|p| std::fs::create_dir_all(p).is_ok())
+                && std::fs::write(&bin, b"placeholder").is_ok();
+            if made {
+                bin.to_string_lossy().into_owned()
+            } else {
+                "agentnest-hook".to_owned()
+            }
+        };
         Self {
             claude_settings_path: Some(dir.join("claude").join("settings.json")),
             paths: Paths::in_dir(dir),
@@ -192,7 +211,7 @@ impl DaemonOptions {
             clock: Arc::new(SystemClock),
             timing: Timing::default(),
             lan_addrs: Some(vec![IpAddr::V4(Ipv4Addr::LOCALHOST)]),
-            hook_cli: "agentnest-hook".to_owned(),
+            hook_cli,
             pc_name: Some("TEST-PC".to_owned()),
             tick_ms: 50,
             addr_poll_ms: 10_000,
@@ -566,6 +585,8 @@ struct Inner {
     identity: Mutex<ServerIdentity>,
     identity_store: IdentityStore,
     http_server: Mutex<Option<HttpServer>>,
+    /// The approval gate has been evaluated at least once (the first closed verdict is announced as an error).
+    http_gate_known: AtomicBool,
     link_server: tokio::sync::Mutex<Option<LinkServer>>,
     hook_port: u16,
     hook_port_problem: Option<HookPortProblem>,
@@ -1099,7 +1120,12 @@ impl Daemon {
             );
         }
 
-        let http_settings = Arc::new(HttpSettings::new(config.risk.force_ask_on_critical, false));
+        // Approvals over HTTP hooks start CLOSED: the collector must not answer one before the installed hook port has
+        // been compared with the real one (`refresh_http_approval_gate`, below, before the first request is served).
+        let http_settings = Arc::new(HttpSettings::new_closed(
+            config.risk.force_ask_on_critical,
+            false,
+        ));
         let link_policy = Arc::new(LinkPolicy::new(false, false, 120));
         let daemon_info = Arc::new(DaemonInfo::new(0, 0));
         let guard = Arc::new(GuardState {
@@ -1146,7 +1172,6 @@ impl Daemon {
         let hook_port = v4.local_addr()?.port();
         daemon_info.hook_port.store(hook_port, Ordering::Relaxed);
         let router = http::router(http_ctx, guard.clone());
-        let http_server = http::serve(router, v4, v6)?;
 
         let (shutdown_tx, _) = watch::channel(false);
         let inner = Arc::new(Inner {
@@ -1170,7 +1195,8 @@ impl Daemon {
             hook_token: Mutex::new(hook_token),
             identity: Mutex::new(identity),
             identity_store,
-            http_server: Mutex::new(Some(http_server)),
+            http_server: Mutex::new(None),
+            http_gate_known: AtomicBool::new(false),
             link_server: tokio::sync::Mutex::new(None),
             hook_port,
             hook_port_problem: (options.hook_port != 0 && hook_port != options.hook_port)
@@ -1182,6 +1208,11 @@ impl Daemon {
             shutdown_tx,
             tasks: Mutex::new(Vec::new()),
         });
+        // verify, then open the gate (or leave it closed), and only then start serving: no request can be answered in
+        // the window between "listening" and "checked"
+        inner.refresh_http_approval_gate();
+        let http_server = http::serve(router, v4, v6)?;
+        *lock(&inner.http_server) = Some(http_server);
         inner.apply_policy(&config);
         inner.store_identity_row(Some(change)).await;
         if config.link.enabled {
@@ -1204,11 +1235,33 @@ impl Daemon {
         Ok((inner, events, cmd_tx, cmd_rx))
     }
 
+    /// Dispatches the commands of the desktop shell.
+    ///
+    /// Commands that change or read state a later command depends on (settings, link on/off, remote-approval
+    /// pause/resume, hooks, devices, pairing, shutdown ...: everything for which
+    /// [`DaemonCommand::runs_in_order`] is `true`) run **one after the other, in the order they were sent**, on a single
+    /// lane. A spawn per command let `pause` -> `resume` swap places and let two read-modify-write updates of the
+    /// settings file overwrite each other (a hardening setting could be lost). The commands that only touch the approval
+    /// broker or read lists (a local decision, the pending list, session and event queries) are not on that lane: they
+    /// run on their own tasks, so a slow link restart never delays the user's decision on an approval card.
     async fn command_loop(inner: Arc<Inner>, mut rx: mpsc::Receiver<DaemonCommand>) {
+        let (lane_tx, mut lane_rx) = mpsc::unbounded_channel::<DaemonCommand>();
+        let lane_inner = inner.clone();
+        tokio::spawn(async move {
+            while let Some(cmd) = lane_rx.recv().await {
+                // a panicking command must not take the lane down: it is awaited as a task, in order
+                let _ = tokio::spawn(lane_inner.clone().handle(cmd)).await;
+            }
+        });
         while let Some(cmd) = rx.recv().await {
-            let inner = inner.clone();
-            // each command runs on its own task so that a slow one (a pairing modal) never blocks the others
-            tokio::spawn(async move { inner.handle(cmd).await });
+            if cmd.runs_in_order() {
+                if lane_tx.send(cmd).is_err() {
+                    break;
+                }
+            } else {
+                let inner = inner.clone();
+                tokio::spawn(async move { inner.handle(cmd).await });
+            }
         }
     }
 }
@@ -1230,7 +1283,8 @@ impl Inner {
             .http_settings
             .http_approvals_enabled
             .swap(ok, Ordering::Relaxed);
-        if was && !ok {
+        let first = !self.http_gate_known.swap(true, Ordering::Relaxed);
+        if (was || first) && !ok {
             tracing::error!(
                 installed = ?self.installed_http_port(),
                 listening = self.hook_port,
@@ -1512,6 +1566,9 @@ impl Inner {
                 let port = self.hook_port;
                 let path2 = path.clone();
                 let report = tokio::task::spawn_blocking(move || {
+                    // command hooks (SessionStart, statusLine, command mode) only for an absolute path of an existing
+                    // file: a bare name could be hijacked through PATH / the project directory
+                    let hook_cli_ready = claude_install::hook_cli_usable(&hook_cli);
                     claude_install::install(
                         &path2,
                         &InstallOptions {
@@ -1525,6 +1582,7 @@ impl Inner {
                             daemon_down_deny: cfg.approval.daemon_down_deny,
                             install_statusline: true,
                             hook_cli: &hook_cli,
+                            hook_cli_ready,
                             backup_stamp: None,
                         },
                     )
@@ -1601,6 +1659,12 @@ impl Inner {
                     .ok_or(CommandError::Invalid("no home directory".to_owned()))?;
                 let i = claude_install::inspect(&path);
                 let mut warnings = Vec::new();
+                if !claude_install::hook_cli_usable(&self.options.hook_cli) {
+                    // visible in the status: no sidecar means no command hooks (SessionStart, statusLine, command mode)
+                    warnings.push(
+                        claude_install::InstallWarning::HookCliNotFound.message_ko(self.hook_port),
+                    );
+                }
                 let cfg = self.config();
                 if let Some(t) = i.permission_request_timeout_s {
                     let eff = effective_ttl_s(cfg.approval.ttl_s, Some(t));
@@ -1951,6 +2015,22 @@ impl Inner {
     }
 }
 
+impl DaemonCommand {
+    /// `true` for the commands that must run strictly one after the other in the order they were sent (see
+    /// [`Daemon::command_loop`]). Only the approval-broker commands and the read-only list queries are exempt, so a
+    /// command added later is ordered unless it is listed here.
+    fn runs_in_order(&self) -> bool {
+        !matches!(
+            self,
+            DaemonCommand::ApprovalsPending { .. }
+                | DaemonCommand::ApprovalHandoffLocal { .. }
+                | DaemonCommand::ApprovalDecideLocal { .. }
+                | DaemonCommand::SessionsList { .. }
+                | DaemonCommand::EventsRecent { .. }
+        )
+    }
+}
+
 impl DaemonHandle {
     /// A new receiver of the event stream.
     pub fn subscribe(&self) -> broadcast::Receiver<DaemonEvent> {
@@ -2174,5 +2254,51 @@ impl DaemonHandle {
     #[doc(hidden)]
     pub fn debug_online_devices(&self) -> BTreeSet<String> {
         self.inner.registry.online_devices().into_iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The commands the desktop shell sends one after the other (settings, link, pause/resume, hooks, devices, pairing,
+    /// shutdown) are ordered; only broker decisions and list queries are exempt. A new command is ordered by default.
+    #[test]
+    fn ordered_commands_are_everything_but_the_broker_and_list_queries() {
+        fn unit<T>() -> Reply<T> {
+            oneshot::channel().0
+        }
+        let ordered = [
+            DaemonCommand::RemoteApprovalPause {
+                paused: true,
+                reply: unit(),
+            },
+            DaemonCommand::LinkSetEnabled {
+                enabled: false,
+                reply: unit(),
+            },
+            DaemonCommand::SettingsGet { reply: unit() },
+            DaemonCommand::HooksStatus {
+                agent: HookAgent::ClaudeCode,
+                reply: unit(),
+            },
+            DaemonCommand::HookTokenRotate { reply: unit() },
+            DaemonCommand::Shutdown { reply: unit() },
+            DaemonCommand::Status { reply: unit() },
+        ];
+        for c in &ordered {
+            assert!(c.runs_in_order());
+        }
+        let independent = [
+            DaemonCommand::ApprovalsPending { reply: unit() },
+            DaemonCommand::SessionsList { reply: unit() },
+            DaemonCommand::ApprovalHandoffLocal {
+                request_id: "ar_1".to_owned(),
+                reply: unit(),
+            },
+        ];
+        for c in &independent {
+            assert!(!c.runs_in_order());
+        }
     }
 }

@@ -64,9 +64,11 @@
     "PostCompact":        [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code", "timeout": 5, "headers": { "X-AgentNest-Token": "an_hk_3f9c…" } }] }],
     "SessionEnd":         [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code", "timeout": 1, "headers": { "X-AgentNest-Token": "an_hk_3f9c…" } }] }]
   },
-  "statusLine": { "type": "command", "command": "agentnest-hook statusline" }
+  "statusLine": { "type": "command", "command": "\"agentnest-hook\" statusline" }
 }
 ```
+
+> `statusLine` 은 셸(Windows 에서는 Git Bash)을 거쳐 실행된다 [추정: 실측은 Windows·Git Bash 가 없어 못 했다]. 따옴표 없는 백슬래시 경로는 셸이 백슬래시를 지워 실패하므로 설치기는 프로그램 경로를 **항상 큰따옴표로 감싸고**, Windows 경로는 `/` 구분자로 바꿔(`"C:/Users/…/agentnest-hook.exe" statusline`), 경로 안의 `"`·`$`·`` ` `` 는 이스케이프한다. 반면 CLI 모드 훅(`command` + `args`)은 셸을 거치지 않는 exec 형이라 경로를 그대로 쓴다. 예전 형식(따옴표 없음)의 AgentNest `statusLine` 은 재설치 때 새 형식으로 갱신된다.
 
 설치 규칙(`agentnest-core::adapters::claude_code::install`, 골든 테스트):
 

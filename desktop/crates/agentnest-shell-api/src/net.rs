@@ -741,7 +741,10 @@ mod tests {
             let lit = ps_quote(&exe);
             let (value, rest) = ps_read_literal(&lit);
             assert_eq!(value, exe, "{q:?} round-trips through the tokenizer");
-            assert!(rest.is_empty(), "{q:?}: nothing after the literal: {rest:?}");
+            assert!(
+                rest.is_empty(),
+                "{q:?}: nothing after the literal: {rest:?}"
+            );
             // an attacker-shaped name: the quote is followed by code
             let evil = format!("C:\\a{q}; calc; {q}b.exe");
             let (value, rest) = ps_read_literal(&ps_quote(&evil));

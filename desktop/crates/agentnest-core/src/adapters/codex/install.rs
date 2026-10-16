@@ -214,7 +214,10 @@ mod tests {
         let h = &v["hooks"]["SessionStart"][0]["hooks"][0];
         assert_eq!(h["command"], "agentnest-hook codex");
         assert_eq!(h["commandWindows"], "agentnest-hook.exe codex");
-        assert_eq!(doctor_command("agentnest-hook"), "agentnest-hook.exe doctor");
+        assert_eq!(
+            doctor_command("agentnest-hook"),
+            "agentnest-hook.exe doctor"
+        );
         assert_eq!(quote_program("a\"b c"), "\"a\\\"b c\"");
     }
 

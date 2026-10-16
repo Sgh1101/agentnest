@@ -5,6 +5,10 @@ on:
     branches: [main, "ccr-*"]
   pull_request:
 
+# least privilege: nothing here writes to the repository
+permissions:
+  contents: read
+
 concurrency:
   group: rust-${{ github.ref }}
   cancel-in-progress: true
@@ -17,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
@@ -33,19 +39,19 @@ jobs:
 
       - name: clippy
         working-directory: desktop
-        run: cargo clippy --workspace --exclude agentnest-desktop --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --exclude agentnest-desktop --all-targets -- -D warnings
 
       - name: test (pure crates)
         working-directory: desktop
-        run: cargo test --workspace --exclude agentnest-desktop
+        run: cargo test --locked --workspace --exclude agentnest-desktop
 
       - name: test (adapter-api test-util constructors)
         working-directory: desktop
-        run: cargo test -p agentnest-adapter-api --features test-util
+        run: cargo test --locked -p agentnest-adapter-api --features test-util
 
       - name: test (feature-flagged adapter code)
         working-directory: desktop
-        run: cargo test -p agentnest-core --features codex-daemon-observer,codex-rollout
+        run: cargo test --locked -p agentnest-core --features codex-daemon-observer,codex-rollout
 
       # `cargo check` never links, but ring and the bundled SQLite compile C in their build scripts. The MSVC CRT headers
       # are not available on Linux, so the shim compiles them with clang against the mingw-w64 headers
@@ -60,17 +66,25 @@ jobs:
           sudo apt-get install -y llvm clang mingw-w64-x86-64-dev
           # tauri-build requires the bundled sidecar file to exist; an empty placeholder is enough without linking
           tools/prepare-hook-sidecar.sh --placeholder x86_64-pc-windows-msvc
-          cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
-          cargo clippy -p agentnest-desktop -p agentnest-shell-api --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+          cargo check --locked -p agentnest-desktop --target x86_64-pc-windows-msvc
+          cargo clippy --locked -p agentnest-desktop -p agentnest-shell-api --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 
       - name: single crypto backend (no aws-lc-rs)
         working-directory: desktop
         run: |
-          cargo tree --workspace > /dev/null
-          if cargo tree --workspace --target all -i aws-lc-rs > /dev/null 2>&1; then
+          set -eu
+          # the whole graph must resolve first, so that a cargo failure below cannot pass for "not found"
+          cargo tree --locked --workspace --target all > /dev/null
+          if out=$(cargo tree --locked --workspace --target all -i aws-lc-rs 2>&1); then
+            echo "$out"
             echo "aws-lc-rs is in the dependency graph; ring must be the only backend" >&2
             exit 1
           fi
+          # a failure that is not "package not in the graph" is a real error
+          case "$out" in
+            *"did not match any packages"*) ;;
+            *) echo "$out" >&2; exit 1 ;;
+          esac
 
       - name: exactly one Allow-reply creation site
         run: |
@@ -85,7 +99,10 @@ jobs:
       - name: release build must not enable adapter-api test-util
         working-directory: desktop
         run: |
-          if cargo tree --workspace -e features -i agentnest-adapter-api 2>/dev/null | grep -q 'test-util'; then
+          set -eu
+          # a cargo failure must fail the step (no `2>/dev/null | grep`, which would read an error as "not enabled")
+          tree=$(cargo tree --locked --workspace -e features -i agentnest-adapter-api)
+          if grep -q 'test-util' <<< "$tree"; then
             echo "test-util feature is enabled in the default workspace graph" >&2
             exit 1
           fi

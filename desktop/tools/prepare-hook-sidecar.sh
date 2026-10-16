@@ -33,7 +33,9 @@ mkdir -p "$dest_dir"
 if [ "$placeholder" = "1" ]; then
     : > "$dest"
 else
-    cargo build --release -p agentnest-hook --target "$triple"
+    cargo build --locked --release -p agentnest-hook --target "$triple"
     cp "target/$triple/release/agentnest-hook$ext" "$dest"
+    # a real build is never empty: a placeholder must not be bundled by accident
+    [ -s "$dest" ] || { echo "sidecar $dest is empty" >&2; exit 1; }
 fi
 echo "sidecar ready: $dest"

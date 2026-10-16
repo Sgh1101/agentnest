@@ -39,10 +39,42 @@ pub struct Segment {
 
 /// Splits `command` into segments. Never panics; unbalanced quotes fall back to quote-less splitting.
 pub fn split_segments(command: &str, shell: Shell) -> Vec<Segment> {
-    match split_inner(command, shell, true) {
+    // PowerShell treats the typographic quotes (U+2018..U+201E) exactly like `'` and `"`: `Remove-Item “C:\”`
+    let command = if shell == Shell::PowerShell && command.chars().any(is_smart_quote) {
+        std::borrow::Cow::Owned(command.chars().map(straighten_quote).collect::<String>())
+    } else {
+        std::borrow::Cow::Borrowed(command)
+    };
+    match split_inner(&command, shell, true) {
         Some(v) => v,
-        None => split_inner(command, shell, false).unwrap_or_default(),
+        None => split_inner(&command, shell, false).unwrap_or_default(),
     }
+}
+
+fn is_smart_quote(c: char) -> bool {
+    matches!(
+        c,
+        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{201C}' | '\u{201D}' | '\u{201E}'
+    )
+}
+
+fn straighten_quote(c: char) -> char {
+    match c {
+        '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
+        '\u{201C}' | '\u{201D}' | '\u{201E}' => '"',
+        other => other,
+    }
+}
+
+/// PowerShell accepts en dash, em dash and horizontal bar as the parameter prefix (`–Recurse`, `—Force`). They become
+/// an ASCII `-` so that every flag test sees them (a token that merely starts with such a dash is over-detected as a flag
+/// in POSIX mode, which is the safe direction).
+fn normalize_leading_dash(mut t: String) -> String {
+    if t.starts_with(['\u{2013}', '\u{2014}', '\u{2015}']) {
+        let rest = t.chars().skip(1).collect::<String>();
+        t = format!("-{rest}");
+    }
+    t
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,7 +96,7 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
     // Closes the current token.
     fn end_token(tok: &mut Option<String>, tokens: &mut Vec<String>) {
         if let Some(t) = tok.take() {
-            tokens.push(t);
+            tokens.push(normalize_leading_dash(t));
         }
     }
 
@@ -77,7 +109,7 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
         if !tokens.is_empty() || !raw.trim().is_empty() {
             segments.push(Segment {
                 raw: raw.trim().to_owned(),
-                tokens: std::mem::take(tokens),
+                tokens: lower_syntax(std::mem::take(tokens)),
                 piped: *cur_piped,
             });
         }
@@ -124,6 +156,10 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
             Quote::None => {}
         }
         match c {
+            '$' if quote_aware && matches!(next, Some('\'') | Some('"')) => {
+                // `$'rm'` / `$"rm"`: ANSI-C / locale quoting; the `$` is not part of the word
+                raw.push(c);
+            }
             '\'' => {
                 raw.push(c);
                 if quote_aware {
@@ -185,6 +221,112 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
     }
     finish_segment(&mut raw, &mut tokens, &mut tok, &mut cur_piped, false);
     Some(segments)
+}
+
+/// Words that only structure a shell program and are not commands themselves.
+const SYNTAX_WORDS: &[&str] = &[
+    "!", "{", "}", "(", ")", "((", "))", "if", "then", "else", "elif", "fi", "do", "done", "while",
+    "until", "esac", "coproc", "function", "for", "select",
+];
+
+/// `{a,b}` / `{1..3}`: a brace expansion, not a group opener.
+fn is_brace_expansion(token: &str) -> bool {
+    token.starts_with('{') && (token.contains(',') || token.contains(".."))
+}
+
+/// Strips the shell *syntax* around the command a segment really runs, so that `(rm -rf /)`, `{ rm -rf /; }`,
+/// `! rm -rf /`, `then rm -rf build`, `do rm -rf "$d"` and `case x in x) rm -rf /` classify like `rm -rf /`:
+///
+/// * reserved words and grouping tokens at the start (`if`, `then`, `do`, `!`, `{`, `(`, ...);
+/// * a group opener glued to the command word (`(rm`, `{rm`) and the matching closer at the end (`/)`, `}`);
+/// * the `PATTERN)` of a `case` clause;
+/// * `iex(New-Object ...)`: a call glued to its argument list is split into the word and the argument list.
+///
+/// Nothing else is changed. The function is total.
+fn lower_syntax(mut tokens: Vec<String>) -> Vec<String> {
+    let mut opened = 0usize;
+    let mut braced = false;
+    for _ in 0..64 {
+        let Some(first) = tokens.first() else { break };
+        let f = first.as_str();
+        if SYNTAX_WORDS.contains(&f) {
+            match f {
+                "{" => braced = true,
+                "(" => opened += 1,
+                "((" => opened += 2,
+                _ => {}
+            }
+            tokens.remove(0);
+            continue;
+        }
+        if f == "case" {
+            // `case WORD in PATTERN) command...`
+            let pattern_end = if tokens.get(2).map(String::as_str) == Some("in") {
+                tokens
+                    .iter()
+                    .enumerate()
+                    .skip(3)
+                    .find(|(_, t)| t.ends_with(')'))
+                    .map(|(i, _)| i)
+            } else {
+                None
+            };
+            match pattern_end {
+                Some(i) => {
+                    tokens.drain(..=i);
+                }
+                None => {
+                    tokens.remove(0);
+                }
+            }
+            continue;
+        }
+        if f.len() > 1 && f.starts_with('(') {
+            let stripped = f.trim_start_matches('(').to_owned();
+            opened += f.len() - stripped.len();
+            tokens[0] = stripped;
+            continue;
+        }
+        if f.len() > 1 && f.starts_with('{') && !is_brace_expansion(f) {
+            braced = true;
+            tokens[0] = f[1..].to_owned();
+            continue;
+        }
+        // the `PATTERN)` of a later `case` clause (`x)`, `*)`, `)`)
+        if f.ends_with(')') && !f.contains('(') && !f.starts_with(['$', '<', '>']) {
+            tokens.remove(0);
+            continue;
+        }
+        break;
+    }
+    if opened > 0 {
+        if let Some(last) = tokens.last_mut() {
+            let mut n = 0usize;
+            while n < opened && last.ends_with(')') {
+                last.pop();
+                n += 1;
+            }
+            if last.is_empty() {
+                tokens.pop();
+            }
+        }
+    }
+    if braced && tokens.last().map(String::as_str) == Some("}") {
+        tokens.pop();
+    }
+    // `iex(New-Object Net.WebClient)...`: the command word is what precedes the first `(`
+    if let Some(first) = tokens.first() {
+        if !first.starts_with(['$', '<', '>', '`', '(', '{']) {
+            if let Some(i) = first.find('(') {
+                if i > 0 {
+                    let rest = first[i..].to_owned();
+                    tokens[0].truncate(i);
+                    tokens.insert(1, rest);
+                }
+            }
+        }
+    }
+    tokens
 }
 
 /// The bodies of command substitutions in `text`: `$(...)`, `` `...` `` and `<(...)` / `>(...)` (top level only; the
@@ -337,10 +479,15 @@ pub fn unwrap_command(tokens: &[String]) -> Unwrapped<'_> {
         }
         match n {
             "env" => {
+                // `env -S "cmd args"` carries a command line: `inner_payload` reads it, so `env` stays the command here
+                if env_split_string(&tokens[idx + 1..]).is_some() {
+                    break;
+                }
                 idx += 1;
-                idx = skip_wrapper_flags(tokens, idx, &["-u", "-s", "-c"]);
+                idx = skip_wrapper_flags(tokens, idx, &["-u", "-c"]);
             }
-            "nohup" | "command" | "exec" | "builtin" | "setsid" | "call" | "start" | "time" => {
+            "nohup" | "command" | "exec" | "builtin" | "setsid" | "call" | "start" | "time"
+            | "busybox" | "toybox" | "chronic" | "unbuffer" | "coproc" => {
                 idx += 1;
                 idx = skip_wrapper_flags(tokens, idx, &[]);
             }
@@ -396,6 +543,36 @@ fn skip_wrapper_flags(tokens: &[String], mut idx: usize, with_value: &[&str]) ->
     idx
 }
 
+/// The command line given to `env -S` / `env --split-string` (and whatever follows it), if any. `rest` are the tokens after
+/// `env`.
+fn env_split_string(rest: &[String]) -> Option<String> {
+    for (i, t) in rest.iter().enumerate() {
+        if t == "-S" || t == "--split-string" {
+            return Some(rest.get(i + 1..)?.join(" ")).filter(|c| !c.is_empty());
+        }
+        if let Some(v) = t.strip_prefix("--split-string=") {
+            return Some(
+                std::iter::once(v)
+                    .chain(rest[i + 1..].iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
+        if t.len() > 2 && t.starts_with("-S") && !t.starts_with("--") {
+            return Some(
+                std::iter::once(&t[2..])
+                    .chain(rest[i + 1..].iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
+        if !(t.starts_with('-') || is_assignment(t)) {
+            return None;
+        }
+    }
+    None
+}
+
 /// What an interpreter invocation carries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Inner {
@@ -413,6 +590,58 @@ const POSIX_SHELLS: &[&str] = &[
 pub fn is_shell_interpreter(name: &str) -> bool {
     POSIX_SHELLS.contains(&name)
         || matches!(name, "powershell" | "pwsh" | "iex" | "invoke-expression")
+}
+
+/// Names of script interpreters that execute whatever they are given (`python3`, `node`, `perl`, ...). Version suffixes
+/// (`python3.12`) count.
+pub fn is_script_interpreter(name: &str) -> bool {
+    let base = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    matches!(
+        base,
+        "python"
+            | "pypy"
+            | "py"
+            | "node"
+            | "nodejs"
+            | "deno"
+            | "bun"
+            | "perl"
+            | "ruby"
+            | "php"
+            | "lua"
+            | "luajit"
+            | "rscript"
+            | "tclsh"
+            | "osascript"
+    )
+}
+
+/// `true` if `name args...` reads a **program** from standard input: a shell interpreter (always), or a script
+/// interpreter that was given neither inline code (`-c`, `-e`, `-m`, ...) nor a script file (`-` counts as stdin).
+pub fn reads_program_from_stdin(name: &str, args: &[String]) -> bool {
+    if is_shell_interpreter(name) {
+        return true;
+    }
+    if !is_script_interpreter(name) {
+        return false;
+    }
+    let inline = args.iter().any(|a| {
+        a.starts_with('-')
+            && !a.starts_with("--")
+            && a.chars()
+                .skip(1)
+                .any(|c| matches!(c, 'c' | 'e' | 'E' | 'm' | 'r' | 'p'))
+            || matches!(a.as_str(), "--eval" | "--print" | "--command")
+    });
+    if inline {
+        return false;
+    }
+    let mut positional = args.iter().filter(|a| !is_flag(a)).map(String::as_str);
+    let mut first = positional.next();
+    if matches!(name, "deno" | "bun") && first == Some("run") {
+        first = positional.next();
+    }
+    matches!(first, None | Some("-"))
 }
 
 /// The command line carried by `bash -c "..."`, `cmd /c ...`, `powershell -Command ...`, `-EncodedCommand`, `eval ...`
@@ -464,6 +693,26 @@ pub fn inner_payload(tokens: &[String]) -> Option<Inner> {
             None
         }
         "eval" => Some(Inner::Command(rest.join(" "))),
+        "env" => env_split_string(rest).map(Inner::Command),
+        "su" | "runuser" => {
+            // `su [-] [user] -c "cmd"`, `su -lc "cmd"`, `su --command=cmd`
+            let mut i = 0;
+            while i < rest.len() {
+                let t = &rest[i];
+                if let Some(v) = t.strip_prefix("--command=") {
+                    return Some(Inner::Command(v.to_owned()));
+                }
+                if t == "--command"
+                    || (t.starts_with('-')
+                        && !t.starts_with("--")
+                        && t.chars().skip(1).any(|c| c == 'c'))
+                {
+                    return rest.get(i + 1).map(|p| Inner::Command(p.clone()));
+                }
+                i += 1;
+            }
+            None
+        }
         "wsl" => {
             // `wsl [-d distro] [-e|--exec] command...`
             let mut i = 0;

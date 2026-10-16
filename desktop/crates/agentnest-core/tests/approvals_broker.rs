@@ -208,6 +208,71 @@ async fn a_resent_decision_is_idempotent_and_a_new_decision_after_resolution_is_
     assert_eq!(h.row(&card.request_id).outcome.as_deref(), Some("allowed"));
 }
 
+/// Review item 2: a re-sent envelope is answered from the STORED decision. A Deny that was applied and is re-sent with
+/// the same id but `decision = allow` must not come back as "applied/allowed" (and must not allow anything).
+#[tokio::test]
+async fn a_resent_envelope_with_another_decision_is_refused_not_answered_as_applied() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let (card, rx) = h.open_low().await;
+    let mut deny = h.phone_decision(&card, &phone.device_id, Decision::Deny);
+    deny.auth = None;
+    let same_id_allow = agentnest_core::approvals::validator::DecisionInput {
+        decision: Decision::Allow,
+        ..deny.clone()
+    };
+    let out = h.broker.apply_decision(deny.clone()).await;
+    assert!(out.accepted);
+    assert!(out.message_ko.starts_with("거부했어요"), "{out:?}");
+    assert!(matches!(rx.await.unwrap(), Seen::Deny { .. }));
+    // the same envelope id, now claiming "allow": refused, recorded, never "허용했어요"
+    let out = h.broker.apply_decision(same_id_allow).await;
+    assert!(!out.accepted, "{out:?}");
+    assert_eq!(out.reason, DecisionResultReason::AlreadyResolved);
+    assert!(!out.message_ko.contains("허용했어요"), "{out:?}");
+    assert_eq!(h.row(&card.request_id).outcome.as_deref(), Some("denied"));
+    let decisions = h.store.list_decisions(&card.request_id).unwrap();
+    assert_eq!(decisions.len(), 2);
+    assert_eq!(decisions[0].verify_result, "APPLIED");
+    assert_eq!(decisions[1].decision, "allow");
+    assert_eq!(decisions[1].verify_result, "ALREADY_RESOLVED");
+    // an honest re-send of the same Deny is still the idempotent "applied" answer, worded from the stored decision
+    let out = h.broker.apply_decision(deny).await;
+    assert!(out.accepted);
+    assert!(out.message_ko.starts_with("거부했어요"), "{out:?}");
+    assert_eq!(h.store.list_decisions(&card.request_id).unwrap().len(), 2);
+}
+
+/// Review item 3: the expiry check uses the time at which the writer runs the transition, not the time taken before the
+/// request waited in the writer queue. The clock jumps past the expiry between the broker's own read and the writer's.
+#[tokio::test]
+async fn a_decision_that_waited_in_the_writer_queue_past_expiry_is_not_applied() {
+    let h = Harness::new();
+    let phone = h.add_phone("Galaxy");
+    let (card, rx) = h.open_low().await;
+    let d = h.phone_decision(&card, &phone.device_id, Decision::Allow);
+    // the validation sees "10 s before expiry"; by the time the UPDATE runs the request has expired
+    h.clock.advance(110_000);
+    let mut d = d;
+    d.decided_at = Some(agentnest_core::state::timers::format_ms(h.now_ms()));
+    d.auth = Some(agentnest_protocol::DecisionAuth {
+        method: agentnest_protocol::AuthMethod::Biometric,
+        authenticated_at: Some(agentnest_core::state::timers::format_ms(h.now_ms() - 500)),
+    });
+    h.clock.advance_after_next_read(15_000);
+    let out = h.broker.apply_decision(d).await;
+    assert!(!out.accepted, "{out:?}");
+    assert_eq!(out.reason, DecisionResultReason::Expired);
+    // nothing allows: the hook is ended without a decision
+    assert_eq!(rx.await.unwrap(), Seen::Abandoned(AbandonReason::Expired));
+    let row = h.row(&card.request_id);
+    assert_eq!(row.status, "expired");
+    assert_ne!(row.outcome.as_deref(), Some("allowed"));
+    let decisions = h.store.list_decisions(&card.request_id).unwrap();
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].verify_result, "EXPIRED");
+}
+
 #[tokio::test]
 async fn binding_mismatches_change_nothing_and_leave_the_request_pending() {
     let h = Harness::new();

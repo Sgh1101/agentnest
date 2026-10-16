@@ -7,8 +7,10 @@
 //!
 //! **The reply is authenticated.** Whatever listens on the loopback port could answer a hook with `allow`, and a command
 //! hook has no other way to tell. So the CLI never sends the hook token: it sends a one-time proof derived from it
-//! (`agentnest_protocol::hook_auth`) and prints **only** an answer whose `X-AgentNest-Sig` verifies against that
-//! request's nonce, status and body. An unsigned or wrongly signed answer prints nothing (exit 0, "no decision").
+//! (`agentnest_protocol::hook_auth`) that covers the request body, and prints **only** an answer whose `X-AgentNest-Sig`
+//! verifies against that request's nonce, the SHA-256 of the body **this process sent**, and the answer's status and
+//! body. An unsigned or wrongly signed answer, and a signed answer the daemon gave to a different body (relayed by
+//! something that sits on the port), print nothing (exit 0, "no decision").
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -291,11 +293,16 @@ struct Reply {
     authentic: bool,
 }
 
-/// The one-time authentication of a request: `(nonce, ts, proof)` for `method path`.
+/// The value of `X-AgentNest-Via` the relay sends (bound into the proof; the daemon does not trust it on its own).
+const VIA: &str = "cli";
+
+/// The one-time authentication of a request: `(nonce, ts, proof)` for `method path` with this body.
 fn authenticate(
     config: &DaemonConfig,
     method: &str,
     path: &str,
+    via: &str,
+    body: &[u8],
 ) -> Option<(String, String, String)> {
     let mut raw = [0u8; 18];
     SystemRandom::new().fill(&mut raw).ok()?;
@@ -306,13 +313,24 @@ fn authenticate(
         .as_millis()
         .to_string();
     let key = hook_auth::derive_key(&config.hook_token);
-    let proof = hook_auth::request_proof(&key, method, path, &ts, &nonce);
+    let proof = hook_auth::request_proof(
+        &key,
+        &hook_auth::RequestBinding {
+            method,
+            path,
+            ts: &ts,
+            nonce: &nonce,
+            via,
+            body_sha256: hook_auth::body_digest(body),
+        },
+    );
     Some((nonce, ts, proof))
 }
 
 fn reply_from(
     config: &DaemonConfig,
     nonce: &str,
+    sent_body: &[u8],
     mut resp: ureq::http::Response<ureq::Body>,
 ) -> Reply {
     let status = resp.status().as_u16();
@@ -323,8 +341,11 @@ fn reply_from(
         .map(str::to_owned);
     let text = resp.body_mut().read_to_string().unwrap_or_default();
     let key = hook_auth::derive_key(&config.hook_token);
-    let authentic = sig
-        .is_some_and(|s| hook_auth::verify_response_sig(&key, nonce, status, text.as_bytes(), &s));
+    // the digest of the body THIS process sent: an answer given to another body does not verify
+    let sent = hook_auth::body_digest(sent_body);
+    let authentic = sig.is_some_and(|s| {
+        hook_auth::verify_response_sig(&key, nonce, &sent, status, text.as_bytes(), &s)
+    });
     Reply {
         status,
         text,
@@ -340,17 +361,17 @@ fn post(
     debug: bool,
 ) -> Option<Reply> {
     let url = format!("http://127.0.0.1:{}{path}", config.hook_port);
-    let (nonce, ts, proof) = authenticate(config, "POST", path)?;
+    let (nonce, ts, proof) = authenticate(config, "POST", path, VIA, body)?;
     let result = agent(timeout)
         .post(&url)
         .header("Content-Type", "application/json")
-        .header("X-AgentNest-Via", "cli")
+        .header("X-AgentNest-Via", VIA)
         .header(hook_auth::HEADER_NONCE, &nonce)
         .header(hook_auth::HEADER_TS, &ts)
         .header(hook_auth::HEADER_PROOF, &proof)
         .send(body);
     match result {
-        Ok(resp) => Some(reply_from(config, &nonce, resp)),
+        Ok(resp) => Some(reply_from(config, &nonce, body, resp)),
         Err(e) => {
             if debug {
                 eprintln!("agentnest-hook: request failed: {e}");
@@ -412,7 +433,7 @@ fn doctor(config: &DaemonConfig, path: Option<&Path>, timeout_ms: Option<u64>) -
             return lines.join("\n") + "\n";
         }
     }
-    let Some((nonce, ts, proof)) = authenticate(config, "GET", "/v1/daemon") else {
+    let Some((nonce, ts, proof)) = authenticate(config, "GET", "/v1/daemon", "", b"") else {
         lines.push("token: check failed".to_owned());
         return lines.join("\n") + "\n";
     };
@@ -424,7 +445,7 @@ fn doctor(config: &DaemonConfig, path: Option<&Path>, timeout_ms: Option<u64>) -
         .call();
     match info {
         Ok(resp) => {
-            let reply = reply_from(config, &nonce, resp);
+            let reply = reply_from(config, &nonce, b"", resp);
             match reply.status {
                 200 if reply.authentic => {
                     let wss = serde_json::from_str::<Map<String, Value>>(&reply.text)

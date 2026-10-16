@@ -225,7 +225,7 @@ PC(데스크톱)                                                   폰
 | 9 원격 승인 일시정지 | 해당 없음(일시정지는 원격 경로만 막는다) | |
 | 10 조건부 UPDATE + `decisions`(`actor='desktop'`)·`approval_audit` | **필수**, `resolved_by=desktop` | `ALREADY_RESOLVED` |
 
-트레이 메뉴는 이 게이트를 우회하는 단축 경로가 되어서는 안 된다: 트레이는 `low`/`medium`에서만 인라인 허용/거부를 제공하고 `high`/`critical`은 승인 창을 열어 위 8단계 게이트를 거치게 한다(`desktop.md` §4). 브로커 테스트: 위 필수 단계마다 단독 실패 테스트, `confirm_ack` 누락 테스트, 일시정지 중에도 데스크톱 결정이 적용되는 테스트(9 해당 없음)를 둔다.
+트레이 메뉴는 이 게이트를 우회하는 단축 경로가 되어서는 안 된다: 트레이는 인라인 허용을 `low`에서만(명령이 보이지 않으므로), 인라인 거부를 `low`/`medium`에서만 제공하고 `high`/`critical`은 승인 창을 열어 위 8단계 게이트를 거치게 한다(`desktop.md` §4). 브로커 테스트: 위 필수 단계마다 단독 실패 테스트, `confirm_ack` 누락 테스트, 일시정지 중에도 데스크톱 결정이 적용되는 테스트(9 해당 없음)를 둔다.
 
 (Phase 3) 6과 7 사이에 ECDSA 서명 검증 단계를 삽입한다. 폰이 보내는 바이트열 조립 규칙은 그때 `protocol/vectors/decision_signed.json`으로 고정.
 

@@ -1488,32 +1488,37 @@ impl Broker {
         };
 
         // Idempotency (security.md 6.3): only a decision that was APPLIED - same envelope id, same request, same actor -
-        // is answered from the record, and nothing is re-applied. A rejected attempt is not replayed: its id may
-        // come back valid and is then evaluated afresh. An id applied for another request is not this decision.
+        // is answered from the record, and nothing is re-applied. The answer comes from the **stored** decision: a re-sent
+        // envelope that now claims another decision (a Deny that was applied, re-sent as Allow) does not get "applied" -
+        // it falls through to the validation below and is refused as ALREADY_RESOLVED (and recorded as an attempt). A
+        // rejected attempt is not replayed: its id may come back valid and is then evaluated afresh. An id applied for
+        // another request is not this decision.
         if device_active {
             let (did, rid, actor) = (
                 input.decision_id.clone(),
                 input.request_id.clone(),
                 input.source.actor(),
             );
-            if let Ok(true) = self
+            if let Ok(Some(stored)) = self
                 .db(move |s| s.decision_applied_replay(&did, &rid, &actor))
                 .await
             {
-                return DecisionOutcome {
-                    request_id: input.request_id.clone(),
-                    accepted: true,
-                    message_ko: decision_result_message_ko(
-                        &DecisionResultReason::Applied,
-                        Some(&if input.decision == Decision::Allow {
-                            ApprovalOutcome::Allowed
-                        } else {
-                            ApprovalOutcome::Denied
-                        }),
-                        AgentKind::Other,
-                    ),
-                    reason: DecisionResultReason::Applied,
-                };
+                if stored == input.decision.as_str() {
+                    return DecisionOutcome {
+                        request_id: input.request_id.clone(),
+                        accepted: true,
+                        message_ko: decision_result_message_ko(
+                            &DecisionResultReason::Applied,
+                            Some(&match input.decision {
+                                Decision::Allow => ApprovalOutcome::Allowed,
+                                Decision::Deny => ApprovalOutcome::Denied,
+                                Decision::DenyAndStop => ApprovalOutcome::DeniedAndStopped,
+                            }),
+                            AgentKind::Other,
+                        ),
+                        reason: DecisionResultReason::Applied,
+                    };
+                }
             }
         }
 
@@ -1601,6 +1606,8 @@ impl Broker {
             resolved_by: input.source.resolved_by().to_owned(),
             resolved_device_id: device_id.clone(),
             now: now.clone(),
+            // the expiry check uses the time the writer reads when it runs the UPDATE, not the time taken above
+            clock: Some(crate::store::WriterClock(self.deps.clock.clone())),
             decision_id: input.decision_id.clone(),
             actor: input.source.actor(),
             decision: input.decision.as_str().to_owned(),

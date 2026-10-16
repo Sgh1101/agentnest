@@ -16,9 +16,11 @@
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde_json::json;
 
+use std::sync::Arc;
+
 use super::{with_full_sync, Store, StoreError};
 use crate::redact::session_key_prefix;
-use crate::state::timers::{format_ms, parse_ms};
+use crate::state::timers::{format_ms, parse_ms, Clock};
 
 /// Maximum size of a JSON detail column written by callers (audit details and similar).
 const MAX_JSON_COLUMN_BYTES: usize = 16 * 1024;
@@ -227,6 +229,16 @@ pub struct AuditLogRow {
     pub details_json: Option<String>,
 }
 
+/// A clock the writer thread reads at the moment it runs a transition (see [`ResolveRequest::clock`]).
+#[derive(Clone)]
+pub struct WriterClock(pub Arc<dyn Clock>);
+
+impl std::fmt::Debug for WriterClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WriterClock")
+    }
+}
+
 /// Everything [`Store::resolve_approval_conditional`] needs.
 #[derive(Clone, Debug)]
 #[allow(missing_docs)]
@@ -237,8 +249,15 @@ pub struct ResolveRequest {
     /// `phone` or `desktop`.
     pub resolved_by: String,
     pub resolved_device_id: Option<String>,
-    /// Server time (RFC 3339, millisecond UTC). The `UPDATE` requires `expires_at > now`.
+    /// Server time (RFC 3339, millisecond UTC) at which the caller evaluated the request. The `UPDATE` requires
+    /// `expires_at > now`. When [`ResolveRequest::clock`] is set, the writer replaces this with the time **it** reads when
+    /// it runs the transition.
     pub now: String,
+    /// The live clock. A request waits in the writer queue behind other jobs (a retention sweep, a burst of events), so a
+    /// `now` taken before queueing can be stale by the time the `UPDATE` runs, and a decision for an already expired
+    /// request would be committed. With a clock here the expiry check, `resolved_at` and the decision/audit timestamps
+    /// all use the time at which the transition really happens.
+    pub clock: Option<WriterClock>,
     /// `decisions.id` = the decision envelope id (also stored as `approvals.decision_msg_id`).
     pub decision_id: String,
     /// `device:<id>` or `desktop`.
@@ -491,6 +510,11 @@ impl Store {
     ) -> Result<ResolveOutcome, StoreError> {
         check_json_size("audit_detail_json", &req.audit_detail_json)?;
         self.run(move |conn| {
+            let mut req = req;
+            // read on the writer thread, i.e. after any time spent waiting in the queue
+            if let Some(clock) = &req.clock {
+                req.now = format_ms(clock.0.now_ms());
+            }
             with_full_sync(conn, |tx| {
                 let changed = tx.execute(
                     "UPDATE approvals SET status='resolved', outcome=?1, resolved_by=?2, resolved_at=?3, \
@@ -742,13 +766,15 @@ impl Store {
     ///
     /// Only an *applied* decision is replayed. A decision that was rejected (no authentication, a bad hash, expired, ...)
     /// is not a result worth repeating: the same id may come again, valid this time, and is then evaluated afresh. An
-    /// id that was applied for another request or by another actor is not this decision either.
+    /// id that was applied for another request or by another actor is not this decision either. Returns the **stored**
+    /// decision (`allow`/`deny`/`deny_and_stop`) of the applied row, so the caller answers from the record and never
+    /// from what the re-sent envelope claims.
     pub fn decision_applied_replay(
         &self,
         decision_id: &str,
         request_id: &str,
         actor: &str,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<Option<String>, StoreError> {
         let (id, rid, actor) = (
             decision_id.to_owned(),
             request_id.to_owned(),
@@ -756,13 +782,12 @@ impl Store {
         );
         self.read(move |c| {
             Ok(c.query_row(
-                "SELECT 1 FROM decisions WHERE request_id=?2 AND actor=?3 AND verify_result='APPLIED' \
+                "SELECT decision FROM decisions WHERE request_id=?2 AND actor=?3 AND verify_result='APPLIED' \
                  AND (id=?1 OR substr(id, 1, length(?1) + 1) = ?1 || '#') LIMIT 1",
                 params![id, rid, actor],
-                |_| Ok(true),
+                |r| r.get::<_, String>(0),
             )
-            .optional()?
-            .unwrap_or(false))
+            .optional()?)
         })
     }
 
@@ -950,6 +975,7 @@ pub(crate) mod testing {
             resolved_by: "desktop".to_owned(),
             resolved_device_id: None,
             now: format_ms(now_ms),
+            clock: None,
             decision_id: decision_id.to_owned(),
             actor: "desktop".to_owned(),
             decision: "allow".to_owned(),
@@ -1159,17 +1185,28 @@ mod tests {
         );
         assert_eq!(s.decision_verify_result("nope").unwrap(), None);
         let actor = resolve_request("ar_1", "d1", 0).actor;
-        assert!(s.decision_applied_replay("d1", "ar_1", &actor).unwrap());
+        assert_eq!(
+            s.decision_applied_replay("d1", "ar_1", &actor)
+                .unwrap()
+                .as_deref(),
+            Some("allow")
+        );
         assert!(
-            !s.decision_applied_replay("d1", "ar_2", &actor).unwrap(),
+            s.decision_applied_replay("d1", "ar_2", &actor)
+                .unwrap()
+                .is_none(),
             "another request"
         );
         assert!(
-            !s.decision_applied_replay("d1", "ar_1", "device:other")
-                .unwrap(),
+            s.decision_applied_replay("d1", "ar_1", "device:other")
+                .unwrap()
+                .is_none(),
             "another actor"
         );
-        assert!(!s.decision_applied_replay("nope", "ar_1", &actor).unwrap());
+        assert!(s
+            .decision_applied_replay("nope", "ar_1", &actor)
+            .unwrap()
+            .is_none());
         // re-sending the same envelope id is just another recorded attempt (stored under a derived id, the original
         // row stays): the request is already resolved, nothing changes in `approvals`
         let again = s

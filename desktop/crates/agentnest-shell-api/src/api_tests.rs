@@ -431,7 +431,11 @@ async fn the_codex_guide_uses_the_configured_hook_program_and_the_current_ttl() 
         st.doctor_command.as_deref(),
         Some(format!("\"{CLI}\" doctor").as_str())
     );
-    assert!(st.warnings.iter().any(|w| w.contains(CLI)), "{:?}", st.warnings);
+    assert!(
+        st.warnings.iter().any(|w| w.contains(CLI)),
+        "{:?}",
+        st.warnings
+    );
     // no bare name from a UI constant: the install call returns the same guide
     let i = api
         .hooks_install(HookAgent::Codex, HooksMode::Cli)

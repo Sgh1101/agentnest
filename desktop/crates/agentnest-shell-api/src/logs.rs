@@ -307,7 +307,11 @@ mod tests {
         for e in fs::read_dir(dir.path()).unwrap().flatten() {
             raw.push_str(&fs::read_to_string(e.path()).unwrap());
         }
-        for secret in ["fakeBearerValue123456", "fakeUrlPassw0rd", "fakePasswordValue99"] {
+        for secret in [
+            "fakeBearerValue123456",
+            "fakeUrlPassw0rd",
+            "fakePasswordValue99",
+        ] {
             assert!(!raw.contains(secret), "{secret} reached the file: {raw}");
         }
         assert!(raw.contains("<redacted>"), "{raw}");

@@ -740,7 +740,19 @@ impl Conn {
             self.track_card(st, &request_id, text).await;
             return true;
         }
+        if p.msg_type == "approval_resolved" {
+            // the card is dead (resolved, expired, handed off, superseded): it must never be re-sent
+            Self::forget_card(st, p.payload.get("request_id").and_then(Value::as_str));
+        }
         self.send_text(text).await
+    }
+
+    /// Stops the un-acked tracking of a card: a request that ended needs no more re-sends (protocol.md 8.4: a dead card
+    /// is never revived).
+    fn forget_card(st: &mut AuthState, request_id: Option<&str>) {
+        if let Some(id) = request_id {
+            st.acks.remove(id);
+        }
     }
 
     async fn track_card(&mut self, st: &mut AuthState, request_id: &str, text: String) {
@@ -768,6 +780,11 @@ impl Conn {
             .map(|(id, _)| id.clone())
             .collect();
         for id in due {
+            // a request that is no longer pending is not re-sent, whatever its `approval_resolved` did or did not clear
+            if self.ctx.broker.pending_card(&id).await.is_none() {
+                st.acks.remove(&id);
+                continue;
+            }
             let Some(a) = st.acks.get_mut(&id) else {
                 continue;
             };
@@ -826,11 +843,15 @@ impl Conn {
                     let payload =
                         resolved_replacement(&request_id, &session_key, state, self.now_ms());
                     let text = self.stream_text(row.seq, "approval_resolved", &payload);
+                    Self::forget_card(st, Some(&request_id));
                     if !self.send_text(text).await {
                         return false;
                     }
                 }
                 (t, _) => {
+                    if t == "approval_resolved" {
+                        Self::forget_card(st, row.payload.get("request_id").and_then(Value::as_str));
+                    }
                     let text = self.stream_text(row.seq, t, &row.payload);
                     if !self.send_text(text).await {
                         return false;

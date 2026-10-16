@@ -41,12 +41,18 @@ impl Clock for SystemClock {
 
 /// A clock that only moves when told to (tests).
 #[derive(Debug, Default)]
-pub struct ManualClock(AtomicI64);
+pub struct ManualClock(AtomicI64, AtomicI64);
 
 impl ManualClock {
     /// A clock showing `ms`.
     pub fn new(ms: i64) -> Self {
-        Self(AtomicI64::new(ms))
+        Self(AtomicI64::new(ms), AtomicI64::new(0))
+    }
+
+    /// The next read still shows the current time, every later read `ms` more: a test uses it to model a delay between
+    /// the moment code looked at the clock and the moment it acted (a busy writer queue).
+    pub fn advance_after_next_read(&self, ms: i64) {
+        self.1.store(ms, Ordering::SeqCst);
     }
 
     /// Sets the time.
@@ -62,7 +68,12 @@ impl ManualClock {
 
 impl Clock for ManualClock {
     fn now_ms(&self) -> i64 {
-        self.0.load(Ordering::SeqCst)
+        let now = self.0.load(Ordering::SeqCst);
+        let jump = self.1.swap(0, Ordering::SeqCst);
+        if jump != 0 {
+            self.0.fetch_add(jump, Ordering::SeqCst);
+        }
+        now
     }
 }
 

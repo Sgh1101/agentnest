@@ -13,6 +13,51 @@ use agentnest_core::state::timers::ManualClock;
 use jsonschema::{Registry, Validator};
 use serde_json::Value;
 
+/// The headers of a relay request (`agentnest-hook`): the one-time proof over `method path` and this exact `body`, with
+/// the `X-AgentNest-Via: cli` label. The token itself is never in them.
+pub fn relay_headers(token: &str, method: &str, path: &str, body: &[u8]) -> Vec<(String, String)> {
+    relay_headers_with_nonce(token, method, path, body).0
+}
+
+/// [`relay_headers`] plus the nonce (the answer is signed with it).
+pub fn relay_headers_with_nonce(
+    token: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> (Vec<(String, String)>, String) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nonce = format!(
+        "relay-nonce-{:016x}",
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .to_string();
+    let key = agentnest_protocol::hook_auth::derive_key(token);
+    let proof = agentnest_protocol::hook_auth::request_proof(
+        &key,
+        &agentnest_protocol::hook_auth::RequestBinding {
+            method,
+            path,
+            ts: &ts,
+            nonce: &nonce,
+            via: "cli",
+            body_sha256: agentnest_protocol::hook_auth::body_digest(body),
+        },
+    );
+    let headers = vec![
+        ("X-AgentNest-Via".to_owned(), "cli".to_owned()),
+        ("X-AgentNest-Nonce".to_owned(), nonce.clone()),
+        ("X-AgentNest-Ts".to_owned(), ts),
+        ("X-AgentNest-Proof".to_owned(), proof),
+    ];
+    (headers, nonce)
+}
+
 /// `<repo>/protocol`.
 pub fn protocol_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../protocol")

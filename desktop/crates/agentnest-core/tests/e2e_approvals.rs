@@ -728,3 +728,44 @@ async fn no_secret_and_no_raw_hook_body_reaches_the_database_or_the_wire_frames(
     // the pairing connection's own frames carried the token exactly once
     // (pair_result), which `finish()` consumed before `ws` took over
 }
+
+/// Review item 6 (protocol.md 8.4 "a dead card is never revived"): a phone that never acked a card must not get it again
+/// after the request was resolved. The un-acked tracking used to survive `approval_resolved` and re-sent the card up to
+/// three times.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resolved_card_is_not_resent_to_a_phone_that_never_acked_it() {
+    let e = E2e::start_with(|o, c| {
+        fast(o, c);
+        o.timing.ack_retry_ms = 100; // the session re-checks every 500 ms
+    })
+    .await;
+    let (_p, mut ws) = e.pair_ready("Pixel").await;
+    e.wait_online(1).await;
+    let held = e.hold(permission_request("s1", "cargo test"));
+    // the card arrives; the phone does NOT ack it
+    let f = ws.recv_type("approval_request").await;
+    let Message::ApprovalRequest(card) = f.message else {
+        unreachable!()
+    };
+    e.dm.approval_handoff_local(&card.request_id).await.unwrap();
+    assert_eq!(held.await.unwrap().0, 204);
+    let resolved = ws.recv_type("approval_resolved").await;
+    assert!(matches!(resolved.message, Message::ApprovalResolved(_)));
+    // 2.5 s = several re-send rounds: nothing but quiet (or other frames) may arrive, never the dead card again
+    let end = Instant::now() + Duration::from_millis(2500);
+    loop {
+        let left = end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match ws.next(left).await {
+            Got::Frame(f) => assert_ne!(
+                f.message.type_name(),
+                "approval_request",
+                "a resolved card was re-sent"
+            ),
+            Got::Timeout => break,
+            Got::Closed(c) => panic!("the connection closed: {c:?}"),
+        }
+    }
+}

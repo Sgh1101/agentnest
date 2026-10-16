@@ -7,6 +7,10 @@ on:
     branches: ["ccr-*"]
   workflow_dispatch:
 
+# least privilege: nothing here writes to the repository
+permissions:
+  contents: read
+
 concurrency:
   group: android-screenshots-${{ github.sha }}
   cancel-in-progress: false
@@ -17,6 +21,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: enable KVM
         run: |
@@ -58,7 +64,7 @@ jobs:
         if: always()
         run: |
           python3 -m venv /tmp/shotsvenv
-          /tmp/shotsvenv/bin/pip install --quiet pillow
+          /tmp/shotsvenv/bin/pip install --quiet pillow==11.3.0
           /tmp/shotsvenv/bin/python android/tools/emit_shots.py
 
       - uses: actions/upload-artifact@v4

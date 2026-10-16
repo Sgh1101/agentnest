@@ -10,6 +10,12 @@
 //!   stops and the user is told.
 //! * `SessionStart` is **always a command hook** (`agentnest-hook claude-code`, exec form), even in [`HookMode::Http`]:
 //!   Claude Code ignores `type: "http"` hooks for that event ([`COMMAND_ONLY_EVENTS`]).
+//! * **Command hooks need a verified program path.** `SessionStart` and the `statusLine` run `agentnest-hook`; the program
+//!   must be an absolute path of an existing file ([`hook_cli_usable`], reported through
+//!   [`InstallOptions::hook_cli_ready`]). A bare name is resolved through `PATH` (on Windows the project directory first),
+//!   so a hostile repository could plant a program that prints `allow` without any signature check. Without a usable path
+//!   the HTTP hooks are still installed, the command hooks are not ([`InstallWarning::HookCliNotFound`]), and
+//!   [`HookMode::Cli`] fails with [`InstallError::HookCliNotFound`].
 //! * The token travels as a **literal** `X-AgentNest-Token` header (an environment variable would be replaced by an empty
 //!   string in processes that lack it and silently turn every hook into a 401).
 //! * `onFailure` is **absent** (= `continue`); it is written as `"block"` only on the `PermissionRequest` hook and only
@@ -94,8 +100,16 @@ pub struct InstallOptions<'a> {
     pub daemon_down_deny: bool,
     /// Also install the `statusLine` command if the user has none.
     pub install_statusline: bool,
-    /// Path of `agentnest-hook` (command hooks and the statusLine). Plain `agentnest-hook` if it is on `PATH`.
+    /// Path of `agentnest-hook` (command hooks and the statusLine). Only an **absolute path of an existing file** may be
+    /// installed (see [`hook_cli_usable`] and [`InstallOptions::hook_cli_ready`]).
     pub hook_cli: &'a str,
+    /// The caller has checked that `hook_cli` is usable ([`hook_cli_usable`]: absolute, existing file). When `false`
+    /// the installer writes **no command hook** (`SessionStart`, the `statusLine`): a bare `agentnest-hook` is resolved
+    /// through `PATH` and, on Windows, the project directory first, so a hostile repository could plant an
+    /// `agentnest-hook.exe` that Claude Code then runs on every hook and that answers `allow` without any signature check.
+    /// [`HookMode::Http`] installs the HTTP hooks and reports [`InstallWarning::HookCliNotFound`]; [`HookMode::Cli`]
+    /// fails with [`InstallError::HookCliNotFound`] and changes nothing.
+    pub hook_cli_ready: bool,
     /// Timestamp for the backup file name (`20261015T091233Z`); the current time if `None`.
     pub backup_stamp: Option<&'a str>,
 }
@@ -112,6 +126,10 @@ pub enum InstallError {
     /// The top level (or `hooks`, or an event entry) has an unexpected type. Nothing was changed.
     #[error("settings.json has an unexpected structure: {0}")]
     UnexpectedStructure(&'static str),
+    /// Command hooks were requested but `agentnest-hook` is not an absolute path of an existing file
+    /// (`hook_cli_not_found`). Nothing was changed.
+    #[error("hook_cli_not_found: the agentnest-hook program was not found at an absolute path; command hooks were not installed")]
+    HookCliNotFound,
 }
 
 /// Things the user should know after an install.
@@ -125,6 +143,9 @@ pub enum InstallWarning {
     DuplicateKeys,
     /// The file has an integer with 16 or more digits; re-serialising may round it (it is stored as a double).
     LargeNumbers,
+    /// `agentnest-hook` was not found at an absolute path: the command hooks (`SessionStart`, `statusLine`) were **not**
+    /// installed (`hook_cli_not_found`); only the HTTP hooks were.
+    HookCliNotFound,
 }
 
 impl InstallWarning {
@@ -144,6 +165,10 @@ impl InstallWarning {
             }
             InstallWarning::LargeNumbers => {
                 "settings.json 에 16자리 이상의 정수가 있어, 저장하면 반올림될 수 있어요. 원본은 백업 파일에 있어요."
+                    .to_owned()
+            }
+            InstallWarning::HookCliNotFound => {
+                "agentnest-hook 사이드카(훅 프로그램)를 앱 옆에서 찾지 못해 명령 훅(SessionStart·상태줄)은 설치하지 않았어요(hook_cli_not_found). HTTP 훅만 설치했고, 세션은 첫 입력부터 보여요. 앱을 다시 설치한 뒤 훅을 다시 설치하세요."
                     .to_owned()
             }
         }
@@ -214,6 +239,14 @@ pub fn effective_ttl_s(configured_ttl_s: u32, installed_timeout_s: Option<u32>) 
     configured_ttl_s.min(cap).max(MIN_EFFECTIVE_TTL_S)
 }
 
+/// `true` if `hook_cli` is an **absolute path of an existing file**: the only form that may be written into
+/// `settings.json` as a command hook. A bare name is searched in `PATH` (and, on Windows, in the current directory, i.e.
+/// the project, first), so it can be hijacked by a file in a repository.
+pub fn hook_cli_usable(hook_cli: &str) -> bool {
+    let p = Path::new(hook_cli);
+    p.is_absolute() && p.is_file()
+}
+
 fn hook_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}{HOOK_PATH}")
 }
@@ -280,16 +313,33 @@ pub fn desired_hooks(opts: &InstallOptions<'_>) -> Map<String, Value> {
     m
 }
 
+/// The program of the `statusLine` command line. Claude Code runs `statusLine` commands through a shell (Git Bash on
+/// Windows), which differs from the exec-form command hooks: unquoted, a backslash path loses its backslashes
+/// (`C:\Users\kim\x.exe` becomes `C:Userskimx.exe`), and spaces split the program. So the program is **always**
+/// wrapped in double quotes, a Windows path uses `/` separators (every Windows program and both `bash` and `cmd`
+/// accept them inside quotes), and the characters that stay special inside bash double quotes (`"`, `$`, `` ` ``) are
+/// escaped.
+fn statusline_program(hook_cli: &str) -> String {
+    let mut out = String::with_capacity(hook_cli.len() + 2);
+    out.push('"');
+    for c in hook_cli.chars() {
+        match c {
+            '\\' => out.push('/'),
+            '"' | '$' | '`' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn statusline_value(opts: &InstallOptions<'_>) -> Value {
-    // statusLine commands run through a shell: a path with spaces must be quoted
-    let program = if opts.hook_cli.contains(' ') {
-        format!("\"{}\"", opts.hook_cli)
-    } else {
-        opts.hook_cli.to_owned()
-    };
     json!({
         "type": "command",
-        "command": format!("{program} statusline"),
+        "command": format!("{} statusline", statusline_program(opts.hook_cli)),
     })
 }
 
@@ -478,6 +528,25 @@ fn lossy_reserialisation_warnings(text: &str) -> Vec<InstallWarning> {
     w
 }
 
+/// Creates a **new** file (`create_new`: never an existing file or a link) that is private from the first byte: on Unix
+/// with the mode of `like` (the file it stands in for), or `0600` without one. Elsewhere the file system's defaults apply
+/// (Windows: the per-user profile ACL).
+fn create_private_file(
+    path: &Path,
+    like: Option<&std::fs::Metadata>,
+) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        options.mode(like.map_or(0o600, |m| m.mode() & 0o777));
+    }
+    #[cfg(not(unix))]
+    let _ = like;
+    options.open(path)
+}
+
 /// Writes `root` atomically. A symbolic link is followed (the linked file is replaced, the link stays), the permissions
 /// of the existing file carry over to the new one, and the temporary file lives next to the real target.
 fn write_atomic(path: &Path, root: &Map<String, Value>) -> Result<(), InstallError> {
@@ -495,8 +564,25 @@ fn write_atomic(path: &Path, root: &Map<String, Value>) -> Result<(), InstallErr
     let mut tmp = target.as_os_str().to_owned();
     tmp.push(".agentnest-tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, text)?;
-    if let Ok(meta) = std::fs::metadata(&target) {
+    // A leftover of a crashed install must not decide the mode of the new file; `create_new` also refuses a planted link.
+    match std::fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let original = std::fs::metadata(&target).ok();
+    {
+        use std::io::Write;
+        // born with the original's mode (0600 when there is no original): the hook token must never be readable by
+        // others, not even for the moment between the write and a later `chmod`
+        let mut out = create_private_file(&tmp, original.as_ref())?;
+        if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+            drop(out);
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+    }
+    if let Some(meta) = original {
         // keep the mode of the original (a 0600 settings file must not become 0644)
         if let Err(e) = std::fs::set_permissions(&tmp, meta.permissions()) {
             let _ = std::fs::remove_file(&tmp);
@@ -523,10 +609,8 @@ fn backup(path: &Path, stamp: &str) -> Result<Option<PathBuf>, InstallError> {
             name.push(format!(".agentnest-backup-{stamp}-{n}"));
         }
         let dest = PathBuf::from(name);
-        let created = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&dest);
+        // the copy carries the settings file's own mode: a 0600 settings file must not leave a 0644 backup behind
+        let created = create_private_file(&dest, std::fs::metadata(path).ok().as_ref());
         match created {
             Ok(mut out) => {
                 let mut src = std::fs::File::open(path)?;
@@ -545,6 +629,10 @@ pub fn install(
     settings_path: &Path,
     opts: &InstallOptions<'_>,
 ) -> Result<InstallReport, InstallError> {
+    // command hooks only with a verified absolute program path (see `InstallOptions::hook_cli_ready`)
+    if !opts.hook_cli_ready && opts.mode == HookMode::Cli {
+        return Err(InstallError::HookCliNotFound);
+    }
     let existing = read_settings(settings_path)?;
     let mut root = existing.clone().unwrap_or_default();
     let mut warnings = match std::fs::read_to_string(settings_path) {
@@ -570,6 +658,9 @@ pub fn install(
     }
     remove_ours(hooks)?;
     for (event, groups) in desired_hooks(opts) {
+        if !opts.hook_cli_ready && COMMAND_ONLY_EVENTS.contains(&event.as_str()) {
+            continue;
+        }
         let Value::Array(new_groups) = groups else {
             continue;
         };
@@ -581,8 +672,11 @@ pub fn install(
         }
     }
 
-    // statusLine: a single slot; never replace somebody else's
-    if opts.install_statusline {
+    if !opts.hook_cli_ready {
+        warnings.push(InstallWarning::HookCliNotFound);
+    }
+    // statusLine: a single slot; never replace somebody else's. It is a command, so it needs a verified program path.
+    if opts.install_statusline && opts.hook_cli_ready {
         match root.get("statusLine") {
             None => {
                 root.insert("statusLine".to_owned(), statusline_value(opts));
@@ -592,6 +686,9 @@ pub fn install(
             }
             Some(_) => warnings.push(InstallWarning::StatusLineExists),
         }
+    } else if !opts.hook_cli_ready && root.get("statusLine").is_some_and(is_agentnest_statusline) {
+        // our own statusLine from an earlier install cannot be re-verified: do not leave a possibly hijackable one behind
+        root.remove("statusLine");
     }
     // HTTP hooks can be forbidden by a policy list
     if opts.mode == HookMode::Http {
@@ -717,6 +814,7 @@ mod tests {
             daemon_down_deny: false,
             install_statusline: true,
             hook_cli: "agentnest-hook",
+            hook_cli_ready: true,
             backup_stamp: Some("20261015T091233Z"),
         }
     }
@@ -762,8 +860,70 @@ mod tests {
         }
         assert_eq!(
             v["statusLine"],
-            json!({"type": "command", "command": "agentnest-hook statusline"})
+            json!({"type": "command", "command": "\"agentnest-hook\" statusline"})
         );
+    }
+
+    #[test]
+    fn the_statusline_program_is_always_quoted_and_uses_forward_slashes() {
+        // the default NSIS location has no space, yet a shell would still eat its backslashes
+        assert_eq!(
+            statusline_program("C:\\Users\\kim\\AppData\\Local\\AgentNest\\agentnest-hook.exe"),
+            "\"C:/Users/kim/AppData/Local/AgentNest/agentnest-hook.exe\""
+        );
+        assert_eq!(
+            statusline_program("C:\\Program Files\\AgentNest\\agentnest-hook.exe"),
+            "\"C:/Program Files/AgentNest/agentnest-hook.exe\""
+        );
+        assert_eq!(statusline_program("agentnest-hook"), "\"agentnest-hook\"");
+        assert_eq!(
+            statusline_program("\\\\host\\share\\agentnest-hook.exe"),
+            "\"//host/share/agentnest-hook.exe\""
+        );
+        // characters that stay special inside bash double quotes are escaped
+        assert_eq!(
+            statusline_program("/tmp/a\"b$c`d/agentnest-hook"),
+            "\"/tmp/a\\\"b\\$c\\`d/agentnest-hook\""
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut o = opts();
+        o.hook_cli = "C:\\Users\\kim\\AppData\\Local\\AgentNest\\agentnest-hook.exe";
+        install(&path, &o).unwrap();
+        assert_eq!(
+            read(&path)["statusLine"]["command"],
+            "\"C:/Users/kim/AppData/Local/AgentNest/agentnest-hook.exe\" statusline"
+        );
+        assert!(
+            inspect(&path).statusline,
+            "the quoted form is recognised as ours"
+        );
+    }
+
+    #[test]
+    fn an_older_unquoted_statusline_of_ours_is_recognised_and_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for old in [
+            "C:\\Users\\kim\\AppData\\Local\\AgentNest\\agentnest-hook.exe statusline",
+            "\"C:\\Program Files\\AgentNest\\agentnest-hook.exe\" statusline",
+            "agentnest-hook statusline",
+        ] {
+            std::fs::write(
+                &path,
+                json!({"statusLine": {"type": "command", "command": old}}).to_string(),
+            )
+            .unwrap();
+            let mut o = opts();
+            o.hook_cli = "C:\\Users\\kim\\AppData\\Local\\AgentNest\\agentnest-hook.exe";
+            let report = install(&path, &o).unwrap();
+            assert!(report.warnings.is_empty(), "{old}: ours, not a conflict");
+            assert_eq!(
+                read(&path)["statusLine"]["command"],
+                "\"C:/Users/kim/AppData/Local/AgentNest/agentnest-hook.exe\" statusline",
+                "{old}"
+            );
+        }
     }
 
     #[test]
@@ -924,10 +1084,10 @@ mod tests {
             report.warnings.is_empty(),
             "our own statusLine is not a conflict"
         );
-        assert!(read(&path)["statusLine"]["command"]
-            .as_str()
-            .unwrap()
-            .contains("Program Files"));
+        assert_eq!(
+            read(&path)["statusLine"]["command"],
+            "\"C:/Program Files/AgentNest/agentnest-hook.exe\" statusline"
+        );
         assert!(uninstall(&path).unwrap().statusline_removed);
         assert!(read(&path).get("statusLine").is_none());
     }
@@ -1195,5 +1355,156 @@ mod tests {
                 && !w.contains(&InstallWarning::LargeNumbers),
             "{w:?}"
         );
+    }
+
+    // ---- review: command hooks need a verified, absolute program path --------------------------------------------------
+
+    fn command_hook_events(v: &Value) -> Vec<String> {
+        v["hooks"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(_, groups)| groups[0]["hooks"][0]["type"] == "command")
+            .map(|(event, _)| event.clone())
+            .collect()
+    }
+
+    #[test]
+    fn without_a_verified_hook_cli_no_command_hook_and_no_statusline_is_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut o = opts();
+        o.hook_cli = "agentnest-hook"; // a bare name: hijackable through PATH / the project directory
+        o.hook_cli_ready = false;
+        let report = install(&path, &o).unwrap();
+        assert!(
+            report.warnings.contains(&InstallWarning::HookCliNotFound),
+            "{:?}",
+            report.warnings
+        );
+        assert!(InstallWarning::HookCliNotFound
+            .message_ko(47831)
+            .contains("hook_cli_not_found"));
+        let v = read(&path);
+        assert!(command_hook_events(&v).is_empty(), "{v}");
+        assert!(
+            v.get("statusLine").is_none(),
+            "no statusLine without a safe program"
+        );
+        // the HTTP hooks are still there; only SessionStart (command-only) is missing
+        let hooks = v["hooks"].as_object().unwrap();
+        assert_eq!(hooks.len(), EVENTS.len() - COMMAND_ONLY_EVENTS.len());
+        assert_eq!(hooks["PermissionRequest"][0]["hooks"][0]["type"], "http");
+        assert!(!inspect(&path).fully_installed());
+    }
+
+    #[test]
+    fn command_mode_without_a_verified_hook_cli_fails_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"model":"x"}"#).unwrap();
+        let mut o = opts();
+        o.mode = HookMode::Cli;
+        o.hook_cli_ready = false;
+        let err = install(&path, &o).unwrap_err();
+        assert!(matches!(err, InstallError::HookCliNotFound), "{err}");
+        assert!(err.to_string().contains("hook_cli_not_found"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"model":"x"}"#);
+        assert!(!dir.path().read_dir().unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("backup")));
+    }
+
+    #[test]
+    fn a_reinstall_without_a_verified_hook_cli_drops_our_old_command_hooks_and_statusline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut o = opts();
+        install(&path, &o).unwrap();
+        let v = read(&path);
+        assert_eq!(command_hook_events(&v), vec!["SessionStart".to_owned()]);
+        assert!(v.get("statusLine").is_some());
+        o.hook_cli_ready = false;
+        install(&path, &o).unwrap();
+        let v = read(&path);
+        assert!(command_hook_events(&v).is_empty());
+        assert!(v.get("statusLine").is_none());
+        // somebody else's statusLine is never touched
+        std::fs::write(
+            &path,
+            r#"{"statusLine":{"type":"command","command":"my-line"}}"#,
+        )
+        .unwrap();
+        install(&path, &o).unwrap();
+        assert_eq!(read(&path)["statusLine"]["command"], "my-line");
+    }
+
+    #[test]
+    fn hook_cli_usable_accepts_only_an_absolute_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("agentnest-hook");
+        assert!(
+            !hook_cli_usable(exe.to_str().unwrap()),
+            "absolute but missing"
+        );
+        std::fs::write(&exe, b"x").unwrap();
+        assert!(hook_cli_usable(exe.to_str().unwrap()));
+        assert!(!hook_cli_usable("agentnest-hook"), "a bare name");
+        assert!(!hook_cli_usable("./agentnest-hook"), "relative");
+        assert!(
+            !hook_cli_usable(dir.path().to_str().unwrap()),
+            "a directory"
+        );
+        assert!(!hook_cli_usable(""));
+    }
+
+    // ---- review: file modes (Unix) --------------------------------------------------------------------------------------
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_settings_file_with_the_hook_token_is_born_0600_and_a_backup_follows_the_original_mode()
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let dir = tempfile::tempdir().unwrap();
+        // no settings.json yet: the new file holds the literal hook token and must be user-only
+        let fresh = dir.path().join("fresh").join("settings.json");
+        install(&fresh, &opts()).unwrap();
+        assert!(std::fs::read_to_string(&fresh)
+            .unwrap()
+            .contains("an_hk_TESTTOKEN"));
+        assert_eq!(mode(&fresh), 0o600);
+        assert!(
+            !fresh.with_extension("json.agentnest-tmp").exists(),
+            "no temporary file is left"
+        );
+        // a stale, world-readable temporary file of a crashed run does not decide the mode
+        let stale = dir.path().join("stale.json");
+        let mut tmp = stale.as_os_str().to_owned();
+        tmp.push(".agentnest-tmp");
+        std::fs::write(&tmp, "junk").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+        install(&stale, &opts()).unwrap();
+        assert_eq!(mode(&stale), 0o600);
+        // a 0600 settings file: the result and the backup stay 0600
+        let secret = dir.path().join("secret.json");
+        std::fs::write(&secret, r#"{"model":"x"}"#).unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let backup = install(&secret, &opts()).unwrap().backup.unwrap();
+        assert_eq!(mode(&secret), 0o600);
+        assert_eq!(
+            mode(&backup),
+            0o600,
+            "the backup is not more readable than the original"
+        );
+        // a 0640 original keeps 0640 for both
+        let group = dir.path().join("group.json");
+        std::fs::write(&group, "{}").unwrap();
+        std::fs::set_permissions(&group, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let backup = install(&group, &opts()).unwrap().backup.unwrap();
+        assert_eq!(mode(&group), 0o640);
+        assert_eq!(mode(&backup), 0o640);
     }
 }

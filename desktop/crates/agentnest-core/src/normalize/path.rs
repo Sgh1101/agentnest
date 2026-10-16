@@ -15,23 +15,122 @@ fn has_drive(p: &str) -> bool {
     b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
+/// Characters Windows ignores at the end of a path segment.
+fn is_win_trailing(c: char) -> bool {
+    c == '.' || c == ' '
+}
+
+/// The Windows meaning of one path segment: an alternate data stream suffix (`package.json::$DATA`,
+/// `a.txt:stream`) and trailing dots / spaces (`Windows.`, `Windows `) do not change which file is opened. A segment that
+/// is nothing but dots and spaces becomes `""`; `.` and `..` are returned unchanged.
+///
+/// Used by [`normalize`] for Windows style paths and, as a raise-only widening, by the risk predicates for every path.
+pub fn win_segment(seg: &str) -> String {
+    if seg == "." || seg == ".." {
+        return seg.to_owned();
+    }
+    let base = match seg.find(':') {
+        Some(i) => &seg[..i],
+        None => seg,
+    };
+    let trimmed = base.trim_end_matches(is_win_trailing);
+    if trimmed == "." || trimmed == ".." {
+        // `.. ` and `...` style segments never name a real entry; dropping them keeps the result stable
+        return String::new();
+    }
+    trimmed.to_owned()
+}
+
+/// `true` for a 8.3 short name such as `PROGRA~1`, `WINDOW~1` or `PACKAGE~1.JSO`: up to six name characters, `~`, digits,
+/// and an optional extension of up to three characters.
+pub fn is_short_name(seg: &str) -> bool {
+    let (name, ext) = match seg.rsplit_once('.') {
+        Some((n, e)) if !n.is_empty() => (n, Some(e)),
+        _ => (seg, None),
+    };
+    if let Some(e) = ext {
+        if e.chars().count() > 3 {
+            return false;
+        }
+    }
+    let Some((stem, digits)) = name.rsplit_once('~') else {
+        return false;
+    };
+    !stem.is_empty()
+        && stem.chars().count() <= 6
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// `true` if `seg` could be the 8.3 short form of the long name `long` (`PROGRA~1` of `Program Files`, `PACKAGE~1.JSO`
+/// of `package.json`). Conservative: only the prefix of the short name is compared, so it may match more than one long
+/// name. `long` is compared case-insensitively; spaces and a leading dot of `long` are not part of a short name.
+pub fn short_name_matches(seg: &str, long: &str) -> bool {
+    if !is_short_name(seg) {
+        return false;
+    }
+    let seg = seg.to_lowercase();
+    let long = long.to_lowercase();
+    let (s_name, s_ext) = match seg.rsplit_once('.') {
+        Some((n, e)) if !n.is_empty() => (n.to_owned(), Some(e.to_owned())),
+        _ => (seg.clone(), None),
+    };
+    let stem = s_name.rsplit_once('~').map(|(a, _)| a).unwrap_or("");
+    let squeeze = |t: &str| -> String {
+        t.chars()
+            .filter(|c| !c.is_whitespace() && *c != '.')
+            .collect()
+    };
+    let (l_name, l_ext) = match long.trim_start_matches('.').rsplit_once('.') {
+        Some((n, e)) if !n.is_empty() => (squeeze(n), Some(e.to_owned())),
+        _ => (squeeze(long.trim_start_matches('.')), None),
+    };
+    if !l_name.starts_with(stem) {
+        return false;
+    }
+    match (s_ext, l_ext) {
+        (None, None) => true,
+        (Some(se), Some(le)) => le.starts_with(&se),
+        // `PROGRA~1` also names a directory whose long name has dots (`Program.Files`): the extension is part of `l_name`
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+    }
+}
+
 /// Normalises separators and `.`/`..` segments. See the module docs for the output shape.
 ///
 /// * `C:\dev\..\x\` -> `C:/x`
-/// * `\\?\C:\x` -> `C:/x` (extended-length prefix removed)
+/// * `\\?\C:\x` -> `C:/x` (extended-length prefix removed); `\\?\UNC\srv\share` -> `//srv/share`; a device path that
+///   is not a drive (`\\.\PhysicalDrive0`) keeps the `//./` marker
+/// * `\\localhost\C$\Windows` -> `C:/Windows` (the administrative share of this machine is the drive itself)
 /// * `/a//b/./c` -> `/a/b/c`
 /// * `~/a/../b` -> `~/b`
 /// * `../a` (relative) stays `../a`
+/// * Windows style paths: trailing dots and spaces of a segment and alternate data streams are removed
+///   (`C:\Windows.\x` -> `C:/Windows/x`, `a.json::$DATA` -> `a.json`)
 pub fn normalize(p: &str) -> String {
+    let windows = is_windows_style(p);
     let mut s = p.replace('\\', "/");
+    let mut device = false;
     for prefix in ["//?/", "//./"] {
         if let Some(rest) = s.strip_prefix(prefix) {
-            s = rest.to_owned();
+            let rest = rest.to_owned();
+            if has_drive(&rest) {
+                s = rest;
+            } else if rest.len() >= 4 && rest[..4].eq_ignore_ascii_case("unc/") {
+                s = format!("//{}", &rest[4..]);
+            } else {
+                // `\\.\PhysicalDrive0`, `\\?\Volume{...}`, `\\.\pipe\x`: a device, never a project file
+                device = true;
+                s = rest;
+            }
             break;
         }
     }
     // prefix detection
-    let (prefix, rest): (String, &str) = if has_drive(&s) {
+    let (prefix, rest): (String, &str) = if device {
+        ("//./".to_owned(), s.as_str())
+    } else if has_drive(&s) {
         let drive: String = s[..2].to_owned();
         let rest = &s[2..];
         if rest.starts_with('/') {
@@ -49,19 +148,33 @@ pub fn normalize(p: &str) -> String {
         (String::new(), s.as_str())
     };
     let absolute = !prefix.is_empty();
-    let mut stack: Vec<&str> = Vec::new();
-    for seg in rest.split('/') {
-        match seg {
+    let mut stack: Vec<String> = Vec::new();
+    for raw_seg in rest.split('/') {
+        let seg = if windows || device {
+            win_segment(raw_seg)
+        } else {
+            raw_seg.to_owned()
+        };
+        match seg.as_str() {
             "" | "." => {}
             ".." => {
-                if matches!(stack.last(), Some(last) if *last != "..") {
+                if matches!(stack.last(), Some(last) if last != "..") {
                     stack.pop();
                 } else if !absolute {
-                    stack.push("..");
+                    stack.push("..".to_owned());
                 }
                 // `..` above an absolute root is dropped
             }
-            other => stack.push(other),
+            _ => stack.push(seg),
+        }
+    }
+    // `//localhost/C$/...`: the administrative share of the local machine is the drive
+    if prefix == "//" && stack.len() >= 2 && is_local_host(&stack[0]) {
+        let share = stack[1].as_bytes();
+        if share.len() == 2 && share[0].is_ascii_alphabetic() && share[1] == b'$' {
+            let drive = format!("{}:/", stack[1][..1].to_ascii_uppercase());
+            let tail = stack[2..].join("/");
+            return normalize(&format!("{drive}{tail}"));
         }
     }
     let joined = stack.join("/");
@@ -81,6 +194,13 @@ pub fn normalize(p: &str) -> String {
     } else {
         joined
     }
+}
+
+fn is_local_host(h: &str) -> bool {
+    matches!(
+        h.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]" | "."
+    )
 }
 
 /// `true` if the (normalised) path is absolute: POSIX root, drive root, UNC or home (`~`).

@@ -852,3 +852,179 @@ async fn hooks_http_statusline_updates_the_session_meta_with_a_throttle() {
     })
     .await;
 }
+
+// ---- review item 1/5: the relay proof covers the body; the channel follows from the proof -------------------------------
+
+/// One raw HTTP/1.1 exchange: `(status, lower-cased headers, body)`.
+fn raw_exchange(
+    port: u16,
+    path: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> (u16, std::collections::HashMap<String, String>, Vec<u8>) {
+    let mut sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    for (k, v) in headers {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    sock.write_all(head.as_bytes()).unwrap();
+    sock.write_all(body).unwrap();
+    sock.flush().unwrap();
+    let mut raw = Vec::new();
+    let _ = sock.read_to_end(&mut raw);
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("a complete response head");
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
+    let mut lines = head.lines();
+    let status: u16 = lines
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let map = lines
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_owned()))
+        .collect();
+    (status, map, raw[split + 4..].to_vec())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hooks_http_a_relay_proof_covers_the_body_and_the_answer_is_signed_for_it() {
+    use agentnest_protocol::hook_auth;
+    let t = HttpHarness::new().await;
+    let port = t.port;
+    let path = "/v1/hooks/claude-code";
+    let real = bash_hook("PreToolUse", "s1", "tu1", "echo hello")
+        .to_string()
+        .into_bytes();
+    let fake = bash_hook("PreToolUse", "s1", "tu1", "echo harmless")
+        .to_string()
+        .into_bytes();
+
+    // (a) the proof of one body, attached to another body, is refused (the squatter's swap) and burns nothing
+    let (headers, nonce) = common::relay_headers_with_nonce(HOOK_TOKEN, "POST", path, &real);
+    let h2 = headers.clone();
+    let fake2 = fake.clone();
+    let (s, _, _) = tokio::task::spawn_blocking(move || raw_exchange(port, path, &h2, &fake2))
+        .await
+        .unwrap();
+    assert_eq!(s, 401, "a proof for another body");
+    // the same proof with a different via label is refused as well
+    let mut h3 = headers.clone();
+    h3[0].1 = "other".to_owned();
+    let real3 = real.clone();
+    let (s, _, _) = tokio::task::spawn_blocking(move || raw_exchange(port, path, &h3, &real3))
+        .await
+        .unwrap();
+    assert_eq!(s, 401, "the via label is bound into the proof");
+
+    // (c) the genuine request passes; the answer is signed over the nonce AND the digest of the body that was sent
+    let h4 = headers.clone();
+    let real4 = real.clone();
+    let (s, resp_headers, body) =
+        tokio::task::spawn_blocking(move || raw_exchange(port, path, &h4, &real4))
+            .await
+            .unwrap();
+    assert_eq!(s, 204);
+    let sig = resp_headers.get("x-agentnest-sig").expect("signed answer");
+    let key = hook_auth::derive_key(HOOK_TOKEN);
+    assert!(hook_auth::verify_response_sig(
+        &key,
+        &nonce,
+        &hook_auth::body_digest(&real),
+        s,
+        &body,
+        sig
+    ));
+    // (b) the same signed answer does not verify for the body the attacker substituted: relaying it fails
+    assert!(!hook_auth::verify_response_sig(
+        &key,
+        &nonce,
+        &hook_auth::body_digest(&fake),
+        s,
+        &body,
+        sig
+    ));
+    // the proof is one-time
+    let (s, _, _) = tokio::task::spawn_blocking(move || raw_exchange(port, path, &headers, &real))
+        .await
+        .unwrap();
+    assert_eq!(s, 401, "replay");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hooks_http_the_channel_follows_the_proof_not_the_via_label() {
+    let t = HttpHarness::new().await;
+    let _phone = t.h.add_phone("Galaxy");
+    let port = t.port;
+    let path = "/v1/hooks/claude-code";
+
+    // token + a self-declared `X-AgentNest-Via: cli`: an HTTP-hook request
+    let body = permission_request("s1", "cargo test")
+        .to_string()
+        .into_bytes();
+    let b1 = body.clone();
+    let token_held = tokio::task::spawn_blocking(move || {
+        raw_exchange(
+            port,
+            path,
+            &[
+                ("X-AgentNest-Token".to_owned(), HOOK_TOKEN.to_owned()),
+                ("X-AgentNest-Via".to_owned(), "cli".to_owned()),
+            ],
+            &b1,
+        )
+    });
+    let card = {
+        let t = &t;
+        eventually("pending card", move || {
+            let c = futures_util::FutureExt::now_or_never(t.h.broker.pending_cards());
+            c.and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
+        })
+        .await
+    };
+    assert_eq!(t.h.row(&card.request_id).origin, "claude_code.hook.http");
+    assert!(t.h.broker.handoff_local(&card.request_id).await);
+    assert_eq!(token_held.await.unwrap().0, 204);
+
+    // the relay proof: a command-hook request
+    let headers = common::relay_headers(HOOK_TOKEN, "POST", path, &body);
+    let relay_held = tokio::task::spawn_blocking(move || raw_exchange(port, path, &headers, &body));
+    let card = {
+        let t = &t;
+        eventually("pending relay card", move || {
+            let c = futures_util::FutureExt::now_or_never(t.h.broker.pending_cards());
+            c.and_then(|v| {
+                v.into_iter()
+                    .find(|c| t.h.row(&c.request_id).origin == "claude_code.hook.cli")
+            })
+        })
+        .await
+    };
+    assert_eq!(t.h.row(&card.request_id).origin, "claude_code.hook.cli");
+    assert!(t.h.broker.handoff_local(&card.request_id).await);
+    assert_eq!(relay_held.await.unwrap().0, 204);
+}
+
+/// Review item 10: the daemon builds its collector settings with the HTTP approval gate shut and opens it only after the
+/// installed hook port has been compared with the real one, before the first request is served.
+#[test]
+fn hooks_http_new_closed_settings_start_with_the_http_approval_gate_shut() {
+    use agentnest_core::http::HttpSettings;
+    let open = HttpSettings::new(true, false);
+    assert!(open.http_approvals_enabled.load(Ordering::Relaxed));
+    let closed = HttpSettings::new_closed(true, false);
+    assert!(!closed.http_approvals_enabled.load(Ordering::Relaxed));
+    assert!(closed.force_ask_on_critical.load(Ordering::Relaxed));
+}

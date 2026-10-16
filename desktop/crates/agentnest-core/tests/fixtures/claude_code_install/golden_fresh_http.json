@@ -228,6 +228,6 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "agentnest-hook statusline"
+    "command": "\"agentnest-hook\" statusline"
   }
 }

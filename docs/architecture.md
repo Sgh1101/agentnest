@@ -229,7 +229,7 @@ crates/agentnest-core/src/
 | `agentnest-adapter-api` | `AgentAdapter`, `AdapterCapabilities`, `RawObservation`, `ApprovalResponder`, `NativeBinding` | 결정 생성(어댑터는 번역만) |
 | `agentnest-core` | 수집·정규화·요약·위험 분류·상태 파생·승인 브로커·저장·페어링·WSS·레댁션 | UI, 캐릭터 렌더링 |
 | `agentnest-hook` | stdin JSON → 데몬 POST → stdout 패스스루, 항상 exit 0 | 결정 생성, 입력 가공(32 KiB 초과 문자열 절단만) |
-| `agentnest-shell-api` | 프런트 계약(커맨드·인자·오류·`daemon-event`)의 Rust 쪽, DaemonCommand/Event 매핑, 설정 화이트리스트, 진단·방화벽(UAC 상승 `netsh`, Private+LocalSubnet+이 exe+WSS 포트)·네트워크 프로필, approvals 기록, 로그 tail, 트레이 메뉴 모델(인라인 허용은 `low`/`medium`만) | Tauri 타입 사용, 허용 응답 생성, 위험 규칙 변경 |
+| `agentnest-shell-api` | 프런트 계약(커맨드·인자·오류·`daemon-event`)의 Rust 쪽, DaemonCommand/Event 매핑, 설정 화이트리스트, 진단·방화벽(UAC 상승 `netsh`, Private+LocalSubnet+이 exe+WSS 포트)·네트워크 프로필, approvals 기록, 로그 tail, 트레이 메뉴 모델(인라인 허용은 `low`만, 거부는 `low`/`medium`) | Tauri 타입 사용, 허용 응답 생성, 위험 규칙 변경 |
 | `agentnest-desktop`(Tauri 글루) | 위 로직을 `#[tauri::command]`·창·트레이·토스트·플러그인에 연결, 데몬 시작/종료 순서, 단일 인스턴스, 창 숨김(닫기=트레이 상주) | 로직 판단(전부 shell-api), 캐릭터, 폰 대체 모니터링 |
 | `android/core` | 프로토콜 모델, `NestReducer`, `MoodResolver`, `LinkStateMachine`, `DecisionValidator`, 핀닝 TLS, HMAC/canonical | Android API |
 | `android/app` | FGS 링크 서비스, 알림, Keystore 토큰 보관, 생체 게이트, QR 스캔, Compose UI, 콩이 | 상태 파생 로직(core에 위임) |

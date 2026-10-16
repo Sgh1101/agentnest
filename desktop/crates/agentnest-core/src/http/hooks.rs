@@ -28,9 +28,9 @@ use agentnest_adapter_api::{
 use agentnest_protocol::canonical::tool_input_sha256;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use axum::{Extension, Json};
 use futures_util::FutureExt;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -43,6 +43,7 @@ use crate::adapters::claude_code::{
 use crate::approvals::broker::{Broker, OpenOutcome, ToolObservation};
 use crate::approvals::correlator::HookPhase;
 use crate::approvals::drop_guard::DropGuard;
+use crate::http::guard::HookAuth;
 use crate::normalize::dedupe::{dedupe_key, DedupeKey, DedupeWindow};
 use crate::normalize::NormalizeEnv;
 use crate::pipeline::Pipeline;
@@ -74,7 +75,7 @@ pub struct HttpSettings {
 }
 
 impl HttpSettings {
-    /// Settings with the given values.
+    /// Settings with the given values; approvals over HTTP hooks are enabled.
     pub fn new(force_ask_on_critical: bool, codex_hold: bool) -> Self {
         Self {
             force_ask_on_critical: AtomicBool::new(force_ask_on_critical),
@@ -82,6 +83,15 @@ impl HttpSettings {
             hold_slack_ms: AtomicU64::new(HOLD_SLACK_MS),
             http_approvals_enabled: AtomicBool::new(true),
         }
+    }
+
+    /// Like [`HttpSettings::new`], but approvals over HTTP hooks start **closed** (answered with "no decision") until the
+    /// owner opens the gate after checking that the installed hooks point at this collector. The daemon builds its
+    /// settings this way so that nothing can be answered between "listening" and "verified".
+    pub fn new_closed(force_ask_on_critical: bool, codex_hold: bool) -> Self {
+        let s = Self::new(force_ask_on_critical, codex_hold);
+        s.http_approvals_enabled.store(false, Ordering::Relaxed);
+        s
     }
 }
 
@@ -209,11 +219,14 @@ fn parse_body(body: &Bytes) -> Result<Value, Response> {
     }
 }
 
-fn via_cli(headers: &HeaderMap) -> bool {
-    headers
-        .get("x-agentnest-via")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == "cli")
+/// The channel a Claude Code hook request used. It follows from **how the request authenticated** (the guard's
+/// [`HookAuth`]), never from a header the caller is free to set: only a request that passed the relay's one-time proof is
+/// a command-hook (CLI) request; a request that merely knows the token is an HTTP-hook request, whatever it claims.
+fn claude_channel(auth: HookAuth) -> SourceChannel {
+    match auth {
+        HookAuth::RelayProof => SourceChannel::ClaudeCodeHookCli,
+        HookAuth::Token | HookAuth::None => SourceChannel::ClaudeCodeHookHttp,
+    }
 }
 
 fn queue_hook(ctx: &HttpContext, hook: QueuedHook) -> Response {
@@ -239,7 +252,7 @@ fn observation_key(v: &Value, name: &str, body: &Bytes) -> Option<DedupeKey> {
 /// `POST /v1/hooks/claude-code`.
 pub async fn claude_hook(
     State(ctx): State<Arc<HttpContext>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<HookAuth>,
     body: Bytes,
 ) -> Response {
     let value = match parse_body(&body) {
@@ -247,11 +260,7 @@ pub async fn claude_hook(
         Err(r) => return r,
     };
     let name = hook_event_name(&value).unwrap_or("").to_owned();
-    let channel = if via_cli(&headers) {
-        SourceChannel::ClaudeCodeHookCli
-    } else {
-        SourceChannel::ClaudeCodeHookHttp
-    };
+    let channel = claude_channel(auth);
     if name == "PermissionRequest" {
         if channel == SourceChannel::ClaudeCodeHookHttp
             && !ctx.settings.http_approvals_enabled.load(Ordering::Relaxed)
@@ -297,11 +306,7 @@ pub async fn claude_hook(
 }
 
 /// `POST /v1/hooks/codex`. `PreToolUse` is always `204` (observation only).
-pub async fn codex_hook(
-    State(ctx): State<Arc<HttpContext>>,
-    _headers: HeaderMap,
-    body: Bytes,
-) -> Response {
+pub async fn codex_hook(State(ctx): State<Arc<HttpContext>>, body: Bytes) -> Response {
     let value = match parse_body(&body) {
         Ok(v) => v,
         Err(r) => return r,

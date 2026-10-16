@@ -14,8 +14,8 @@
 | tauri-plugin-single-instance | 2.5.4 | **첫 번째로 등록**, 데스크톱 cfg 전용. 콜백: 메인 창 `show()+set_focus()` |
 | tauri-plugin-notification | 2.7.0 | Windows 토스트는 **설치본에서만** AppUserModelID 적용(`tauri dev`에서 다르게 보임) |
 | tauri-plugin-autostart | 2.7.0 | `init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"]))` |
-| tauri-plugin-opener | 2.7.2 | `opener:allow-open-url`(github.com, code.claude.com 스코프), `reveal_item_in_dir` |
-| tauri-plugin-store | 2.5.0 | UI 설정만. 토큰·비밀은 core(SQLite/ACL 파일) |
+| tauri-plugin-opener | 2.7.2 | **Rust에서만** `reveal_item_in_dir`(로그 폴더 열기)를 쓴다. 프런트 JS 권한(`opener:*`, `allow-open-url` 스코프 포함)은 **부여하지 않는다** — 외부 URL을 여는 기능이 없다. 이후 필요해지면 그때 스코프를 좁게(github.com, code.claude.com) 추가한다 |
+| tauri-plugin-store | 2.5.0 | 플러그인은 등록돼 있지만 **현재 쓰이지 않는다**(프런트 JS·Rust 모두 호출 없음). UI 설정(`app.notifications`·`onboarding.*`)은 셸 로직(`agentnest-shell-api::settings::FileUiSettings`)이 `<데이터 디렉터리>/ui-settings.json` 을 직접 읽고 쓴다. 토큰·비밀은 core(SQLite/ACL 파일). 후속 과제: 쓰지 않는 플러그인(및 `store:*` 의존성) 제거 검토 |
 | tauri-plugin-log | 2.10.1 | 선택: webview console → tracing |
 | tauri-plugin-shell | **미사용** | 프로세스 실행은 Rust 코어(`tokio::process`) |
 | vite / typescript / vitest / eslint / prettier | 8.3.4 / ~5.9.3 / 5.0.4 / 10.12.0 / 3.9.10 | TS 7 네이티브 포트는 생태계 리스크 → 5.9. vite 8 문제 시 ^7.3.7 |
@@ -89,7 +89,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 
 | 커맨드 | 인자 → 반환 | 용도 |
 | --- | --- | --- |
-| `daemon_status` | → `{running, hook_port, wss_addr, hosts[], link_enabled, cert_expires_at, spki_pin, hooks_installed, effective_ttl_s, hook_timeout_s, codex_mode, sessions, devices_online}` | 상태 페이지(비밀 없음) |
+| `daemon_status` | → `{running, hook_port, wss_addr, hosts[], link_enabled, cert_expires_at, spki_pin, hooks_installed, effective_ttl_s, hook_timeout_s, codex_mode, sessions, devices_online}` | 상태 페이지(비밀 없음). `hook_timeout_s` 는 훅이 설치돼 있지 않으면 `0` 이다 — 프런트는 `hooks_installed=false` 이거나 `hook_timeout_s<=0` 이면 유효 TTL 경고를 내지 않는다(음수 "유효 TTL" 방지) |
 | `diagnostics_run` | → `{listener{bound, addr, port}, network_profile(private\|public\|domain\|unknown), firewall{rule_present, scoped_ok, block_rule_present}, last_preauth_attempt{at, ip_masked}?, self_connect_ok, hosts[], hints_ko[]}` | **연결 진단**(`security.md` §3.1). 비밀 없음 |
 | `firewall_rule_create` / `firewall_rule_remove` | → `{ok, elevated, error?}` | 사용자 동의 후 **UAC 상승**으로 `netsh advfirewall`(Private + LocalSubnet + 설치 exe) 생성/제거. 앱 자체는 비관리자 유지. `audit_log` 기록 |
 | `link_set_enabled` | `(enabled: bool)` → `()` | **'휴대폰 연결 끊기'**(`security.md` §3.3). false: 리스너 닫기·보류 승인 `handed_off_local`·`bye{shutdown, reconnect:false}`·감사. 트레이 토글과 동일 |
@@ -109,7 +109,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 | `settings_get` / `settings_set` | 키 화이트리스트(`security.md` §9) | 금지 필드는 존재하지 않음 |
 | `logs_open_dir` | → `()` | opener `reveal_item_in_dir` |
 
-이벤트(`Emitter::emit`): `daemon-event{kind: "event"|"session_state"|"approval"|"device"|"pairing"|"adapter"|"link", payload}`. 고빈도 `event`는 100 ms 창으로 배열 배치(이벤트 시스템은 고처리량용이 아님 [검증]; 필요 시 `tauri::ipc::Channel`).
+이벤트(`Emitter::emit`): `daemon-event{kind: "event"|"session_state"|"approval"|"device"|"pairing"|"adapter"|"link"|"resync", payload}`. 고빈도 `event`는 100 ms 창으로 배열 배치(이벤트 시스템은 고처리량용이 아님 [검증]; 필요 시 `tauri::ipc::Channel`).
 
 ### 3.1 프런트엔드 계약 보충 (`desktop/apps/desktop/src/api` 가 가정하는 형태 — Rust 셸은 이 형태를 구현한다)
 
@@ -118,7 +118,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 - **표에 없던 커맨드 2개**: `approvals_history(limit: number)` → `[{request_id, title, tool_name, risk_level, outcome, resolved_by, resolved_device_name|null, resolved_at}]`(승인 화면 "최근 50건 기록"), `logs_tail(limit: number)` → `string[]`(로그 화면 "최근 200줄", 레댁션본).
 - **`daemon_status` 추가 필드**: `remote_approval_paused: bool`(트레이 일시정지 상태), `last_event_at: {claude_code: ts|null, codex: ts|null}`(상태 화면 "마지막 이벤트"·첫 이벤트 수신 확인). `approvals_pending`의 `nonce_b64`는 UI가 받지 않으므로 생략해도 된다(보내도 폐기).
 - **`settings_get`/`settings_set(key, value)`**: 평평한 점 표기 키 — `approval.ttl_s`(60~180 정수), `approval.deny_requires_auth`, `approval.critical_remote`(`extra_confirmation`\|`local_only`), `approval.daemon_down_deny`, `app.notifications`, `app.log_level`(`error`\|`warn`\|`info`\|`debug`), `onboarding.completed`, `onboarding.codex_steps_done`(`hooks_json`\|`trust`\|`doctor` 배열), `risk.accepted`(읽기 전용, 쓰기는 `risk_accept`). `settings_set`은 갱신된 전체 설정 객체를 반환하고 범위 밖 값은 `INVALID_SETTING`, 그 외 키는 `UNKNOWN_SETTING`. **`app.autostart`는 JS의 `tauri-plugin-autostart`가 직접 다루므로 Rust 설정에 없다.** `link.enabled`는 `link_set_enabled`로만 바꾼다.
-- **`daemon-event` payload**(`kind` → payload): `event` → `AgentEvent[]`(배치; 단일 객체도 허용) · `session_state` → `SessionState` · `approval` → `{op:"requested", approval: ApprovalRequest+delivery}` \| `{op:"delivery", request_id, delivery}` \| `{op:"resolved", resolved: approval_resolved payload}` · `device` → `{op:"paired"\|"online"\|"offline"\|"revoked"\|"updated", device}` · `pairing` → `{op:"pending_sas", pairing_id, sas, device:{name,platform,model|null}, confirm_timeout_ms}` \| `{op:"completed", pairing_id, device_id}` \| `{op:"ended", pairing_id, reason:"expired"\|"cancelled"\|"rejected"\|"failed"\|"timeout"\|"link_disabled"}` · `adapter` → `adapter_status` payload · `link` → `{enabled, remote_approval_paused}`. 셸은 `pairing`/`pending_sas`에서 메인 창을 `show()+set_focus()` 한다(SAS 모달은 창이 보여야 의미가 있다).
+- **`daemon-event` payload**(`kind` → payload): `event` → `AgentEvent[]`(배치; 단일 객체도 허용) · `session_state` → `SessionState` · `approval` → `{op:"requested", approval: ApprovalRequest+delivery}` \| `{op:"delivery", request_id, delivery}` \| `{op:"resolved", resolved: approval_resolved payload}` · `device` → `{op:"paired"\|"online"\|"offline"\|"revoked"\|"updated", device}` · `pairing` → `{op:"pending_sas", pairing_id, sas, device:{name,platform,model|null}, confirm_timeout_ms}` \| `{op:"completed", pairing_id, device_id}` \| `{op:"ended", pairing_id, reason:"expired"\|"cancelled"\|"rejected"\|"failed"\|"timeout"\|"link_disabled"}` · `adapter` → `adapter_status` payload · `link` → `{enabled, remote_approval_paused}` · `resync` → `{missed: n}`(**셸이 만드는 신호**, 데몬 이벤트가 아님: 이벤트 펌프가 데몬 브로드캐스트를 따라가지 못해 `n`개를 놓쳤다는 뜻이다. 프런트는 승인 목록·세션·기기·상태·훅 상태를 다시 읽는다(`refreshAll`). 놓친 것이 승인 요청이어도 카드가 사라진 채로 두지 않기 위함이며, 승인 화면에 들어갈 때도 승인 목록을 새로 읽는다. 놓친 `pairing`/SAS 이벤트는 다시 읽을 커맨드가 없어 페어링 QR 만료로 정리된다). 셸은 `pairing`/`pending_sas`에서 메인 창을 `show()+set_focus()` 한다(SAS 모달은 창이 보여야 의미가 있다).
 - **방화벽 차단 규칙**: 진단 화면은 `block_rule_present`일 때 `firewall_rule_remove` 후 `firewall_rule_create`를 안내한다 — `firewall_rule_remove`는 AgentNest 이름의 허용 규칙뿐 아니라 이 앱 exe에 대한 차단 규칙도 지운다고 가정한다.
 - **`deny_and_stop`과 게이트**: 데스크톱 UI는 `allow`와, `auth_required_for`에 든 `deny_and_stop`에 길게 누르기(+`critical`은 재확인)를 적용하고 `confirm_ack=true`를 보낸다. 일반 `deny`는 게이트 없이 `confirm_ack=false`(`security.md` §6.2 단계 8과 같은 해석).
 
@@ -175,9 +175,10 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 ```
 
 - **`agentnest-hook` 사이드카**: Claude Code 는 `SessionStart` 를 `type:"http"` 훅으로 보내지 않으므로(실측, `integrations/claude-code.md`) 설치본에 `agentnest-hook.exe` 가 반드시 있어야 한다. `tauri.conf.json` 의 `bundle.externalBin: ["binaries/agentnest-hook"]` 로 앱 실행 파일 옆에 설치되고, `startup.rs::hook_cli_path` 가 그 경로를 훅 설정에 쓴다. 빌드 전에 `desktop/tools/prepare-hook-sidecar.sh` 가 `binaries/agentnest-hook-<triple>.exe` 를 만든다(`tauri-build` 가 모든 빌드에서 파일 존재를 검사하므로 타입 검사 전용 잡은 `--placeholder` 빈 파일을 쓴다).
-- `nsis.installMode: currentUser`(비관리자)라 설치 단계에서 **방화벽 규칙을 만들 수 없다.** 규칙은 앱의 '연결 진단'/첫 실행 체크리스트가 UAC 상승으로 만들고(`security.md` §3.1), 언인스톨러(NSIS 훅)는 UAC로 규칙 제거를 시도한다. 규칙의 `program=` 경로는 설치된 메인 exe의 실제 이름·경로로 채우며 이름은 첫 Windows 빌드(Phase 0 P1/P15)에서 확정한다.
+- `nsis.installMode: currentUser`(비관리자)라 설치 단계에서 **방화벽 규칙을 만들 수 없다.** 규칙은 앱의 '연결 진단'/첫 실행 체크리스트가 UAC 상승으로 만들고(`security.md` §3.1), **언인스톨러는 규칙을 지우지 않는다** — `tauri.conf.json` 에 NSIS 설치/제거 훅이 **없다(미구현)**. 지금은 앱의 진단 화면 버튼(`firewall_rule_remove`, UAC 상승)으로 **수동 제거**해야 하며, 앱을 지우기 전에 그 버튼을 쓰라고 안내한다. [후속 과제] 언인스톨러 훅으로 UAC 상승 `netsh` 제거를 시도한다. 규칙의 `program=` 경로는 설치된 메인 exe의 실제 이름·경로로 채우며 이름은 첫 Windows 빌드(Phase 0 P1/P15)에서 확정한다.
 - CSP의 IPC 허용 구문(`ipc: http://ipc.localhost`)은 첫 Windows 빌드에서 검증 [추정].
-- `capabilities/default.json`(최소 권한; 식별자는 `tauri-build`가 플러그인 ACL 매니페스트와 대조해 **빌드 때 검증**한다): `core:default`(이벤트 `listen`/`unlisten` 포함), `autostart:allow-enable`/`allow-disable`/`allow-is-enabled`(프런트가 직접 쓰는 유일한 플러그인). 앱 자신의 커맨드는 권한이 필요 없다. **알림·opener·창 제어·트레이는 Rust에서만 쓰므로 JS 권한을 주지 않는다**(`notification:*`, `opener:*`, `core:window:*`, `store:*`, `log:*` 없음). 프런트가 이후 해당 플러그인을 JS에서 쓰게 되면 그때 필요한 식별자만 추가한다. `core:default`가 실제로 listen을 허용하는지는 첫 Windows 실행에서 확인 [추정].
+- `capabilities/default.json`(최소 권한; 식별자는 `tauri-build`가 플러그인 ACL 매니페스트와 대조해 **빌드 때 검증**한다): `core:event:allow-listen`/`core:event:allow-unlisten`(프런트의 `daemon-event` 구독과 해제), `autostart:allow-enable`/`allow-disable`/`allow-is-enabled`(프런트가 직접 쓰는 유일한 플러그인). **`core:default` 는 쓰지 않는다**(트레이·메뉴·창·웹뷰·경로·이미지·리소스·앱 권한과 이벤트 `emit` 을 모두 포함해 필요 이상으로 넓다). 프런트 JS 가 실제로 쓰는 Tauri API 는 `@tauri-apps/api` 의 `invoke`(앱 자신의 커맨드는 권한이 필요 없다)·`listen` 과 `plugin-autostart` 뿐이다. **알림·opener·창 제어·트레이는 Rust에서만 쓰므로 JS 권한을 주지 않는다**(`notification:*`, `opener:*`, `core:window:*`, `core:tray:*`, `store:*`, `log:*` 없음). 프런트가 이후 해당 API 를 JS에서 쓰게 되면 그때 필요한 식별자만 추가한다. `core:event:allow-listen` 만으로 구독이 실제로 동작하는지는 첫 Windows 실행에서 확인 [추정].
+- CSP: `default-src 'self'` 에 더해 `base-uri 'none'; form-action 'none'; object-src 'none'` (UI 는 `<form>`·`<base>`·플러그인 객체를 쓰지 않는다).
 - 트레이를 Rust에서 만들므로 `core:tray`/`core:menu` 권한 불필요.
 
 ---

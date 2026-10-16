@@ -11,6 +11,7 @@ use agentnest_core::events::{DaemonEvent, DeviceUiEvent, PairingUiEvent};
 use agentnest_protocol::{Decision, ErrorCode, Message};
 use common::e2e::*;
 use common::harness::permission_request;
+use common::relay_headers;
 use serde_json::{json, Value};
 
 fn fast(o: &mut agentnest_core::daemon::DaemonOptions, _: &mut agentnest_core::config::AppConfig) {
@@ -391,6 +392,7 @@ fn install_http_hooks_for(settings: &std::path::Path, port: u16) {
             daemon_down_deny: false,
             install_statusline: false,
             hook_cli: "agentnest-hook",
+            hook_cli_ready: true,
             backup_stamp: Some("t"),
         },
     )
@@ -466,10 +468,11 @@ async fn a_port_squatter_disables_http_approvals_and_reports_hook_port_unavailab
         matches!(ws.next(Duration::from_millis(400)).await, Got::Timeout),
         "no card reaches the phone"
     );
-    // the command-hook channel authenticates both ways and is not gated: it opens a card
+    // the token plus a self-declared `X-AgentNest-Via: cli` is still an HTTP-hook request: the channel follows from the
+    // proof, not from the label, so the gate is not bypassed (review item 5)
     let url = e.hook_url("/v1/hooks/claude-code");
     let token = e.token();
-    let held = tokio::task::spawn_blocking(move || {
+    let (s, body) = tokio::task::spawn_blocking(move || {
         request_blocking(
             "POST",
             &url,
@@ -478,11 +481,32 @@ async fn a_port_squatter_disables_http_approvals_and_reports_hook_port_unavailab
                 ("X-AgentNest-Via", "cli"),
             ],
             Some(
-                permission_request("s2", "cargo build")
+                permission_request("s1b", "cargo test --all")
                     .to_string()
                     .into_bytes(),
             ),
         )
+    })
+    .await
+    .unwrap();
+    assert_eq!((s, body.as_str()), (204, ""));
+    assert!(
+        matches!(ws.next(Duration::from_millis(400)).await, Got::Timeout),
+        "a token-only request labelled cli opens no card"
+    );
+    // the command-hook channel authenticates both ways (one-time proof, no token) and is not gated: it opens a card
+    let url = e.hook_url("/v1/hooks/claude-code");
+    let token = e.token();
+    let body = permission_request("s2", "cargo build")
+        .to_string()
+        .into_bytes();
+    let held = tokio::task::spawn_blocking(move || {
+        let headers = relay_headers(&token, "POST", "/v1/hooks/claude-code", &body);
+        let headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        request_blocking("POST", &url, &headers, Some(body.clone()))
     });
     let (card, _) = ws.recv_card().await;
     assert!(
@@ -541,4 +565,178 @@ async fn without_a_conflict_nothing_is_reported_and_http_approvals_work() {
     assert!(e.dm.hook_port_problem().is_none());
     e.dm.hooks_install(HooksMode::Http).await.unwrap();
     assert!(!e.dm.status().await.unwrap().hook_port_mismatch);
+}
+
+async fn hooks_status(e: &E2e) -> agentnest_core::daemon::HooksReport {
+    e.dm.request(|reply| DaemonCommand::HooksStatus {
+        agent: agentnest_core::daemon::HookAgent::ClaudeCode,
+        reply,
+    })
+    .await
+    .unwrap()
+}
+
+/// Review item 4: a bare `agentnest-hook` is resolved through PATH (and, on Windows, the project directory first), so a
+/// hostile repository could plant a program that answers `allow` without any signature check. Without an absolute path of
+/// an existing file no command hook is installed; the status says so.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_sidecar_path_only_http_hooks_are_installed_and_the_status_says_so() {
+    let e = E2e::start_with(|o, _| o.hook_cli = "agentnest-hook".to_owned()).await;
+    let settings = e.dir.path().join("claude").join("settings.json");
+
+    // command mode: refused with the documented code, nothing written
+    let err = e.dm.hooks_install(HooksMode::Cli).await.unwrap_err();
+    assert!(
+        matches!(&err, CommandError::Invalid(m) if m.contains("hook_cli_not_found")),
+        "{err:?}"
+    );
+    assert!(!settings.exists());
+
+    // HTTP mode: the HTTP hooks are installed; no command hook, no statusLine; a warning names the problem
+    let report = e.dm.hooks_install(HooksMode::Http).await.unwrap();
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("hook_cli_not_found")),
+        "{:?}",
+        report.warnings
+    );
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert!(v.get("statusLine").is_none());
+    for (event, groups) in v["hooks"].as_object().unwrap() {
+        assert_eq!(groups[0]["hooks"][0]["type"], "http", "{event}");
+    }
+    assert!(v["hooks"].get("SessionStart").is_none());
+    let status = hooks_status(&e).await;
+    assert!(
+        !status.installed,
+        "not fully installed without SessionStart"
+    );
+    assert!(
+        status
+            .warnings
+            .iter()
+            .any(|w| w.contains("hook_cli_not_found")),
+        "{:?}",
+        status.warnings
+    );
+}
+
+/// With the sidecar present (the test options carry a placeholder file) the full set is installed, absolute path included.
+#[tokio::test(flavor = "multi_thread")]
+async fn with_a_sidecar_path_the_command_hooks_use_that_absolute_path() {
+    let e = E2e::start().await;
+    let report = e.dm.hooks_install(HooksMode::Http).await.unwrap();
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|w| w.contains("hook_cli_not_found")),
+        "{:?}",
+        report.warnings
+    );
+    let settings = e.dir.path().join("claude").join("settings.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let cmd = v["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(std::path::Path::new(cmd).is_absolute(), "{cmd}");
+    assert!(v.get("statusLine").is_some());
+    assert!(hooks_status(&e).await.installed);
+}
+
+/// Review item 7: commands from the shell are handled in the order they were sent. Fired without waiting for each reply
+/// (a shell can do that), `pause` -> `resume` must not swap, and a settings change followed by a link switch must not lose
+/// the settings change (both read-modify-write the configuration).
+#[tokio::test(flavor = "multi_thread")]
+async fn shell_commands_run_in_the_order_they_were_sent() {
+    use tokio::sync::oneshot;
+    let e = E2e::start_with(fast).await;
+
+    // 40 alternating pause/resume commands, sent back to back; the last one is "resume"
+    let mut replies = Vec::new();
+    for i in 0..40 {
+        let (tx, rx) = oneshot::channel();
+        e.dm.cmds
+            .send(DaemonCommand::RemoteApprovalPause {
+                paused: i % 2 == 0,
+                reply: tx,
+            })
+            .await
+            .unwrap();
+        replies.push(rx);
+    }
+    for r in replies {
+        r.await.unwrap().unwrap();
+    }
+    assert!(!e.dm.status().await.unwrap().remote_approval_paused);
+    // and the audit trail has them in the same order
+    let actions: Vec<String> = e
+        .dm
+        .store()
+        .read(|c| {
+            let mut stmt = c.prepare(
+                "SELECT action FROM audit_log WHERE action IN ('remote_approval_paused','remote_approval_resumed') ORDER BY id",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .unwrap();
+    let want: Vec<String> = (0..40)
+        .map(|i| {
+            if i % 2 == 0 {
+                "remote_approval_paused"
+            } else {
+                "remote_approval_resumed"
+            }
+            .to_owned()
+        })
+        .collect();
+    assert_eq!(actions, want);
+
+    // a hardening change, then "disconnect the phones": neither overwrites the other
+    for round in 0..5u32 {
+        let mut cfg = e.dm.settings_get().await.unwrap();
+        cfg.approval.ttl_s = 90 + round;
+        cfg.approval.deny_requires_auth = true;
+        cfg.link.enabled = true;
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+        let (tx3, rx3) = oneshot::channel();
+        e.dm.cmds
+            .send(DaemonCommand::SettingsSet {
+                config: Box::new(cfg),
+                reply: tx1,
+            })
+            .await
+            .unwrap();
+        e.dm.cmds
+            .send(DaemonCommand::LinkSetEnabled {
+                enabled: false,
+                reply: tx2,
+            })
+            .await
+            .unwrap();
+        e.dm.cmds
+            .send(DaemonCommand::LinkSetEnabled {
+                enabled: true,
+                reply: tx3,
+            })
+            .await
+            .unwrap();
+        rx1.await.unwrap().unwrap();
+        rx2.await.unwrap().unwrap();
+        rx3.await.unwrap().unwrap();
+        let now = e.dm.settings_get().await.unwrap();
+        assert_eq!(now.approval.ttl_s, 90 + round, "round {round}");
+        assert!(now.approval.deny_requires_auth, "round {round}");
+        assert!(
+            now.link.enabled,
+            "round {round}: the last command re-enabled the link"
+        );
+        let saved = agentnest_core::config::AppConfig::load(&e.dm.paths().config).unwrap();
+        assert_eq!(saved.approval.ttl_s, 90 + round, "persisted, round {round}");
+        assert!(saved.approval.deny_requires_auth && saved.link.enabled);
+    }
 }

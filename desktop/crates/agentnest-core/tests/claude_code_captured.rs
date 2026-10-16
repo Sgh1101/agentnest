@@ -540,6 +540,7 @@ fn session_start_is_always_a_command_hook_because_claude_code_skips_http_for_it(
         daemon_down_deny: false,
         install_statusline: false,
         hook_cli: "agentnest-hook",
+        hook_cli_ready: true,
         backup_stamp: Some("20261016T000000Z"),
     };
     install::install(&path, &opts).unwrap();
@@ -590,6 +591,7 @@ impl Live {
                 daemon_down_deny: false,
                 install_statusline: false,
                 hook_cli: &hook_bin,
+                hook_cli_ready: true,
                 backup_stamp: Some("20261016T000000Z"),
             },
         )
