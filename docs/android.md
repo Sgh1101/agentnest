@@ -265,3 +265,27 @@ sealed interface LinkState {
 | `tls` | 핀닝 4케이스 |
 
 `android/app`: CI `:app:testDebugUnitTest`(알림 빌더 매핑, 딥링크 파싱), `:app:lintDebug`(FGS 타입·권한). 계측 테스트는 Phase 1 후반.
+
+---
+
+## 8. 화면 스크린샷(시각 검증)
+
+컴파일·lint 만으로는 화면이 실제로 어떻게 보이는지 알 수 없어서(콩이 캐릭터, 줄바꿈, 큰 글자, 다크 모드) Compose UI 계측 테스트가 화면을 PNG 로 렌더링한다.
+
+- 테스트: `android/app/src/androidTest/kotlin/dev/agentnest/app/shots/` — `FakeAppController`(상태만 돌려주고 모든 동작은 no-op, androidTest 전용)로 `AgentNestRoot`/각 화면을 `createComposeRule` 에 올리고 `captureToImage()` 를 저장한다. 폰 크기 360x800 / 411x914 dp, 글자 크기 1.0 / 1.3, 라이트/다크. 애니메이션은 꺼서 정지 프레임을 찍고(`KongiShotTest`), 콩이 모션은 `mainClock` 을 직접 진행해 프레임 4장짜리 strip 으로 만든다(`KongiAnimShotTest`).
+- CI: `.github/workflows/android-screenshots.yml`(`ccr-*` 푸시 + 수동 실행). API 34 x86_64 에뮬레이터(`pixel_6_pro`, 밀도 420), `./gradlew :app:connectedDebugAndroidTest`. `disable-animations` 는 쓰지 않는다(모션 제어는 테스트가 한다).
+- PNG 수거: 테스트가 `UiAutomation.executeShellCommandRw("dd of=/data/local/tmp/agentnest-shots/…")` 로 파일을 직접 써 두고(Gradle 이 끝나며 앱을 제거하므로 앱 저장소는 쓸 수 없다) `android/tools/run-screenshots.sh` 가 `adb pull` 한다. 결과는 `android-screenshots` 아티팩트로 올라간다.
+- 아티팩트 호스트에 접근할 수 없는 환경(에이전트 샌드박스)을 위해 `android/tools/emit_shots.py` 가 `android/tools/emit-pattern.txt`(`glob [축소%] [색 수]`)로 고른 PNG 를 줄여 job 로그에 base64 로 출력한다(`PNGB64 <이름> <조각>`). 로그를 받아 이어 붙여 디코딩하면 PNG 가 된다. PNG 는 저장소에 커밋하지 않는다.
+- 테스트 시간 기준(`SD.NOW`)은 장면마다 갱신된다. 승인 카드 만료 임박·celebrate(4초) 같은 시간 의존 장면은 이 기준에 맞춰 만든다.
+- 화면을 바꾸면 이 파이프라인으로 눈으로 확인한 뒤 머지한다. 확인된 결함과 수정은 PR 설명에 적는다.
+
+### 8.1 스크린샷에서 확인된 UI 규칙
+
+- 한 줄에 버튼이 둘을 넘거나 큰 글자에서 넘칠 수 있으면 세로로 쌓거나 가로 스크롤한다(연결 배너, 활동 필터).
+- 터치 영역 48 dp: 직접 만든 `clickable`/`selectable` 에는 `heightIn(min = 48.dp)` 와 역할(`Role.Tab` 등)을 준다.
+- 한글은 음절 단위로 줄이 바뀌므로 고정 문구·헤드라인은 `keepWords()`(단어 결합자, 표시 전용)를 쓴다. **명령·경로·파일명·승인 카드 본문에는 쓰지 않는다** — 사용자가 읽는 승인 내용에 보이지 않는 문자를 더하지 않는다.
+- 승인 카드의 위험 등급 chip 은 제목 위 줄에 둔다(큰 글자에서 제목이 chip 과 줄을 나눠 단어 중간에서 끊기는 것을 막고, 위험이 먼저 읽히게 한다).
+- 길게 누르기 버튼은 테두리와 안내 문구로 활성 상태가 보여야 하고(비활성처럼 보이면 안 됨), 채워지는 동안에도 글자 대비를 유지한다.
+- Material 3 색 역할(`secondaryContainer`, `surfaceContainer*`, `outlineVariant` 등)을 모두 지정한다. 빠뜨리면 하단 바·스위치·대화상자가 기본 보라색으로 보인다.
+- 상태 chip 글자 대비는 라이트/다크 모두 WCAG AA(4.5:1) 이상, 캐릭터 몸 색은 배경 대비 3:1 이상(`ToneTheme.solid`).
+

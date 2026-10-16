@@ -293,11 +293,12 @@ private fun ActionCard(
             )
             Text("${RelativeTime.countdown(left)} ${S.REMAINING}", style = MaterialTheme.typography.labelLarge)
         }
+        // Risk on its own line above the title (same reason as the detail screen: no mid-word break at large text sizes).
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
             ToneChip(Labels.risk(request.risk.level), Labels.riskTone(request.risk.level))
+            HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
         }
-        HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
+        Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.bodyLarge)
         request.details.command?.let {
             Text(
                 text = DisplaySanitizer.display(it),
