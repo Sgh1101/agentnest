@@ -877,7 +877,7 @@
       "name": "env_secret_single_quoted_value_with_space",
       "rule": "env_secret",
       "polarity": "positive",
-      "input": "export DB_PASSWORD='a b c' && ls",
+      "input": "export MY_SECRET_KEY='a b c' && ls",
       "expect": {
         "output": "export <redacted>' && ls",
         "redacted": true
@@ -887,9 +887,9 @@
       "name": "env_secret_empty_value_is_kept",
       "rule": "env_secret",
       "polarity": "negative",
-      "input": "export DB_PASSWORD=\"\" && ls",
+      "input": "export MY_SECRET_KEY=\"\" && ls",
       "expect": {
-        "output": "export DB_PASSWORD=\"\" && ls",
+        "output": "export MY_SECRET_KEY=\"\" && ls",
         "redacted": false
       }
     },
