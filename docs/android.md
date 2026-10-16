@@ -264,7 +264,7 @@ sealed interface LinkState {
 | `approval` | `DecisionValidator`(만료 마진·skew·allowed_decisions·auth 요구), 오프라인 시 비활성 |
 | `tls` | 핀닝 4케이스 |
 
-`android/app`: CI `:app:testDebugUnitTest`(알림 빌더 매핑, 딥링크 파싱), `:app:lintDebug`(FGS 타입·권한). 계측 테스트는 Phase 1 후반.
+`android/app`: CI `:app:testDebugUnitTest`(알림 빌더 매핑, 딥링크 파싱), `:app:lintDebug`(FGS 타입·권한). 계측(Compose UI 스크린샷) 테스트는 §8.
 
 ---
 

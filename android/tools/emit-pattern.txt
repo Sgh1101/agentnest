@@ -1,5 +1,2 @@
-# glob [scale%] [colors]
-kongi_gallery_* 60
-kongi_big_tools 30
-kongi_anim_* 30
-* 40 64
+# glob [scale%] [colors] — screenshots printed into the job log (see docs/android.md 8). Keep this short: every line adds to the log size.
+kongi_gallery_light 50 64
