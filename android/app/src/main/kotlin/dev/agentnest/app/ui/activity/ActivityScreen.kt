@@ -1,11 +1,15 @@
 package dev.agentnest.app.ui.activity
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,8 +24,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.Format
@@ -68,7 +74,11 @@ fun ActivityScreen(nest: NestState, controller: AppController, modifier: Modifie
     ) {
         item { ScreenHeader(title = S.TAB_ACTIVITY, onBack = null, modifier = Modifier.padding(horizontal = 0.dp)) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Six pills do not fit a 360 dp phone (and never at 130 % text): the row scrolls sideways.
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 for (option in EventFilter.entries) {
                     FilterPill(option.labelKo, selected = option == filter, onClick = { filter = option })
                 }
@@ -107,13 +117,16 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(
+    // 48 dp high (touch target) and a selectable tab role for screen readers.
+    Box(
         modifier = Modifier
+            .heightIn(min = 48.dp)
             .clip(shape)
             .background(bg, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = fg, style = MaterialTheme.typography.labelLarge)
+        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, maxLines = 1)
     }
 }

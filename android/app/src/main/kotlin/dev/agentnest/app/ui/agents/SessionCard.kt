@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.Format
 import dev.agentnest.app.ui.Labels
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.ToneChip
@@ -72,7 +73,7 @@ fun SessionCard(
             )
         }
         if (session.headline.isNotBlank()) {
-            Text(DisplaySanitizer.display(session.headline), style = MaterialTheme.typography.bodyMedium)
+            Text(DisplaySanitizer.display(session.headline).keepWords(), style = MaterialTheme.typography.bodyMedium)
         }
         BadgeRow(session, nest)
         val last = Format.ago(session.lastEventAt, now, skew)

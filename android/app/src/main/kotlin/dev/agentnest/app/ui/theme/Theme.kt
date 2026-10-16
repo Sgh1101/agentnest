@@ -25,6 +25,22 @@ private val LightColors: ColorScheme = lightColorScheme(
     outline = Color(0xFF8A8174),
     error = Color(0xFFB3261E),
     onError = Color(0xFFFFFFFF),
+    // Every role the Material components read is set, otherwise they fall back to the default lavender palette
+    // (bottom bar indicator, switches, dialogs, outlined button borders).
+    secondaryContainer = Color(0xFFEADBC4),
+    onSecondaryContainer = Color(0xFF2E1F0F),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFFAF5EC),
+    surfaceContainer = Color(0xFFF4EDE1),
+    surfaceContainerHigh = Color(0xFFEFE7DA),
+    surfaceContainerHighest = Color(0xFFE9E0D1),
+    surfaceDim = Color(0xFFE7DFD1),
+    surfaceBright = Color(0xFFFBF7F1),
+    surfaceTint = Color(0xFF7A5A3A),
+    outlineVariant = Color(0xFF9C9283),
+    inverseSurface = Color(0xFF35302A),
+    inverseOnSurface = Color(0xFFF6EFE5),
+    inversePrimary = Color(0xFFE0B98A),
 )
 
 private val DarkColors: ColorScheme = darkColorScheme(
@@ -43,6 +59,20 @@ private val DarkColors: ColorScheme = darkColorScheme(
     outline = Color(0xFF978E80),
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
+    secondaryContainer = Color(0xFF4A3B2B),
+    onSecondaryContainer = Color(0xFFF0DEC8),
+    surfaceContainerLowest = Color(0xFF100D0A),
+    surfaceContainerLow = Color(0xFF1A1612),
+    surfaceContainer = Color(0xFF211C17),
+    surfaceContainerHigh = Color(0xFF2B251F),
+    surfaceContainerHighest = Color(0xFF352E27),
+    surfaceDim = Color(0xFF14110E),
+    surfaceBright = Color(0xFF3A332C),
+    surfaceTint = Color(0xFFE0B98A),
+    outlineVariant = Color(0xFF8D8475),
+    inverseSurface = Color(0xFFEBE3D8),
+    inverseOnSurface = Color(0xFF2E2924),
+    inversePrimary = Color(0xFF7A5A3A),
 )
 
 /** Background and text colour of a status chip / badge. */
@@ -58,7 +88,7 @@ object ToneTheme {
         Tone.NEUTRAL -> if (dark) Color(0xFFCDBFA8) else Color(0xFF9B8B72)
         Tone.ACCENT -> if (dark) Color(0xFFE0B98A) else Color(0xFF9A6B3C)
         Tone.INFO -> if (dark) Color(0xFF8FB8E8) else Color(0xFF3F78B8)
-        Tone.WARNING -> if (dark) Color(0xFFF2C35B) else Color(0xFFD98E04)
+        Tone.WARNING -> if (dark) Color(0xFFF2C35B) else Color(0xFFC47A00)
         Tone.DANGER -> if (dark) Color(0xFFF08A82) else Color(0xFFC8372D)
         Tone.SUCCESS -> if (dark) Color(0xFF86D49B) else Color(0xFF2E8B57)
         Tone.MUTED -> if (dark) Color(0xFF9A9388) else Color(0xFF8D877D)

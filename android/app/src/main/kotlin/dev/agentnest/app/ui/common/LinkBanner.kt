@@ -3,6 +3,7 @@ package dev.agentnest.app.ui.common
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.S
 import dev.agentnest.app.ui.Tone
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.core.link.LinkState
 import dev.agentnest.core.text.Fallbacks
 import java.time.Instant
@@ -75,18 +77,26 @@ fun LinkBanner(
     var showRepair by remember { mutableStateOf(false) }
 
     InfoCard(modifier = modifier.padding(horizontal = 16.dp), container = bannerColor(model.tone)) {
-        Text(model.text)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(model.text.keepWords())
+        val buttons: @Composable (Modifier) -> Unit = { m ->
             if (model.canReconnect) {
-                OutlinedButton(onClick = actions.onReconnect) { Text(S.RECONNECT) }
+                OutlinedButton(onClick = actions.onReconnect, modifier = m) { Text(S.RECONNECT) }
             }
             if (model.unreachable) {
-                OutlinedButton(onClick = { showManual = true }) { Text(S.MANUAL_HOST) }
-                OutlinedButton(onClick = actions.onRescanQr) { Text(S.RESCAN_QR) }
+                OutlinedButton(onClick = { showManual = true }, modifier = m) { Text(S.MANUAL_HOST) }
+                OutlinedButton(onClick = actions.onRescanQr, modifier = m) { Text(S.RESCAN_QR) }
             }
             if (model.needsRepair) {
-                Button(onClick = { showRepair = true }) { Text(S.REPAIR) }
+                Button(onClick = { showRepair = true }, modifier = m) { Text(S.REPAIR) }
             }
+        }
+        // Three recovery buttons do not fit side by side on a 360 dp phone (the last one was squeezed into a vertical
+        // strip); more than one button is stacked full width instead.
+        val count = (if (model.canReconnect) 1 else 0) + (if (model.unreachable) 2 else 0) + (if (model.needsRepair) 1 else 0)
+        if (count > 1) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { buttons(Modifier.fillMaxWidth()) }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { buttons(Modifier) }
         }
     }
 

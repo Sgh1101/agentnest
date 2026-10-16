@@ -3,6 +3,8 @@ package dev.agentnest.app.shots
 import dev.agentnest.app.data.PairedInfo
 import dev.agentnest.core.link.LinkError
 import dev.agentnest.core.link.LinkState
+import dev.agentnest.core.nest.ApprovalHistory
+import dev.agentnest.core.nest.ApprovalHistoryEntry
 import dev.agentnest.core.nest.NestReducer
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.AdapterMode
@@ -14,8 +16,6 @@ import dev.agentnest.core.protocol.AgentState
 import dev.agentnest.core.protocol.ApprovalDetails
 import dev.agentnest.core.protocol.ApprovalOutcome
 import dev.agentnest.core.protocol.ApprovalRequest
-import dev.agentnest.core.protocol.ApprovalResolvedMessage
-import dev.agentnest.core.protocol.ApprovalResolvedPayload
 import dev.agentnest.core.protocol.Counters
 import dev.agentnest.core.protocol.Decision
 import dev.agentnest.core.protocol.Delivery
@@ -310,11 +310,11 @@ object SD {
         events: List<AgentEvent> = emptyList(),
         errors: List<AgentEvent> = emptyList(),
         fromCacheSavedAgo: Long? = null,
-        history: List<Triple<ApprovalRequest, ApprovalOutcome, ResolvedBy>> = emptyList(),
+        history: List<ApprovalHistoryEntry> = emptyList(),
         policy: Policy = Policy(),
     ): NestState {
         val reducer = NestReducer { id() }
-        val snap = snapshot(sessions, approvals + history.map { it.first }, events, errors, NOW.minusSeconds(5))
+        val snap = snapshot(sessions, approvals, events, errors, NOW.minusSeconds(5))
         if (fromCacheSavedAgo != null) {
             return reducer.restoreFromCache(snap, NOW.minusSeconds(fromCacheSavedAgo), NOW, link)
         }
@@ -323,29 +323,19 @@ object SD {
         s = reducer.onLink(s, connected(), NOW.minusSeconds(20))
         s = reducer.reduce(s, welcome(NOW.minusSeconds(10), policy), NOW.minusSeconds(10)).state
         s = reducer.reduce(s, snap, NOW.minusSeconds(5)).state
-        for ((req, outcome, by) in history) {
-            val msg = ApprovalResolvedMessage(FrameMeta(id(), Ts.of(NOW.minusSeconds(4)), null), resolved(req, outcome, by))
-            s = reducer.reduce(s, msg, NOW.minusSeconds(4)).state
-        }
+        if (history.isNotEmpty()) s = s.copy(history = ApprovalHistory(history))
         if (link !is LinkState.Connected) s = reducer.onLink(s, link, NOW)
         else s = reducer.tick(s, NOW).state
         return s
     }
 
-    fun resolved(req: ApprovalRequest, outcome: ApprovalOutcome, by: ResolvedBy = ResolvedBy.PHONE) = ApprovalResolvedPayload(
-        requestId = req.requestId,
-        sessionKey = req.sessionKey,
-        outcome = outcome,
-        resolvedBy = by,
-        resolvedAt = Ts.of(NOW.minusSeconds(600)),
-        delivery = Delivery.DELIVERED,
-        observedResult = ObservedResult.NOT_YET_KNOWN,
-        messageKo = null,
-    )
-
-    private fun histReq(n: String, title: String, command: String?, level: RiskLevel) = request(
-        "ar_01929f1a-6c2e-7b3c-9e4d-hist$n", level, ExtraConfirmationLevel.NONE, title, command = command,
-    )
+    private fun hist(n: String, title: String, level: RiskLevel, outcome: ApprovalOutcome, by: ResolvedBy, minutesAgo: Long) =
+        ApprovalHistoryEntry(
+            requestId = "ar_hist_$n", sessionKey = S1, title = title, toolName = "Bash", agentLabel = "Claude",
+            projectName = "agentnest", riskLevel = level, outcome = outcome, resolvedBy = by,
+            resolvedAt = NOW.minusSeconds(minutesAgo * 60), delivery = Delivery.DELIVERED,
+            observedResult = ObservedResult.NOT_YET_KNOWN, messageKo = null,
+        )
 
     val reconnecting = LinkState.Reconnecting(2, NOW.plusSeconds(8), LinkError.Unreachable)
 
@@ -439,11 +429,11 @@ object SD {
         approvals = listOf(reqCritical, reqHigh, reqMedium, reqLow, reqCodex),
         events = events,
         history = listOf(
-            Triple(histReq("h1", "명령을 실행하려고 해요", "pnpm test", RiskLevel.MEDIUM), ApprovalOutcome.ALLOWED, ResolvedBy.PHONE),
-            Triple(histReq("h2", "파일을 수정하려고 해요", null, RiskLevel.LOW), ApprovalOutcome.DENIED, ResolvedBy.PHONE),
-            Triple(histReq("h3", "명령을 실행하려고 해요", "rm -rf build", RiskLevel.HIGH), ApprovalOutcome.EXPIRED, ResolvedBy.TIMEOUT),
-            Triple(histReq("h4", "명령을 실행하려고 해요", "git push", RiskLevel.HIGH), ApprovalOutcome.HANDED_OFF_LOCAL, ResolvedBy.DESKTOP),
-            Triple(histReq("h5", "명령을 실행하려고 해요", "git push --force", RiskLevel.CRITICAL), ApprovalOutcome.DENIED_AND_STOPPED, ResolvedBy.PHONE),
+            hist("1", "명령을 실행하려고 해요", RiskLevel.MEDIUM, ApprovalOutcome.ALLOWED, ResolvedBy.PHONE, 3),
+            hist("2", "파일을 수정하려고 해요", RiskLevel.LOW, ApprovalOutcome.DENIED, ResolvedBy.PHONE, 12),
+            hist("3", "명령을 실행하려고 해요", RiskLevel.HIGH, ApprovalOutcome.EXPIRED, ResolvedBy.TIMEOUT, 40),
+            hist("4", "명령을 실행하려고 해요", RiskLevel.HIGH, ApprovalOutcome.HANDED_OFF_LOCAL, ResolvedBy.DESKTOP, 95),
+            hist("5", "명령을 실행하려고 해요", RiskLevel.CRITICAL, ApprovalOutcome.DENIED_AND_STOPPED, ResolvedBy.PHONE, 180),
         ),
     )
 

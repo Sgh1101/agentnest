@@ -41,6 +41,7 @@ import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.Format
 import dev.agentnest.app.ui.Labels
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.agents.SessionCard
 import dev.agentnest.app.ui.agents.StatusDot
@@ -121,14 +122,14 @@ fun HomeScreen(
         if (!authReady && inputs.paired != null) {
             item {
                 InfoCard(modifier = Modifier.padding(horizontal = 16.dp), container = ToneTheme.colors(Tone.WARNING, isDarkTheme()).container) {
-                    Text(S.DEVICE_LOCK_WARNING)
+                    Text(S.DEVICE_LOCK_WARNING.keepWords())
                 }
             }
         }
         if (inputs.keyResetNotice && unpaired) {
             item {
                 InfoCard(modifier = Modifier.padding(horizontal = 16.dp), container = ToneTheme.colors(Tone.DANGER, isDarkTheme()).container) {
-                    Text(S.KEY_RESET_NOTICE)
+                    Text(S.KEY_RESET_NOTICE.keepWords())
                 }
             }
         }
@@ -150,10 +151,13 @@ fun HomeScreen(
         if (lastError != null || (lastTest != null && Labels.test(lastTest.status) != null)) {
             item { RecentResults(nest, now) }
         }
-        item {
-            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-                TextButton(onClick = actions.onOpenApprovals) { Text(S.APPROVAL_CENTER) }
-                TextButton(onClick = actions.onOpenHistory) { Text(S.APPROVAL_HISTORY_LINK) }
+        // Nothing to review before a PC is paired: the links would only open empty screens.
+        if (!unpaired) {
+            item {
+                Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                    TextButton(onClick = actions.onOpenApprovals) { Text(S.APPROVAL_CENTER) }
+                    TextButton(onClick = actions.onOpenHistory) { Text(S.APPROVAL_HISTORY_LINK) }
+                }
             }
         }
         val sessions = visibleSessions(nest, now)
@@ -239,7 +243,7 @@ private fun KongiHeader(nest: NestState, now: Instant, inputs: HomeInputs, unpai
     ) {
         KongiCanvas(spec = spec, motion = inputs.motion, active = inputs.animationActive)
         Text(
-            text = mood.headline,
+            text = mood.headline.keepWords(),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             maxLines = 3,

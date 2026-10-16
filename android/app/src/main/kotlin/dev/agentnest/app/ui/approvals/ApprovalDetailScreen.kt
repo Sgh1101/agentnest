@@ -266,6 +266,9 @@ private fun ApprovalBody(
                 }
             }
         }
+        if (Decision.ALLOW in request.allowedDecisions && (allow as? Enablement.Enabled)?.gate?.extraConfirmation?.let { it != ExtraConfirmationLevel.NONE } == true) {
+            Text(S.HOLD_HINT, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (request.isCodexHooksOrigin) {
             Text(S.CODEX_HOOKS_DENY_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import dev.agentnest.app.pairing.PairingUiState
 import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.ScreenHeader
 import dev.agentnest.app.ui.common.SecureScreen
@@ -76,7 +77,7 @@ fun PairingScreen(
                 PairingUiState.Saving -> Progress(S.PAIRING_SAVING)
                 PairingUiState.Done -> {
                     Text(S.PAIRING_DONE, style = MaterialTheme.typography.titleLarge)
-                    Text(S.PAIRING_DONE_HELP, textAlign = TextAlign.Center)
+                    Text(S.PAIRING_DONE_HELP.keepWords(), textAlign = TextAlign.Center)
                     Button(onClick = onDone) { Text(S.GO_HOME) }
                 }
                 is PairingUiState.Failed -> Problem(state.messageKo, S.PAIRING_RETRY_SCAN, controller::startPairingScan)
@@ -88,9 +89,9 @@ fun PairingScreen(
 @Composable
 private fun Intro(onScan: () -> Unit) {
     InfoCard {
-        Text(S.PAIRING_STEP_1, style = MaterialTheme.typography.bodyLarge)
-        Text(S.PAIRING_STEP_2, style = MaterialTheme.typography.bodyLarge)
-        Text(S.PAIRING_WARNING, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(S.PAIRING_STEP_1.keepWords(), style = MaterialTheme.typography.bodyLarge)
+        Text(S.PAIRING_STEP_2.keepWords(), style = MaterialTheme.typography.bodyLarge)
+        Text(S.PAIRING_WARNING.keepWords(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Button(onClick = onScan) { Text(S.PAIRING_SCAN) }
 }
@@ -103,7 +104,7 @@ private fun Progress(text: String) {
 
 @Composable
 private fun Problem(message: String, action: String, onAction: () -> Unit) {
-    Text(message, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+    Text(message.keepWords(), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
     Button(onClick = onAction) { Text(action) }
 }
 
@@ -117,7 +118,7 @@ private fun ShowSas(sas: String, onCancel: () -> Unit) {
         fontFamily = FontFamily.Monospace,
         textAlign = TextAlign.Center,
     )
-    Text(S.PAIRING_SAS_HELP, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyLarge)
+    Text(S.PAIRING_SAS_HELP.keepWords(), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyLarge)
     CircularProgressIndicator()
     OutlinedButton(onClick = onCancel) { Text(S.CANCEL) }
 }

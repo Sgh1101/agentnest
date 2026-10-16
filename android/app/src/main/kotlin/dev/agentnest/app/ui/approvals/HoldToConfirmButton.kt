@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
@@ -57,7 +58,10 @@ fun HoldToConfirmButton(
     var a11yConfirm by remember { mutableStateOf(false) }
     val latest by rememberUpdatedState(onConfirmed)
     val fill = MaterialTheme.colorScheme.primary
-    val track = if (enabled) fill.copy(alpha = 0.22f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    // Enabled: a visible outline plus a pale track, so it does not read as a disabled button; the sweep is translucent
+    // so the label stays readable while it fills.
+    val track = if (enabled) fill.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val borderColor = if (enabled) fill else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
     val shape = RoundedCornerShape(24.dp)
 
     Box(
@@ -66,8 +70,9 @@ fun HoldToConfirmButton(
             .clip(shape)
             .background(track, shape)
             .drawBehind {
-                drawRect(fill.copy(alpha = 0.85f), size = Size(size.width * progress.value, size.height))
+                drawRect(fill.copy(alpha = 0.45f), size = Size(size.width * progress.value, size.height))
             }
+            .border(1.5.dp, borderColor, shape)
             .semantics {
                 contentDescription = "$label. ${holdMillis / 1000f}초 동안 길게 누르세요"
                 if (enabled) {
