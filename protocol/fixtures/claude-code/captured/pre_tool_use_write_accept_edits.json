@@ -1,0 +1,18 @@
+{
+  "session_id": "eeeeeeee-0000-4000-8000-000000000021",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/eeeeeeee-0000-4000-8000-000000000021.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/eeeeeeee-0000-4000-8000-000000000021/scratchpad",
+  "prompt_id": "9a000006-0000-4000-8000-000000000000",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/demo/ae.txt",
+    "content": "hi"
+  },
+  "tool_use_id": "toolu_fixture0008"
+}

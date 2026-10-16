@@ -1,7 +1,7 @@
 # Claude Code 연동 계약
 
 - 상태: 확정(리드 종합본) — 2026-10-15
-- 기준 버전: Claude Code **v2.1.300** [검증: 공식 hooks/settings/statusline 문서 원문 + CHANGELOG + transcript 실측]
+- 기준 버전: Claude Code **v2.1.300** [검증: 공식 hooks/settings/statusline 문서 원문 + CHANGELOG + transcript 실측]. **v2.1.301 실측(2026-10-16, 리눅스 서버, `claude -p` 비대화형)**: 훅 페이로드를 실제로 캡처해 `protocol/fixtures/claude-code/captured/`에 보관했고(`[검증됨(2026-10-16, claude 2.1.301)]` 표시 항목), 실제 CLI → 설치기가 만든 설정 → 실제 수집기까지 `tests/claude_code_captured.rs`(`--ignored`)로 재현한다. **대화형 TUI·Windows·Git Bash 없는 환경은 측정하지 못했다** — 해당 항목은 계속 "검증 필요"다.
 - 신뢰도: 별도 표기가 없는 항목은 **[검증]**. "검증 필요 (Phase 0)" 항목은 `phase0-checklist.md` A-시리즈에 대응한다(★ = Phase 1 착수 전 필수 — 의미는 체크리스트 범례가 규범, A-시리즈 목록은 두 문서가 항상 같아야 한다).
 
 ---
@@ -10,8 +10,8 @@
 
 | 채널 | 용도 | 상태 |
 | --- | --- | --- |
-| `type: "http"` 훅 → `POST http://127.0.0.1:47831/v1/hooks/claude-code` | 실시간 이벤트 + 원격 승인(**1차**) | [검증] v2.1.63+. 요청 본문 = command 훅 stdin JSON, 응답 본문 = 출력 JSON. 셸을 쓰지 않으므로 Git Bash/PowerShell 함정 회피 |
-| `agentnest-hook claude-code`(command 훅, exec form) | HTTP 훅이 금지된 환경(`allowedHttpHookUrls` 정책)·디버깅 폴백, **그리고 훅 포트 선점(A3)으로부터 보호가 필요한 사용자의 권장 경로**: 같은 엔드포인트로 POST하되 토큰 대신 일회용 증명을 보내고 **서명된 응답만** 출력한다(§3, `security.md` §1.2) | [검증] 구조 |
+| `type: "http"` 훅 → `POST http://127.0.0.1:47831/v1/hooks/claude-code` | 실시간 이벤트 + 원격 승인(**1차**). **단 `SessionStart`(와 `Setup`)는 HTTP 훅을 지원하지 않는다 — 아래 command 훅으로 받는다** | [검증] v2.1.63+. 요청 본문 = command 훅 stdin JSON, 응답 본문 = 출력 JSON. 셸을 쓰지 않으므로 Git Bash/PowerShell 함정 회피. [검증됨(2026-10-16, claude 2.1.301)] 요청 헤더는 `content-type`·`accept`·`user-agent: axios/…`·설정한 `headers`뿐이며 `Origin`/`Sec-Fetch-*`는 없다(가드 통과), 본문 = command 훅 stdin JSON과 동일 |
+| `agentnest-hook claude-code`(command 훅, exec form) | **`SessionStart` 전용 필수 경로(모든 모드)**, HTTP 훅이 금지된 환경(`allowedHttpHookUrls` 정책)·디버깅 폴백, **그리고 훅 포트 선점(A3)으로부터 보호가 필요한 사용자의 권장 경로**: 같은 엔드포인트로 POST하되 토큰 대신 일회용 증명을 보내고 **서명된 응답만** 출력한다(§3, `security.md` §1.2) | [검증] 구조 |
 | statusLine 커맨드 `agentnest-hook statusline` → `POST /v1/statusline/claude-code` | AI 생성 세션 제목(`session_name`)·비용·컨텍스트 사용률·PR 번호 — **훅에는 없는 유일한 공식 소스** | [검증] statusline 문서. 선택 설치(기존 `statusLine`이 없을 때만) |
 | transcript JSONL 백필 | 세션 복구·AI 제목 추출. 형식 비공개 | [실측 v2.1.300만] Phase 1 **off**, Phase 2 검토 |
 
@@ -27,6 +27,17 @@
 - `Notification.permission_prompt`는 프롬프트가 약 6초 대기한 뒤 발생하며, 샌드박스 명령의 네트워크 요청 프롬프트에는 `PermissionRequest`가 **발생하지 않는다** → `permission_prompt`를 `awaiting_approval` 보완 신호로 사용.
 - `SessionEnd` 기본 예산 1.5초 → 즉시 204.
 
+**v2.1.301 실측으로 확인한 사실** [검증됨(2026-10-16, claude 2.1.301; `claude -p`, 리눅스)]:
+
+- **`SessionStart`·`Setup`은 `type: "http"` 훅을 건너뛴다**(Claude Code 자신의 로그: "HTTP hooks are not supported for SessionStart"; 같은 설정에서 command 훅만 호출됨). → 설치기는 `SessionStart`만 항상 command 훅(exec form `args:["claude-code"]`, 이 형태도 실제 동작 확인)으로 쓴다(`install::COMMAND_ONLY_EVENTS`). 따라서 HTTP 전용 구성에서는 첫 이벤트가 `UserPromptSubmit`이고, 데몬은 `SessionStart` 없이도 세션을 첫 이벤트부터 채택한다(테스트로 확인).
+- `SessionStart` 실제 본문은 공통 필드 + **`source`뿐**이다(`model`·`permission_mode`·`session_title` 없음). `SessionEnd`는 `reason`(`other`)만이고 `permission_mode`·`effort`가 없다.
+- 공통 필드에 문서에 없던 **`scratchpad_dir`**(경로), **`effort.level`**(도구 이벤트), **`prompt_id`**가 실린다(수집기는 무시). `tool_use_id`는 `PreToolUse`/`PostToolUse*`에 있고 **`PermissionRequest`에는 없다**.
+- `PermissionRequest`: `permission_suggestions` 항목의 실제 `type`은 `addDirectories`(`directories[]`, `destination:"session"`)와 `setMode`(`mode`) — `addRules`가 아니다(개수만 쓰므로 영향 없음). 서브에이전트 안의 요청에는 **`agent_id`·`agent_type`이 실린다**(메인 스레드에는 없음).
+- 응답: `200` + `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}` → 명령이 실행됨. `deny` + `message` → Claude에게 `message` **원문 그대로**가 도구 결과 오류로 전달되고 명령은 실행되지 않음(`PostToolUse*`/`PermissionDenied` 없음). `deny` + `interrupt:true` → 턴이 중단되고(`[Request interrupted by user]`, `Stop` 훅 없음) **`message`는 Claude에 전달되지 않는다**(일반 거부 문구로 대체). `204` 빈 본문 = 결정 없음 → 로컬 프롬프트가 없는 `-p`에서는 "needs approval" 오류로 **거부**(fail-closed, 명령 미실행).
+- 훅 연결 실패(`ECONNREFUSED`)는 비차단이고 작업은 계속된다(`outcome: error`, `-p` stderr에는 `SessionEnd`만 한 줄). `timeout`의 단위는 **초**: `timeout: 5` + 8초 지연 응답 → `cancelled`로 응답이 버려져 거부됨(로컬 결정으로 위임), `timeout: 600`·`3600` + 8초 응답 → 경고 없이 정상 적용. 스키마에는 상한이 없다.
+- `Agent` 도구는 기본이 **비동기**: `PostToolUse{tool_name:"Agent", tool_response:{status:"async_launched", agentId, …}}`가 즉시 오고, 메인 스레드의 `Stop`이 서브에이전트가 도는 중에 `background_tasks:[{type:"subagent",status:"running",…}]`와 함께 온다(서브에이전트의 `SubagentStop`에도 자기 자신이 `running`으로 남아 있음). 끝나면 `UserPromptSubmit`의 `prompt`가 `<task-notification>…`인 턴이 새로 시작된다(`auto_turn_suspect=true`가 맞는 사례).
+- `permission_mode` 실제 값: `default`/`acceptEdits`/`dontAsk`/`plan`/`auto`. `PermissionRequest`는 `default`에서만 관측됐고 `acceptEdits`(Write)·`auto`(Bash)·`dontAsk`(거부)·`plan`에서는 발생하지 않았다. `plan` 모드의 `Write`는 `~/.claude/plans/*.md`(cwd 밖)를 쓴다.
+
 ---
 
 ## 2. 설치되는 `settings.json` (사용자 레벨 `%USERPROFILE%\.claude\settings.json`, 기존 `hooks`와 병합)
@@ -34,7 +45,7 @@
 ```json
 {
   "hooks": {
-    "SessionStart":       [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code", "timeout": 5, "headers": { "X-AgentNest-Token": "an_hk_3f9c…" } }] }],
+    "SessionStart":       [{ "hooks": [{ "type": "command", "command": "C:\\Program Files\\AgentNest\\agentnest-hook.exe", "args": ["claude-code"], "timeout": 5 }] }],
     "UserPromptSubmit":   [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code", "timeout": 5, "headers": { "X-AgentNest-Token": "an_hk_3f9c…" } }] }],
     "PreToolUse":         [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code", "timeout": 5, "headers": { "X-AgentNest-Token": "an_hk_3f9c…" } }] }],
     "PermissionRequest":  [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:47831/v1/hooks/claude-code", "timeout": 150,
@@ -61,6 +72,7 @@
 
 | 규칙 | 내용 |
 | --- | --- |
+| `SessionStart` | **항상 command 훅**(exec form, `agentnest-hook claude-code`; HTTP/CLI 어느 모드든 동일). Claude Code가 이 이벤트의 HTTP 훅을 건너뛰기 때문이다(§1 실측). 토큰 없이 `daemon.json`을 읽고 서명된 응답만 출력하는 §3 CLI 경로를 쓴다. `agentnest-hook`을 찾지 못하면 세션 시작마다 훅 오류가 한 줄 나므로, 셸은 앱 옆에 `agentnest-hook`이 있을 때 그 절대경로를 쓴다(없으면 `PATH`의 이름 — 설치본에 `agentnest-hook`을 함께 넣는 일은 이제 필수) |
 | 병합 | 기존 파일을 파싱해 각 `hooks.<Event>` 배열에서 `url`이 `http://127.0.0.1:*/v1/hooks/claude-code`인 항목만 제거 후 새 항목 **append**. 다른 사용자 훅은 절대 건드리지 않음. 제거도 동일 필터 |
 | 원자성·백업 | 임시 파일 작성 → `settings.json.agentnest-backup-<ts>` 백업(**기존 백업을 절대 덮어쓰지 않음**: 이름이 겹치면 `-1`, `-2`…; 첫 백업 = 사용자 원본이 보존됨) → 원자적 교체. `settings.json`이 **심볼릭 링크**면 링크를 유지하고 대상 파일을 교체, 기존 파일 권한(mode)을 유지. JSONC/주석이 있으면 설치 중단 + 안내. 재직렬화가 바꿀 수 있는 것(같은 키 중복 → 마지막 값만, 16자리 이상 정수 반올림)은 감지해 `HooksReport.warnings`에 경고 |
 | 토큰 | `an_hk_` + 32바이트 base64url. `%LOCALAPPDATA%\AgentNest\daemon.json`(`{"hook_port","wss_port","hook_token","approval_ttl_s"}` — `approval_ttl_s`는 **유효 TTL**, 사용자 ACL)과 (HTTP 훅 모드에서만) settings.json에 기록, DB에는 해시. 토큰 재발급은 settings.json의 HTTP 훅도 새 토큰으로 재병합한다(`security.md` §10) |
@@ -129,8 +141,8 @@ HTTP 클라이언트: 훅은 `http://127.0.0.1`에만 말하므로 TLS가 필요
 
 | 훅 입력 | `AgentEvent.kind` | 핵심 detail | `state_hint` |
 | --- | --- | --- | --- |
-| `SessionStart{source, model?, permission_mode?, session_title?}` | `session_started` | `source_reason`, `model`, `permission_mode`, `title` | `idle`(startup/clear) |
-| `UserPromptSubmit{prompt}` | `prompt_submitted` | `prompt_preview`(200자, 마스킹), `prompt_len`, `auto_turn_suspect`(프롬프트가 `<`/`[`로 시작하거나 `scheduled`/`background` 접두 — 휴리스틱, 검증 필요 (Phase 0) A11) | `working` |
+| `SessionStart{source, model?, permission_mode?, session_title?}` — **command 훅으로만 도착**. 실측 본문은 `source`뿐이고 나머지는 Claude Code 스키마상 선택(`model`·`session_title`) 또는 없음 | `session_started` | `source_reason`, `model?`, `permission_mode?`, `title?` | `idle`(startup/clear) |
+| `UserPromptSubmit{prompt}` | `prompt_submitted` | `prompt_preview`(200자, 마스킹), `prompt_len`, `auto_turn_suspect`(프롬프트가 `<`/`[`로 시작하거나 `scheduled`/`background` 접두 — 휴리스틱. [검증됨(2026-10-16, claude 2.1.301)] 백그라운드 서브에이전트 완료 알림(`<task-notification>…`)은 올바르게 `true`, 일반 프롬프트는 `false`; `/loop`·예약 작업 오탐/미탐률은 **검증 필요 (Phase 0) A11**. Claude Code 스키마에는 `UserPromptSubmit.source`(`user`/`sdk`/`system`/`loop_wakeup`/`schedule_wakeup`/`poll_event`)가 있으나 2.1.301 `-p` 실측 본문에는 없었다 — 실리면 휴리스틱 대신 쓸 후보) | `working` |
 | `PreToolUse{Bash\|PowerShell}` | `command_started` (+ `test_run` if class=test) | `command`, `description`, `command_class`, `run_in_background` | `testing`/`working` |
 | `PreToolUse{Edit\|Write\|MultiEdit\|NotebookEdit}` | `tool_started` + 리듀서 `writing_code` | `file_path`(축약), `op` | `writing_code` |
 | `PreToolUse{Read\|Grep\|Glob}` | `file_read` | `file_path`/`pattern` | `reviewing`(연속 2회) |
@@ -187,7 +199,7 @@ Claude Code            agentnest-core (PC)                                    �
 분기(`security.md` §7 fail-closed 표가 규범):
 
 - **만료**(유효 TTL, 기본 120s): 204 → 로컬 다이얼로그. 훅 `timeout` 150은 TTL보다 30초 길어 **데몬이 항상 먼저** 응답한다(Claude Code가 훅을 취소하는 경로를 만들지 않음). 이 불변식은 §2의 **유효 TTL 클램프**가 TTL 설정 변경 뒤에도 유지한다.
-- **중복 병합 vs 중복 실행**: 병합은 같은 훅 호출이 user+project settings 양쪽에서 거의 동시에 도착한 경우에만 허용한다(**같은 `agent_id`, 2초 창**). 병렬 서브에이전트가 같은 명령을 낼 때는 `agent_id`가 다르므로 **카드가 둘**이고 각각의 승인이 각자의 훅 호출 하나에만 적용된다(한 번의 승인으로 두 번 실행되지 않음 — PRD Phase 3 "중복 실행 없음"과 정합). `PermissionRequest` 입력에 `agent_id`가 실제로 실리는지는 A14로 확인한다. **`agent_id`가 없는 요청의 병합 창은 항상 0이다**(코드: `Broker::open`이 `agent_id`가 없거나 빈 문자열이면 병합 창 0, 저장소도 `agent_id`가 빈 요청은 병합하지 않음): 같은 명령의 두 요청은 두 장의 카드이고 한 번의 허용이 다른 훅을 허용하지 않는다.
+- **중복 병합 vs 중복 실행**: 병합은 같은 훅 호출이 user+project settings 양쪽에서 거의 동시에 도착한 경우에만 허용한다(**같은 `agent_id`, 2초 창**). 병렬 서브에이전트가 같은 명령을 낼 때는 `agent_id`가 다르므로 **카드가 둘**이고 각각의 승인이 각자의 훅 호출 하나에만 적용된다(한 번의 승인으로 두 번 실행되지 않음 — PRD Phase 3 "중복 실행 없음"과 정합). `PermissionRequest` 입력에 `agent_id`·`agent_type`이 **실제로 실린다**(서브에이전트 호출, [검증됨(2026-10-16, claude 2.1.301)]); 병렬 호출 간격·user+project 중복은 A14 잔여로 확인한다. **`agent_id`가 없는 요청의 병합 창은 항상 0이다**(코드: `Broker::open`이 `agent_id`가 없거나 빈 문자열이면 병합 창 0, 저장소도 `agent_id`가 빈 요청은 병합하지 않음): 같은 명령의 두 요청은 두 장의 카드이고 한 번의 허용이 다른 훅을 허용하지 않는다.
 - **로컬로 처리**(데스크톱 트레이/창 버튼): 즉시 204, `handed_off_local`(resolved_by=desktop). 로컬 다이얼로그가 훅 대기 중 동시에 표시되는지는 **검증 필요 (Phase 0) A2** — 이 버튼과 "폰 없음 → 즉시 204" 규칙으로 두 경우 모두 동작한다.
 - **데스크톱 허용/거부**: 폰 결정과 **같은 브로커 전이**(actor=desktop, 감사). 두 번째 allow 경로를 만들지 않는다.
 - **폰 연결 끊김**(보류 중): 10초 유예 후 204 `handed_off_local`.
@@ -245,3 +257,6 @@ Claude Code            agentnest-core (PC)                                    �
 | ★A12 | 원격 `allow`/`deny` 응답이 실제 적용됨("Allowed by PermissionRequest hook", deny 사유 전달) | §6 |
 | A13 | `permission_mode`별(default/acceptEdits/plan/auto/dontAsk/bypass) `PermissionRequest` 발생 여부 | `remote_approval` 배지 규칙(§5 공통) |
 | A14 | 병렬 서브에이전트가 같은 명령으로 `PermissionRequest`를 낼 때 **입력에 `agent_id`가 실리는지**, 사용자+프로젝트 settings 중복 호출 간격 | §6 병합 규칙(`agent_id` 키·2초 창) |
+| A15 | `SessionStart`을 HTTP 훅으로 받을 수 있는가 | §2 `SessionStart` 규칙 |
+
+검증 진행 상황(통과/부분/미검증)과 근거는 `phase0-checklist.md` §1.1이 규범이다. 2026-10-16 현재: A15 통과, A1·A3·A4·A7·A11·A12·A13·A14 일부, A2·A5·A6·A8·A9·A10 미검증.

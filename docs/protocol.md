@@ -386,7 +386,7 @@
 
 | kind | category | detail 필수 필드 | Claude Code 소스 [검증] | Codex 소스 (검증 상태는 `integrations/codex.md` §1이 규범; 아래 [추정]은 그 표와 같은 판정) |
 | --- | --- | --- | --- | --- |
-| `session_started` | lifecycle | `source_reason`(startup/resume/clear/compact/fork), `model?`, `permission_mode?`, `title?` | `SessionStart` | `thread/started`, `thread/resume` 결과 [추정: excludeTurns 형태 C5], hooks `SessionStart` |
+| `session_started` | lifecycle | `source_reason`(startup/resume/clear/compact/fork), `model?`, `permission_mode?`, `title?` | `SessionStart`(Claude Code: command 훅으로만 도착 — HTTP 훅 미지원, 실측 본문은 `source`뿐) | `thread/started`, `thread/resume` 결과 [추정: excludeTurns 형태 C5], hooks `SessionStart` |
 | `session_ended` | lifecycle | `reason` | `SessionEnd` | `thread/closed`/`archived` [추정: 이름만 확인, C5], hooks `SessionEnd` |
 | `prompt_submitted` | turn | `prompt_preview`(≤200자, 마스킹), `prompt_len`, `auto_turn_suspect` | `UserPromptSubmit` | `item/started{userMessage}`, hooks `UserPromptSubmit` |
 | `turn_started` | turn | `turn_id?` | (prompt_submitted와 합성) | `turn/started` |

@@ -1,0 +1,10 @@
+{
+  "session_id": "eeeeeeee-0000-4000-8000-000000000022",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/eeeeeeee-0000-4000-8000-000000000022.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/eeeeeeee-0000-4000-8000-000000000022/scratchpad",
+  "prompt_id": "9a000007-0000-4000-8000-000000000000",
+  "permission_mode": "auto",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Use the Bash tool to run exactly: touch auto.txt . Then reply done."
+}

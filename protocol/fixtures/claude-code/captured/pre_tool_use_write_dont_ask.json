@@ -3,7 +3,7 @@
   "transcript_path": "/home/user/.claude/projects/-home-user-demo/dddddddd-0000-4000-8000-000000000012.jsonl",
   "cwd": "/home/user/demo",
   "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/dddddddd-0000-4000-8000-000000000012/scratchpad",
-  "prompt_id": "9a000006-0000-4000-8000-000000000000",
+  "prompt_id": "9a000008-0000-4000-8000-000000000000",
   "permission_mode": "dontAsk",
   "effort": {
     "level": "medium"
@@ -14,5 +14,5 @@
     "file_path": "/home/user/demo/mode_dontAsk.txt",
     "content": "hi"
   },
-  "tool_use_id": "toolu_fixture0008"
+  "tool_use_id": "toolu_fixture0010"
 }

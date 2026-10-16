@@ -30,7 +30,7 @@
 
 | # | 결정 | 근거 / 출처 |
 | --- | --- | --- |
-| 1 | Claude Code 수집·승인은 **`type: "http"` 훅**이 1차, `agentnest-hook` CLI는 폴백 | HTTP 훅은 stdin JSON과 동일 본문을 POST하고 응답 본문을 출력 JSON으로 해석 [검증 v2.1.63+]. 셸·Git Bash 의존 없음 |
+| 1 | Claude Code 수집·승인은 **`type: "http"` 훅**이 1차(단 `SessionStart`는 Claude Code가 HTTP 훅을 건너뛰므로 항상 `agentnest-hook` command 훅), `agentnest-hook` CLI는 폴백 | HTTP 훅은 stdin JSON과 동일 본문을 POST하고 응답 본문을 출력 JSON으로 해석 [검증 v2.1.63+]. 셸·Git Bash 의존 없음 |
 | 2 | 훅 인증 토큰은 **사용자 settings.json에 리터럴 헤더**로 기록 | `allowedEnvVars` 방식은 환경변수가 없는 프로세스에서 빈 문자열로 치환되어 모든 훅이 401 → 조용히 이벤트 유실 [검증: 미나열 변수는 빈 문자열]. 사용자 파일은 이미 사용자 전용 |
 | 3 | 원격 승인 = `PermissionRequest` 훅 1개(matcher 생략). 데몬은 HTTP 요청을 **열어둔 채** 폰 결정을 기다리고, **결정 없음 = 2xx 빈 본문** | exit 2 무시, 결정은 `hookSpecificOutput.decision`으로만, `onFailure` 기본 `continue` [검증]. 빈 본문 = "프롬프트가 있는 세션이면 로컬 다이얼로그, 없는 세션(-p·백그라운드 서브에이전트)이면 거부" [검증] — 어느 쪽도 allow가 아니다 |
 | 4 | 허용 응답(Claude `behavior:"allow"`, Codex `accept`)은 **불투명 타입**으로만 만들 수 있다: `ApprovalReply::allow(ApplyProof)`이고 `ApplyProof::mint()`는 **`apply_decision` 성공 분기 한 곳에서만** 호출된다(응답자는 `ReplyKind` 읽기 뷰만 봄). 타임아웃·끊김·재시작·검증 실패·패닉·알 수 없는 상태는 전부 "결정 없음" | PRD §6, `security.md` 불변식 I5. `compile_fail` doctest + `ApplyProof::mint` 호출 위치 grep으로 강제 |
@@ -100,7 +100,7 @@ agentnest/
 │   │   ├── agentnest-protocol/             # serde 타입(스키마와 1:1) + 스키마 적합성·라운드트립 테스트
 │   │   ├── agentnest-adapter-api/          # AgentAdapter 트레이트, RawObservation, ApprovalResponder (의존성 최소)
 │   │   ├── agentnest-core/                 # 데몬: http(훅 수집)·adapters·normalize·summarize·risk·state·approvals·store·auth·link(WSS)·redact
-│   │   ├── agentnest-hook/                 # CLI: stdin JSON → 로컬 데몬 POST → stdout (Codex 훅 필수, Claude Code 폴백)
+│   │   ├── agentnest-hook/                 # CLI: stdin JSON → 로컬 데몬 POST → stdout (Codex 훅·Claude Code SessionStart 필수, Claude Code 폴백)
 │   │   └── agentnest-shell-api/            # 셸 로직 전부(Tauri 타입 없음): 커맨드 계약·DTO·오류 매핑·이벤트 매핑/배칭·설정·approvals 기록·로그·진단·방화벽/네트워크 프로필(트레이트+가짜)·트레이 모델·첫 실행 체크리스트 + ShellApi
 │   ├── tools/                              # cc-msvc-check.sh(리눅스 msvc 타입 검사용 C 컴파일러 심), gen_icons.py(자리표시 아이콘 생성)
 │   └── apps/desktop/

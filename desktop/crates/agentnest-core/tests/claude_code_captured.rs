@@ -32,7 +32,12 @@ fn captured_dir() -> PathBuf {
 fn all() -> BTreeMap<String, Value> {
     json_files(&captured_dir())
         .into_iter()
-        .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), read_json(&p)))
+        .map(|p| {
+            (
+                p.file_stem().unwrap().to_string_lossy().into_owned(),
+                read_json(&p),
+            )
+        })
         .collect()
 }
 
@@ -59,10 +64,8 @@ fn the_captured_set_is_complete_and_contains_no_private_values() {
     let set = all();
     assert!(set.len() >= 25, "capture set shrank: {}", set.len());
     // every event class that a real `claude -p` run produced is represented
-    let names: std::collections::BTreeSet<&str> = set
-        .values()
-        .filter_map(|v| hook_event_name(v))
-        .collect();
+    let names: std::collections::BTreeSet<&str> =
+        set.values().filter_map(|v| hook_event_name(v)).collect();
     for want in [
         "SessionStart",
         "UserPromptSubmit",
@@ -90,7 +93,10 @@ fn the_captured_set_is_complete_and_contains_no_private_values() {
     ];
     for (name, v) in &set {
         for key in ["session_id", "transcript_path", "cwd", "hook_event_name"] {
-            assert!(v.get(key).and_then(Value::as_str).is_some(), "{name}: {key}");
+            assert!(
+                v.get(key).and_then(Value::as_str).is_some(),
+                "{name}: {key}"
+            );
         }
         let text = v.to_string();
         for bad in forbidden {
@@ -130,23 +136,63 @@ fn real_hooks_normalise_to_the_documented_events() {
     let validator = schemas.validator("model/agent_event.schema.json");
     // (fixture, kind, state_hint)
     let table: &[(&str, &str, Option<AgentState>)] = &[
-        ("session_start_startup", "session_started", Some(AgentState::Idle)),
-        ("user_prompt_submit", "prompt_submitted", Some(AgentState::Working)),
-        ("pre_tool_use_read", "file_read", Some(AgentState::Reviewing)),
+        (
+            "session_start_startup",
+            "session_started",
+            Some(AgentState::Idle),
+        ),
+        (
+            "user_prompt_submit",
+            "prompt_submitted",
+            Some(AgentState::Working),
+        ),
+        (
+            "pre_tool_use_read",
+            "file_read",
+            Some(AgentState::Reviewing),
+        ),
         ("post_tool_use_read", "tool_completed", None),
-        ("pre_tool_use_bash", "command_started", Some(AgentState::Working)),
+        (
+            "pre_tool_use_bash",
+            "command_started",
+            Some(AgentState::Working),
+        ),
         ("post_tool_use_bash", "command_completed", None),
-        ("pre_tool_use_bash_in_subagent", "command_started", Some(AgentState::Working)),
+        (
+            "pre_tool_use_bash_in_subagent",
+            "command_started",
+            Some(AgentState::Working),
+        ),
         ("post_tool_use_bash_in_subagent", "command_completed", None),
-        ("post_tool_use_failure_bash_in_subagent", "command_failed", Some(AgentState::Error)),
-        ("pre_tool_use_agent", "tool_started", Some(AgentState::Working)),
+        (
+            "post_tool_use_failure_bash_in_subagent",
+            "command_failed",
+            Some(AgentState::Error),
+        ),
+        (
+            "pre_tool_use_agent",
+            "tool_started",
+            Some(AgentState::Working),
+        ),
         ("post_tool_use_agent_async", "tool_completed", None),
         ("subagent_start", "subagent_started", None),
         ("subagent_stop", "subagent_stopped", None),
-        ("pre_tool_use_write", "tool_started", Some(AgentState::WritingCode)),
-        ("post_tool_use_write", "file_modified", Some(AgentState::WritingCode)),
+        (
+            "pre_tool_use_write",
+            "tool_started",
+            Some(AgentState::WritingCode),
+        ),
+        (
+            "post_tool_use_write",
+            "file_modified",
+            Some(AgentState::WritingCode),
+        ),
         ("stop_done", "turn_completed", Some(AgentState::Completed)),
-        ("stop_background_subagent_running", "turn_completed", Some(AgentState::Working)),
+        (
+            "stop_background_subagent_running",
+            "turn_completed",
+            Some(AgentState::Working),
+        ),
         ("session_end_other", "session_ended", None),
     ];
     for (name, kind, state) in table {
@@ -171,7 +217,13 @@ fn real_hooks_normalise_to_the_documented_events() {
 fn a_real_session_start_has_only_the_source_and_still_normalises() {
     let hook = cap("session_start_startup");
     assert_eq!(hook["source"], "startup");
-    for absent in ["model", "permission_mode", "session_title", "prompt_id", "effort"] {
+    for absent in [
+        "model",
+        "permission_mode",
+        "session_title",
+        "prompt_id",
+        "effort",
+    ] {
         assert!(hook.get(absent).is_none(), "{absent}");
     }
     let env = golden_env(golden_fs());
@@ -245,8 +297,19 @@ fn a_real_write_reports_create_and_a_plan_mode_write_goes_to_the_plan_file() {
         .unwrap()
         .contains("/.claude/plans/"));
     // permission_mode strings of the real payloads
-    assert_eq!(cap("pre_tool_use_bash_accept_edits")["permission_mode"], "acceptEdits");
-    assert_eq!(cap("pre_tool_use_write_dont_ask")["permission_mode"], "dontAsk");
+    assert_eq!(
+        cap("pre_tool_use_bash_accept_edits")["permission_mode"],
+        "acceptEdits"
+    );
+    assert_eq!(
+        cap("pre_tool_use_write_dont_ask")["permission_mode"],
+        "dontAsk"
+    );
+    assert_eq!(
+        cap("pre_tool_use_write_accept_edits")["permission_mode"],
+        "acceptEdits"
+    );
+    assert_eq!(cap("pre_tool_use_bash_auto")["permission_mode"], "auto");
 }
 
 // ---- PermissionRequest ----------------------------------------------------------------------------------------------------
@@ -258,11 +321,19 @@ fn real_permission_requests_build_drafts_without_tool_use_id() {
     // (fixture, agent_id, suggestions)
     for (name, agent_id, suggestions, tool) in [
         ("permission_request_bash", None, 2u32, "Bash"),
-        ("permission_request_bash_in_subagent", Some("a00000000000fix01"), 2, "Bash"),
+        (
+            "permission_request_bash_in_subagent",
+            Some("a00000000000fix01"),
+            2,
+            "Bash",
+        ),
         ("permission_request_write", None, 1, "Write"),
     ] {
         let hook = cap(name);
-        assert!(hook.get("tool_use_id").is_none(), "{name}: PermissionRequest has no tool_use_id");
+        assert!(
+            hook.get("tool_use_id").is_none(),
+            "{name}: PermissionRequest has no tool_use_id"
+        );
         assert_eq!(hook["agent_id"].as_str(), agent_id, "{name}");
         assert!(normalize(&hook, &ctx).is_empty(), "{name}");
         let d = permission_request_draft(&hook, &ctx).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -270,7 +341,10 @@ fn real_permission_requests_build_drafts_without_tool_use_id() {
         assert_eq!(d.agent_id.as_deref(), agent_id, "{name}");
         assert_eq!(d.permission_suggestions_count, Some(suggestions), "{name}");
         assert_eq!(d.permission_mode.as_deref(), Some("default"));
-        assert_eq!(d.session_key, format!("claude_code:{}", hook["session_id"].as_str().unwrap()));
+        assert_eq!(
+            d.session_key,
+            format!("claude_code:{}", hook["session_id"].as_str().unwrap())
+        );
     }
     // the real suggestion shapes (not `addRules`): directories and a mode switch - they are only ever counted
     let s = &cap("permission_request_bash")["permission_suggestions"];
@@ -286,8 +360,16 @@ fn the_permission_request_input_hash_matches_the_pre_and_post_tool_use_of_the_sa
     let env = golden_env(golden_fs());
     let ctx = NormalizeCtx::http(&env);
     for (perm, pre, post) in [
-        ("permission_request_bash", "pre_tool_use_bash", "post_tool_use_bash"),
-        ("permission_request_write", "pre_tool_use_write", "post_tool_use_write"),
+        (
+            "permission_request_bash",
+            "pre_tool_use_bash",
+            "post_tool_use_bash",
+        ),
+        (
+            "permission_request_write",
+            "pre_tool_use_write",
+            "post_tool_use_write",
+        ),
     ] {
         let want = tool_input_sha256(&cap(perm)["tool_input"]);
         let d = permission_request_draft(&cap(perm), &ctx).unwrap();
@@ -310,7 +392,10 @@ fn the_permission_request_input_hash_matches_the_pre_and_post_tool_use_of_the_sa
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_without_session_start_is_adopted_from_its_first_event() {
     let t = HttpHarness::new().await;
-    let sid = cap("user_prompt_submit")["session_id"].as_str().unwrap().to_owned();
+    let sid = cap("user_prompt_submit")["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     for name in [
         "user_prompt_submit",
         "pre_tool_use_read",
@@ -330,15 +415,20 @@ async fn a_session_without_session_start_is_adopted_from_its_first_event() {
     .await;
     assert_eq!(rec.permission_mode.as_deref(), Some("default"));
     assert_eq!(rec.end_reason.as_deref(), Some("other"));
-    let kinds: Vec<String> = t
-        .h
-        .store
-        .recent_events(20)
-        .unwrap()
-        .into_iter()
-        .map(|e| e.kind.as_str().to_owned())
-        .collect();
-    for k in ["prompt_submitted", "file_read", "tool_completed", "turn_completed", "session_ended"] {
+    let kinds: Vec<String> =
+        t.h.store
+            .recent_events(20)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.kind.as_str().to_owned())
+            .collect();
+    for k in [
+        "prompt_submitted",
+        "file_read",
+        "tool_completed",
+        "turn_completed",
+        "session_ended",
+    ] {
         assert!(kinds.iter().any(|x| x == k), "{k} missing in {kinds:?}");
     }
 }
@@ -351,7 +441,8 @@ async fn a_real_permission_request_is_held_and_answered_with_the_body_claude_cod
     let phone = t.h.add_phone("Galaxy");
     let t2 = t.clone();
     let held = tokio::spawn(async move {
-        t2.post("/v1/hooks/claude-code", cap("permission_request_bash")).await
+        t2.post("/v1/hooks/claude-code", cap("permission_request_bash"))
+            .await
     });
     eventually("pending approval", || {
         (!t.h.store.list_pending_approvals(None).unwrap().is_empty()).then_some(())
@@ -359,7 +450,12 @@ async fn a_real_permission_request_is_held_and_answered_with_the_body_claude_cod
     .await;
     let card = t.h.broker.pending_cards().await.remove(0);
     assert_eq!(card.tool_name, "Bash");
-    assert!(t.h.broker.apply_decision(t.h.phone_decision(&card, &phone.device_id, Decision::Allow)).await.accepted);
+    assert!(
+        t.h.broker
+            .apply_decision(t.h.phone_decision(&card, &phone.device_id, Decision::Allow))
+            .await
+            .accepted
+    );
     let (s, body) = held.await.unwrap();
     assert_eq!(s, 200);
     assert_eq!(
@@ -373,10 +469,34 @@ async fn a_real_permission_request_is_held_and_answered_with_the_body_claude_cod
 #[tokio::test(flavor = "multi_thread")]
 async fn a_real_permission_request_without_a_phone_is_an_empty_204() {
     let t = HttpHarness::new().await;
-    for name in ["permission_request_bash", "permission_request_bash_in_subagent", "permission_request_write"] {
+    for name in [
+        "permission_request_bash",
+        "permission_request_bash_in_subagent",
+        "permission_request_write",
+    ] {
         let (s, body) = t.post("/v1/hooks/claude-code", cap(name)).await;
         assert_eq!((s, body.as_str()), (204, ""), "{name}");
     }
+}
+
+/// A13 on real payloads: `auto` sessions never ask (observed: no `PermissionRequest` in `auto`, `acceptEdits`, `dontAsk`
+/// or `plan` runs), so the session is badged "remote approval unavailable" from its first prompt.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_auto_mode_session_is_marked_remote_approval_unavailable() {
+    let t = HttpHarness::new().await;
+    let hook = cap("user_prompt_submit_auto");
+    assert_eq!(hook["permission_mode"], "auto");
+    let sid = hook["session_id"].as_str().unwrap().to_owned();
+    let (s, _) = t.post("/v1/hooks/claude-code", hook).await;
+    assert_eq!(s, 204);
+    let rec = eventually("the session row", || {
+        t.h.store
+            .get_session(&format!("claude_code:{sid}"))
+            .unwrap()
+    })
+    .await;
+    assert_eq!(rec.permission_mode.as_deref(), Some("auto"));
+    assert_eq!(rec.remote_approval, "unavailable");
 }
 
 /// What the real client sends: `axios` with only `content-type`/`accept`/`user-agent`/`x-agentnest-token`; no `Origin`, no
@@ -448,8 +568,8 @@ impl Live {
         std::fs::write(work.path().join("note.txt"), "hello from the e2e test\n").unwrap();
         // The command hook of SessionStart is the real `agentnest-hook` (`cargo build -p agentnest-hook`, then
         // AGENTNEST_HOOK_BIN=<path>). It finds the collector through daemon.json under XDG_DATA_HOME.
-        let hook_bin =
-            std::env::var("AGENTNEST_HOOK_BIN").expect("AGENTNEST_HOOK_BIN (path of agentnest-hook)");
+        let hook_bin = std::env::var("AGENTNEST_HOOK_BIN")
+            .expect("AGENTNEST_HOOK_BIN (path of agentnest-hook)");
         let data = work.path().join("xdg");
         std::fs::create_dir_all(data.join("AgentNest")).unwrap();
         std::fs::write(
@@ -510,7 +630,10 @@ impl Live {
                 .stdin(std::process::Stdio::null())
                 .output()
                 .expect("spawn claude");
-            (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())
+            (
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+            )
         })
     }
 }
@@ -544,7 +667,10 @@ async fn a_real_claude_reaches_the_collector() {
     let live = Live::new(&t);
     let sid = "eeeeeeee-0000-4000-8000-000000000001";
     let (ok, _) = live
-        .spawn(sid, "Read the file note.txt in the current directory and reply with its content only.")
+        .spawn(
+            sid,
+            "Read the file note.txt in the current directory and reply with its content only.",
+        )
         .await
         .unwrap();
     assert!(ok);
@@ -564,7 +690,11 @@ async fn a_real_claude_reaches_the_collector() {
     ] {
         assert!(kinds.iter().any(|x| x == k), "{k} missing in {kinds:?}");
     }
-    let rec = t.h.store.get_session(&format!("claude_code:{sid}")).unwrap().expect("session row");
+    let rec =
+        t.h.store
+            .get_session(&format!("claude_code:{sid}"))
+            .unwrap()
+            .expect("session row");
     assert_eq!(rec.permission_mode.as_deref(), Some("default"));
 }
 
@@ -578,26 +708,56 @@ async fn a_real_claude_permission_request_is_decided_remotely_and_fails_closed()
     }
     let t = HttpHarness::new().await;
     let live = Live::new(&t);
-    let prompt = |f: &str| format!("Use the Bash tool to run exactly: touch {f} . Then reply done.");
+    let prompt =
+        |f: &str| format!("Use the Bash tool to run exactly: touch {f} . Then reply done.");
 
     // 1. no phone online: handed off to the local prompt; `claude -p` has none, so the command does not run
-    let (_, out) = live.spawn("eeeeeeee-0000-4000-8000-000000000002", &prompt("nophone.txt")).await.unwrap();
-    assert!(!live.path("nophone.txt").exists(), "no allow without a decision");
-    assert!(out.contains("needs approval"), "claude -p refuses an undecided request: {out}");
+    let (_, out) = live
+        .spawn(
+            "eeeeeeee-0000-4000-8000-000000000002",
+            &prompt("nophone.txt"),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !live.path("nophone.txt").exists(),
+        "no allow without a decision"
+    );
+    assert!(
+        out.contains("needs approval"),
+        "claude -p refuses an undecided request: {out}"
+    );
     let status: String =
-        t.h.store.read(|c| Ok(c.query_row("SELECT status FROM approvals ORDER BY rowid DESC LIMIT 1", [], |r| r.get(0))?)).unwrap();
+        t.h.store
+            .read(|c| {
+                Ok(c.query_row(
+                    "SELECT status FROM approvals ORDER BY rowid DESC LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
     assert_eq!(status, "handed_off_local");
 
     // 2. phone allows
     let phone = t.h.add_phone("Galaxy");
-    let run = live.spawn("eeeeeeee-0000-4000-8000-000000000003", &prompt("allowed.txt"));
+    let run = live.spawn(
+        "eeeeeeee-0000-4000-8000-000000000003",
+        &prompt("allowed.txt"),
+    );
     let card = eventually("the card of the real request", || {
-        let c = futures_util::FutureExt::now_or_never(t.h.broker.pending_cards()).unwrap_or_default();
+        let c =
+            futures_util::FutureExt::now_or_never(t.h.broker.pending_cards()).unwrap_or_default();
         c.into_iter().next()
     })
     .await;
     assert_eq!(card.tool_name, "Bash");
-    assert!(t.h.broker.apply_decision(t.h.phone_decision(&card, &phone.device_id, Decision::Allow)).await.accepted);
+    assert!(
+        t.h.broker
+            .apply_decision(t.h.phone_decision(&card, &phone.device_id, Decision::Allow))
+            .await
+            .accepted
+    );
     let (ok, _) = run.await.unwrap();
     assert!(ok);
     assert!(live.path("allowed.txt").exists(), "the allowed command ran");
@@ -605,9 +765,13 @@ async fn a_real_claude_permission_request_is_decided_remotely_and_fails_closed()
     assert_eq!(row.outcome.as_deref(), Some("allowed"));
 
     // 3. phone denies with a reason: the command does not run and Claude is told why
-    let run = live.spawn("eeeeeeee-0000-4000-8000-000000000004", &prompt("denied.txt"));
+    let run = live.spawn(
+        "eeeeeeee-0000-4000-8000-000000000004",
+        &prompt("denied.txt"),
+    );
     let card = eventually("the second card", || {
-        let c = futures_util::FutureExt::now_or_never(t.h.broker.pending_cards()).unwrap_or_default();
+        let c =
+            futures_util::FutureExt::now_or_never(t.h.broker.pending_cards()).unwrap_or_default();
         c.into_iter().next()
     })
     .await;
@@ -615,6 +779,12 @@ async fn a_real_claude_permission_request_is_decided_remotely_and_fails_closed()
     d.reason = Some("not now".into());
     assert!(t.h.broker.apply_decision(d).await.accepted);
     let (_, out) = run.await.unwrap();
-    assert!(!live.path("denied.txt").exists(), "the denied command did not run");
-    assert!(out.contains("not now"), "the deny message reaches Claude: {out}");
+    assert!(
+        !live.path("denied.txt").exists(),
+        "the denied command did not run"
+    );
+    assert!(
+        out.contains("not now"),
+        "the deny message reaches Claude: {out}"
+    );
 }

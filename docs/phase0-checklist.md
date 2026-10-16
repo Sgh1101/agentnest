@@ -26,6 +26,26 @@
 | ★A12 | 원격 `allow`/`deny` 적용 | 폰 대신 데몬 콘솔에서 결정 주입 | transcript에 "Allowed by PermissionRequest hook"; deny 시 Claude가 사유 수신; `interrupt:true` 시 중단 | — |
 | A13 | `permission_mode`별 `PermissionRequest` 발생 | default/acceptEdits/plan/auto/dontAsk/bypass 각 1회 | 배지 규칙 확정 | — |
 | A14 | 병렬 서브에이전트의 같은 명령 `PermissionRequest`에 `agent_id`가 실리는지, user+project 중복 호출 간격 | 같은 명령을 두 서브에이전트가 동시에 시도 + 두 settings에 같은 훅 | `agent_id` 유무·간격 기록 → 카드 병합 키(`agent_id`)·2초 창 확정 | `agent_id`가 없으면 병합 창 0(병합 안 함, 보수적) |
+| A15 | `SessionStart`을 HTTP 훅으로 받을 수 있는가 | 같은 설정에 `SessionStart` HTTP 훅과 command 훅을 함께 두고 `claude -p` 실행 | HTTP 훅이 호출되는지/건너뛰는지 기록 → 설치기 규칙 확정 | 건너뛰면 `SessionStart`만 command 훅(`agentnest-hook claude-code`) |
+
+
+### 1.1 실행 결과 (2026-10-16, Claude Code **2.1.301**, 리눅스 서버 `claude -p` 비대화형)
+
+방법: 임시 설정(`--settings` + `--setting-sources project`)으로 모든 훅을 로컬 HTTP 캡처 서버에 연결하고 실제 `claude -p`를 실행 → 본문을 `protocol/fixtures/claude-code/captured/`에 마스킹해 보관(`desktop/crates/agentnest-core/tests/claude_code_captured.rs`가 정규화·수집기·승인 브로커로 재현). 실제 CLI → 설치기가 만든 설정 → 실제 수집기(+실제 `agentnest-hook`) 종단 테스트는 `AGENTNEST_REAL_CLAUDE=1 AGENTNEST_HOOK_BIN=<agentnest-hook> cargo test -p agentnest-core --test claude_code_captured -- --ignored`. **측정하지 못한 것**: 대화형 TUI(폴더 trust·로컬 다이얼로그·`Notification`), Windows(PowerShell·백슬래시), statusLine, 비정상 종료.
+
+| # | 결과 | 근거·남은 일 |
+| --- | --- | --- |
+| ★A1 | **부분** | 16개 중 10개 캡처(`SessionStart`·`UserPromptSubmit`·`PreToolUse`·`PermissionRequest`·`PostToolUse`·`PostToolUseFailure`·`SubagentStart`·`SubagentStop`·`Stop`·`SessionEnd`), 28건 → 픽스처. **미캡처: `PermissionDenied`·`Notification`·`StopFailure`·`TaskCreated`·`TaskCompleted`·`PostCompact`**(대화형·특수 조건 필요), 원본 50건 미달, 터미널 `hook error` 소음은 TUI에서 확인 못 함. `SessionStart`는 HTTP로 오지 않음(A15) |
+| ★A2 | 미검증 | 로컬 다이얼로그 동시 표시는 대화형 TUI 필요. 참고: `-p`에서는 훅이 결정하지 않으면(204) 곧바로 거부 |
+| ★A3 | **부분** | 단위=초 확인(`timeout:5` + 8초 지연 → `cancelled`, 응답 폐기·거부), `600`·`3600`은 경고 없이 수용되고 8초 지연 응답이 적용됨. 스키마에 상한 없음. 600초·3600초를 **끝까지** 기다리는지는 미측정 |
+| ★A4 | **부분** | 데몬 없음(`ECONNREFUSED`) = 비차단 `outcome: error`, 작업 계속(`-p`). 대화형 UI의 알림 빈도는 미측정 |
+| A5, A6, A8, A9, A10 | 미검증 | 비정상 종료·Windows·auto 강제 ask·statusLine·settings 중복은 이번에 측정하지 않음 |
+| A7 | **부분** | 실제 `PermissionRequest.tool_input`의 정규화 해시가 같은 호출의 `PreToolUse`·`PostToolUse` 이벤트의 해시와 일치(Bash·Write). 10회 반복 매칭률·거부 후 상관은 미측정(거부되면 `PostToolUse*`/`PermissionDenied`가 오지 않음) |
+| A11 | **부분** | `<task-notification>` 알림 턴은 `auto_turn_suspect=true`, 일반 프롬프트는 `false`. `/loop`·예약 작업은 미측정. 2.1.301 `-p` 본문에는 `UserPromptSubmit.source`가 없음(Claude Code 스키마에는 선택 필드로 존재) |
+| ★A12 | **부분** | `-p`에서 `allow` → 명령 실행, `deny`+`message` → 원문 그대로 Claude에 전달·미실행, `deny`+`interrupt:true` → 턴 중단(메시지는 미전달), 결정 없음(204) → 거부. 종단 테스트로 재현. 대화형 transcript의 "Allowed by PermissionRequest hook" 문구는 미확인 |
+| A13 | **부분** | `default`에서만 `PermissionRequest` 관측; `acceptEdits`(Write)·`auto`(Bash)·`dontAsk`·`plan`에서는 발생 안 함. `bypassPermissions`는 미측정(root 세션) |
+| A14 | **부분** | 서브에이전트 안 `PermissionRequest`에 `agent_id`·`agent_type` 실림(메인 스레드는 없음). 병렬 동시 호출 간격·user+project 중복은 미측정 |
+| A15 | **통과** | `SessionStart` HTTP 훅은 호출되지 않고 같은 설정의 command 훅만 호출됨(Claude Code 로그: "HTTP hooks are not supported for SessionStart"). → 설치기에서 `SessionStart`만 command 훅으로 고정(`COMMAND_ONLY_EVENTS`) |
 
 ---
 

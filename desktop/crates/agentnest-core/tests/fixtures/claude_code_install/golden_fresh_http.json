@@ -4,12 +4,12 @@
       {
         "hooks": [
           {
-            "type": "http",
-            "url": "http://127.0.0.1:47831/v1/hooks/claude-code",
-            "timeout": 5,
-            "headers": {
-              "X-AgentNest-Token": "an_hk_TESTTOKEN"
-            }
+            "type": "command",
+            "command": "agentnest-hook",
+            "args": [
+              "claude-code"
+            ],
+            "timeout": 5
           }
         ]
       }
