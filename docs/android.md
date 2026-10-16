@@ -19,7 +19,7 @@
 | OkHttp / okhttp-tls / mockwebserver3-junit5 | 5.5.0 | JVM 호환 → WS 클라이언트·핀닝은 `core`에 |
 | kotlinx-serialization-json / coroutines | 1.11.0 / 1.11.0 | |
 | play-services-code-scanner | 16.1.0 | **검증 필요 (Phase 0) P3** — Google Maven 접근 불가. `QrScanner` 인터페이스 뒤 격리 |
-| compileSdk / targetSdk / minSdk | 36 / 36 / 26 | Play 2026-08-31 요건. targetSdk 37은 `ACCESS_LOCAL_NETWORK` 런타임 권한 대응 후 |
+| compileSdk / targetSdk / minSdk | 37 / 36 / 26 | Play 2026-08-31 요건. compileSdk 는 최신 androidx(Compose 1.12, core 1.19)와 OkHttp 5.5 가 37 이상을 요구해 37(CI 에서 실증). targetSdk 37은 `ACCESS_LOCAL_NETWORK` 런타임 권한 대응 후 |
 | JDK | CI 17 / 로컬 21 | `jvmTarget 17`, `jvmToolchain` 미사용(foojay 차단 대비) |
 | Navigation | **수동**(sealed class + `BackHandler`) | Navigation 3 1.2.0 API 미검증, navigation-compose는 유지보수 모드 → Phase 1은 `nav` 패키지에 격리된 자체 스택 |
 | security-crypto | **사용 금지** | 1.1.0에서 전 API deprecated [검증] → Keystore 직접 사용 |

@@ -2,7 +2,7 @@
 # --- Build toolchain (docs/android.md 1.1) ---
 agp = "9.3.3"                    # only resolved when :app is included (Google Maven); never declared in the root build
 kotlin = "2.4.21"
-compileSdk = "36"
+compileSdk = "37"
 minSdk = "26"
 targetSdk = "36"
 

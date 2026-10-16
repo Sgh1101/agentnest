@@ -47,7 +47,7 @@ jobs:
 
       - name: core and shell-api tests on Windows (paths, ACL, PowerShell script builders)
         working-directory: desktop
-        run: cargo test -p agentnest-core -p agentnest-shell-api
+        run: cargo test --no-fail-fast -p agentnest-core -p agentnest-shell-api
 
       - name: Tauri glue clippy (the real host target)
         working-directory: desktop

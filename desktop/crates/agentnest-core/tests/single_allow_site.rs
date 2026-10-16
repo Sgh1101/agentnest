@@ -53,17 +53,19 @@ fn exactly_one_non_test_site_mints_a_proof_and_creates_an_allow_reply() {
     let mut allows = Vec::new();
     let mut test_helpers = Vec::new();
     for f in &files {
+        // Compare paths with `/` on every platform (Windows yields `\`).
+        let shown = f.display().to_string().replace('\\', "/");
         for (n, line) in production_lines(f) {
             if line.contains("ApplyProof::mint(") {
-                mints.push(format!("{}:{n}", f.display()));
+                mints.push(format!("{shown}:{n}"));
             }
             if line.contains("ApprovalReply::allow(") {
-                allows.push(format!("{}:{n}", f.display()));
+                allows.push(format!("{shown}:{n}"));
             }
             if (line.contains("allow_for_test(") || line.contains("mint_for_test("))
                 && !f.ends_with("reply.rs")
             {
-                test_helpers.push(format!("{}:{n}", f.display()));
+                test_helpers.push(format!("{shown}:{n}"));
             }
         }
     }

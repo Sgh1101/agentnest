@@ -299,7 +299,7 @@ PermissionRequest(HTTP 열림, timeout=TTL+30)
 | OkHttp / okhttp-tls / mockwebserver3-junit5 | 5.5.0 | WS 클라이언트·핀닝은 `android/core`(JVM)에 |
 | kotlinx-serialization-json / coroutines | 1.11.0 / 1.11.0 | |
 | play-services-code-scanner | 16.1.0 | **검증 필요 (Phase 0)** — `QrScanner` 인터페이스 뒤에 격리, zxing 4.3.0 폴백 |
-| compileSdk / targetSdk / minSdk / JDK(CI) | 36 / 36 / 26 / 17 | targetSdk 37은 `ACCESS_LOCAL_NETWORK` 대응 후 |
+| compileSdk / targetSdk / minSdk / JDK(CI) | 37 / 36 / 26 / 17 | targetSdk 37은 `ACCESS_LOCAL_NETWORK` 대응 후 |
 | Navigation 3 | **미사용** | API 미검증 → Phase 1은 sealed class + BackHandler 수동 내비게이션 |
 
 ---
