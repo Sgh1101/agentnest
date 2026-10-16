@@ -174,6 +174,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 }
 ```
 
+- **`agentnest-hook` 사이드카**: Claude Code 는 `SessionStart` 를 `type:"http"` 훅으로 보내지 않으므로(실측, `integrations/claude-code.md`) 설치본에 `agentnest-hook.exe` 가 반드시 있어야 한다. `tauri.conf.json` 의 `bundle.externalBin: ["binaries/agentnest-hook"]` 로 앱 실행 파일 옆에 설치되고, `startup.rs::hook_cli_path` 가 그 경로를 훅 설정에 쓴다. 빌드 전에 `desktop/tools/prepare-hook-sidecar.sh` 가 `binaries/agentnest-hook-<triple>.exe` 를 만든다(`tauri-build` 가 모든 빌드에서 파일 존재를 검사하므로 타입 검사 전용 잡은 `--placeholder` 빈 파일을 쓴다).
 - `nsis.installMode: currentUser`(비관리자)라 설치 단계에서 **방화벽 규칙을 만들 수 없다.** 규칙은 앱의 '연결 진단'/첫 실행 체크리스트가 UAC 상승으로 만들고(`security.md` §3.1), 언인스톨러(NSIS 훅)는 UAC로 규칙 제거를 시도한다. 규칙의 `program=` 경로는 설치된 메인 exe의 실제 이름·경로로 채우며 이름은 첫 Windows 빌드(Phase 0 P1/P15)에서 확정한다.
 - CSP의 IPC 허용 구문(`ipc: http://ipc.localhost`)은 첫 Windows 빌드에서 검증 [추정].
 - `capabilities/default.json`(최소 권한; 식별자는 `tauri-build`가 플러그인 ACL 매니페스트와 대조해 **빌드 때 검증**한다): `core:default`(이벤트 `listen`/`unlisten` 포함), `autostart:allow-enable`/`allow-disable`/`allow-is-enabled`(프런트가 직접 쓰는 유일한 플러그인). 앱 자신의 커맨드는 권한이 필요 없다. **알림·opener·창 제어·트레이는 Rust에서만 쓰므로 JS 권한을 주지 않는다**(`notification:*`, `opener:*`, `core:window:*`, `store:*`, `log:*` 없음). 프런트가 이후 해당 플러그인을 JS에서 쓰게 되면 그때 필요한 식별자만 추가한다. `core:default`가 실제로 listen을 허용하는지는 첫 Windows 실행에서 확인 [추정].

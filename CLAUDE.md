@@ -35,7 +35,7 @@ android/
 # Rust (Linux에서도 동작: Tauri 셸은 default-members 에서 제외)
 cd desktop && cargo fmt --all --check && cargo clippy --workspace --exclude agentnest-desktop --all-targets -- -D warnings && cargo test --workspace --exclude agentnest-desktop
 # Tauri 셸 타입 검사 (webkit2gtk 없는 리눅스 박스에서도 가능: clang + mingw-w64 헤더 필요, docs/testing-and-ci.md 2.1)
-cd desktop && CC_x86_64_pc_windows_msvc=$PWD/tools/cc-msvc-check.sh AR_x86_64_pc_windows_msvc=llvm-ar cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
+cd desktop && tools/prepare-hook-sidecar.sh --placeholder x86_64-pc-windows-msvc && CC_x86_64_pc_windows_msvc=$PWD/tools/cc-msvc-check.sh AR_x86_64_pc_windows_msvc=llvm-ar cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
 # 프런트엔드
 cd desktop/apps/desktop && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
 # Android 순수 모듈 (SDK 불필요)

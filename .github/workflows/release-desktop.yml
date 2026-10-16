@@ -26,6 +26,10 @@ jobs:
       - name: frontend install
         working-directory: desktop/apps/desktop
         run: pnpm install --frozen-lockfile
+      - name: build the agentnest-hook sidecar
+        working-directory: desktop
+        shell: bash
+        run: tools/prepare-hook-sidecar.sh
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

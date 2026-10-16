@@ -1,1 +1,3 @@
 /target/
+# Built by tools/prepare-hook-sidecar.sh (Tauri sidecar)
+/apps/desktop/src-tauri/binaries/

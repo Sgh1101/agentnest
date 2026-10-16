@@ -58,6 +58,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm clang mingw-w64-x86-64-dev
+          # tauri-build requires the bundled sidecar file to exist; an empty placeholder is enough without linking
+          tools/prepare-hook-sidecar.sh --placeholder x86_64-pc-windows-msvc
           cargo check -p agentnest-desktop --target x86_64-pc-windows-msvc
           cargo clippy -p agentnest-desktop -p agentnest-shell-api --target x86_64-pc-windows-msvc --all-targets -- -D warnings
 

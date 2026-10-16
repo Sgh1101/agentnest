@@ -49,6 +49,13 @@ jobs:
         working-directory: desktop
         run: cargo test --no-fail-fast -p agentnest-core -p agentnest-shell-api
 
+      # Claude Code sends SessionStart only to command hooks, so the installer must ship agentnest-hook (tauri.conf.json
+      # bundle.externalBin). tauri-build also requires the file to exist for clippy.
+      - name: build the agentnest-hook sidecar
+        working-directory: desktop
+        shell: bash
+        run: tools/prepare-hook-sidecar.sh
+
       - name: Tauri glue clippy (the real host target)
         working-directory: desktop
         run: cargo clippy -p agentnest-desktop -p agentnest-shell-api --all-targets -- -D warnings
