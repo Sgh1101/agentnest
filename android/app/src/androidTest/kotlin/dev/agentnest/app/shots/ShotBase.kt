@@ -46,20 +46,32 @@ object ShotFiles {
     }
 
     fun save(name: String, bitmap: Bitmap) {
-        FileOutputStream(File(dir, "$name.png")).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        Log.i(TAG, "saved $name ${bitmap.width}x${bitmap.height}")
+        val bytes = java.io.ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        FileOutputStream(File(dir, "$name.png")).use { it.write(bytes) }
+        Log.i(TAG, "saved $name ${bitmap.width}x${bitmap.height} ${bytes.size} bytes")
+        pushToShell("$name.png", bytes)
     }
 
     fun note(line: String) {
         Log.i(TAG, line)
         File(dir, "log.txt").appendText(line + "\n")
+        pushToShell("log.txt", File(dir, "log.txt").readBytes())
     }
 
-    /** Copies the PNGs to a shell-readable directory; `adb pull` runs after Gradle has uninstalled the app. */
-    fun publish() {
-        val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val cmd = "sh -c 'mkdir -p $PUBLIC_DIR && cp -r ${dir.absolutePath}/. $PUBLIC_DIR/ && chmod -R a+rwX $PUBLIC_DIR && ls $PUBLIC_DIR | wc -l'"
-        ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand(cmd)).use { Log.i(TAG, "publish: " + it.readBytes().decodeToString().trim()) }
+    /**
+     * Streams the bytes into [PUBLIC_DIR] through a shell process (`cat > file`). Gradle uninstalls the app when the run
+     * ends, which deletes the app's own storage, and the shell cannot read the app's external files directory on
+     * recent Android versions; /data/local/tmp survives and `adb pull` can read it.
+     */
+    private fun pushToShell(fileName: String, bytes: ByteArray) {
+        try {
+            val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
+            val fds = ui.executeShellCommandRw("sh -c 'mkdir -p $PUBLIC_DIR && cat > $PUBLIC_DIR/$fileName'")
+            ParcelFileDescriptor.AutoCloseOutputStream(fds[1]).use { it.write(bytes) }
+            ParcelFileDescriptor.AutoCloseInputStream(fds[0]).use { it.readBytes() }
+        } catch (t: Throwable) {
+            Log.e(TAG, "pushToShell failed for $fileName: $t")
+        }
     }
 }
 
@@ -124,7 +136,6 @@ abstract class ShotBase {
 
     @After
     fun finish() {
-        ShotFiles.publish()
         if (failures.isNotEmpty()) throw AssertionError("screenshots failed: " + failures.joinToString("; "))
     }
 
