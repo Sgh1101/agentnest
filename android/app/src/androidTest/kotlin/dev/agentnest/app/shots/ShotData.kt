@@ -57,7 +57,13 @@ import java.time.temporal.ChronoUnit
 
 /** Deterministic fixtures for the screenshot tests. Everything is relative to [NOW]; nothing here is a real secret. */
 object SD {
-    val NOW: Instant = Instant.now().truncatedTo(ChronoUnit.SECONDS)
+    /** Reset before every scene ([refreshNow]) so countdowns never run out while a long test class is still going. */
+    var NOW: Instant = Instant.now().truncatedTo(ChronoUnit.SECONDS)
+        private set
+
+    fun refreshNow() {
+        NOW = Instant.now().truncatedTo(ChronoUnit.SECONDS)
+    }
     val PC = PcInfo(pcId = "pc_8252e6280a3d81d1", name = "DESKTOP-HOME", appVersion = "0.1.0", os = "windows")
     val PAIRED = PairedInfo("dev_demo_1", PC.pcId, PC.name, listOf("192.168.0.10", "desk-pc.local"), true)
 
@@ -220,7 +226,7 @@ object SD {
     )
     val reqCodex get() = request(
         REQ_CODEX, RiskLevel.MEDIUM, ExtraConfirmationLevel.NONE, "명령을 실행하려고 해요", sessionKey = S2,
-        agent = AgentKind.CODEX, origin = "codex.hook.cli", allowed = listOf(Decision.ALLOW, Decision.DENY_AND_STOP),
+        agent = AgentKind.CODEX, origin = "codex.hook.cli", allowed = listOf(Decision.ALLOW, Decision.DENY),
         command = "npm test", reasons = emptyList(),
     )
 
@@ -312,9 +318,10 @@ object SD {
         fromCacheSavedAgo: Long? = null,
         history: List<ApprovalHistoryEntry> = emptyList(),
         policy: Policy = Policy(),
+        snapshotAgo: Long = 5,
     ): NestState {
         val reducer = NestReducer { id() }
-        val snap = snapshot(sessions, approvals, events, errors, NOW.minusSeconds(5))
+        val snap = snapshot(sessions, approvals, events, errors, NOW.minusSeconds(snapshotAgo))
         if (fromCacheSavedAgo != null) {
             return reducer.restoreFromCache(snap, NOW.minusSeconds(fromCacheSavedAgo), NOW, link)
         }
@@ -322,7 +329,7 @@ object SD {
         if (link is LinkState.Unpaired) return s.let { reducer.onLink(it, link, NOW) }
         s = reducer.onLink(s, connected(), NOW.minusSeconds(20))
         s = reducer.reduce(s, welcome(NOW.minusSeconds(10), policy), NOW.minusSeconds(10)).state
-        s = reducer.reduce(s, snap, NOW.minusSeconds(5)).state
+        s = reducer.reduce(s, snap, NOW.minusSeconds(snapshotAgo)).state
         if (history.isNotEmpty()) s = s.copy(history = ApprovalHistory(history))
         if (link !is LinkState.Connected) s = reducer.onLink(s, link, NOW)
         else s = reducer.tick(s, NOW).state
@@ -337,7 +344,7 @@ object SD {
             observedResult = ObservedResult.NOT_YET_KNOWN, messageKo = null,
         )
 
-    val reconnecting = LinkState.Reconnecting(2, NOW.plusSeconds(8), LinkError.Unreachable)
+    val reconnecting get() = LinkState.Reconnecting(2, NOW.plusSeconds(8), LinkError.Unreachable)
 
     // ---- ready-made home scenarios -----------------------------------------------------------------------------
 
@@ -379,6 +386,7 @@ object SD {
     val completed get() = nest(
         sessions = listOf(session(S1, AgentState.COMPLETED, headline = "작업을 마쳤어요", sinceSeconds = 1)),
         events = events,
+        snapshotAgo = 1, // the phone-side celebration lasts 4 s from the snapshot
     )
     val awaitingInput get() = nest(
         sessions = listOf(session(S1, AgentState.AWAITING_INPUT, headline = "어느 방식으로 할지 물어봐요")),

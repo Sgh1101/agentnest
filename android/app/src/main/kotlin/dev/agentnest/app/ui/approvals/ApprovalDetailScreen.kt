@@ -185,11 +185,13 @@ private fun ApprovalBody(
         ).joinToString(" · ")
         Text(DisplaySanitizer.display(where), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+        // The risk comes first, on its own line: it is never squeezed out and the title never has to share its line with it
+        // (at large text sizes the title used to break in the middle of a word).
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             ToneChip(Labels.risk(request.risk.level), Labels.riskTone(request.risk.level))
+            HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
         }
-        HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
+        Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.fillMaxWidth())
 
         CommandBlock(request)
         FactsBlock(request)

@@ -1,23 +1,5 @@
 # glob [scale%] [colors]
 kongi_gallery_* 60
-kongi_big_*_dark 30
-kongi_big_* 30
-kongi_anim_* 35
-kongi_sizes 50
-home_unreachable_S* 45 64
-home_approval_S 45 64
-home_approval_S_dark 45 64
-home_unpaired_S 45 64
-home_working_S 45 64
-home_multi_S 45 64
-home_celebrate_S 45 64
-activity_S_font13 45 64
-approval_high_S 45 64
-approval_high_hold_progress_S 45 64
-approval_critical_S_dark 45 64
-approval_reconfirm_dialog_S* 45 64
-approvals_history_S 45 64
-approvals_list_S 45 64
-pairing_intro_S 45 64
-settings_S 45 64
-agents_S 45 64
+kongi_big_tools 30
+kongi_anim_* 30
+* 40 64

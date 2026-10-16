@@ -150,6 +150,7 @@ fun KongiCanvas(
 private class KongiPalette(
     val body: Color,
     val bodyDark: Color,
+    val armColor: Color,
     val bodyLight: Color,
     val ink: Color,
     val prop: Color,
@@ -159,7 +160,8 @@ private class KongiPalette(
     companion object {
         fun of(body: Color, badge: Color, dark: Boolean) = KongiPalette(
             body = body,
-            bodyDark = lerp(body, Color.Black, 0.22f),
+            bodyDark = lerp(body, Color.Black, 0.28f),
+            armColor = lerp(body, Color.Black, 0.12f),
             bodyLight = lerp(body, Color.White, 0.28f),
             ink = if (dark) Color(0xFF1B1713) else Color(0xFF2B2118),
             prop = if (dark) Color(0xFFF1E8DA) else Color(0xFF2B2118),
@@ -233,7 +235,7 @@ private fun DrawScope.drawKongi(p: KongiPose, c: KongiPalette, strokes: StrokeCa
 
 /** An arm: a thick rounded line from the shoulder to the hand, in a slightly darker body colour. */
 private fun DrawScope.arm(c: KongiPalette, u: Float, sx: Float, sy: Float, hx: Float, hy: Float) {
-    drawLine(c.bodyDark, Offset(sx * u, sy * u), Offset(hx * u, hy * u), strokeWidth = 7.2f * u, cap = StrokeCap.Round)
+    drawLine(c.armColor, Offset(sx * u, sy * u), Offset(hx * u, hy * u), strokeWidth = 8f * u, cap = StrokeCap.Round)
 }
 
 /** A hand: a lighter disc with a thin outline so it also reads when it lies on the body. */
@@ -353,17 +355,21 @@ private fun DrawScope.drawProp(p: KongiPose, c: KongiPalette, strokes: StrokeCac
             val len = 21f
             val tipX = px + len * cos(rad).toFloat()
             val tipY = py + len * sin(rad).toFloat()
-            haloLine(c, u, Offset(px, py), Offset(tipX, tipY), 3.6f)
+            // The handle stops at the edge of the head, otherwise it runs through the jaw and the head reads as an "e".
+            val headR = 5.6f
+            val stopX = px + (len - headR) * cos(rad).toFloat()
+            val stopY = py + (len - headR) * sin(rad).toFloat()
+            haloLine(c, u, Offset(px, py), Offset(stopX, stopY), 3.6f)
             // Open-ended head: a ring with a gap that faces away from the handle.
             val canvas = drawContext.canvas
             canvas.save()
             canvas.translate(tipX * u, tipY * u)
             canvas.rotate(p.propAngle)
             canvas.translate(-tipX * u, -tipY * u)
-            val r = 5.6f * u
+            val r = headR * u
             val tl = Offset(tipX * u - r, tipY * u - r)
-            drawArc(c.halo, -50f, 280f, false, tl, Size(2f * r, 2f * r), style = strokes.wrenchHalo, alpha = 0.7f)
-            drawArc(c.prop, -50f, 280f, false, tl, Size(2f * r, 2f * r), style = strokes.wrench)
+            drawArc(c.halo, -55f, 270f, false, tl, Size(2f * r, 2f * r), style = strokes.wrenchHalo, alpha = 0.7f)
+            drawArc(c.prop, -55f, 270f, false, tl, Size(2f * r, 2f * r), style = strokes.wrench)
             canvas.restore()
             if (p.propPhase < 0.5f) {
                 drawCircle(Color(0xFFFFC857), 1.7f * u, Offset((tipX + 8f) * u, (tipY - 3f) * u))

@@ -23,6 +23,7 @@ import dev.agentnest.app.data.PairedInfo
 import dev.agentnest.app.data.SettingsState
 import dev.agentnest.app.ui.AppController
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.common.InfoCard
 import dev.agentnest.app.ui.common.KeyValueRow
@@ -86,7 +87,7 @@ fun SettingsScreen(
         SectionLabel(S.SECTION_NOTIFICATIONS)
         InfoCard(modifier = Modifier.padding(horizontal = 16.dp)) {
             if (!notificationsAllowed) {
-                Text(S.NOTIFICATIONS_OFF_WARNING, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                Text(S.NOTIFICATIONS_OFF_WARNING.keepWords(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                 Button(onClick = controller::requestNotificationPermission) { Text(S.ALLOW_NOTIFICATIONS) }
             }
             OutlinedButton(onClick = controller::openNotificationSettings) { Text(S.OPEN_NOTIFICATION_SETTINGS) }
@@ -102,7 +103,7 @@ fun SettingsScreen(
 
         SectionLabel(S.SECTION_SECURITY)
         InfoCard(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Text(S.SECURITY_READONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(S.SECURITY_READONLY.keepWords(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val policy = nest.welcome?.policy
             KeyValueRow(
                 S.DENY_REQUIRES_AUTH,
@@ -120,7 +121,7 @@ fun SettingsScreen(
 
         SectionLabel(S.SECTION_BATTERY)
         InfoCard(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Text(S.BATTERY_HELP, style = MaterialTheme.typography.bodyMedium)
+            Text(S.BATTERY_HELP.keepWords(), style = MaterialTheme.typography.bodyMedium)
             OutlinedButton(onClick = controller::openBatterySettings) { Text(S.OPEN_BATTERY_SETTINGS) }
         }
 
@@ -141,7 +142,7 @@ private fun SwitchRow(title: String, help: String, checked: Boolean, onChange: (
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(help.keepWords(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }

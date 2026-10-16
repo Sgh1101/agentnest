@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.data.PairedInfo
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.app.ui.common.KeyValueRow
 import dev.agentnest.app.ui.common.ScreenHeader
 import dev.agentnest.core.link.LinkState
@@ -76,7 +77,7 @@ fun DiagnosticsScreen(nest: NestState, paired: PairedInfo?, now: Instant, onBack
             .padding(bottom = 16.dp),
     ) {
         ScreenHeader(title = S.DIAGNOSTICS, onBack = onBack)
-        Text(S.DIAG_HELP, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        Text(S.DIAG_HELP.keepWords(), modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         for (line in Diagnostics.lines(nest, paired, now)) {
             KeyValueRow(line.label, line.value)
         }

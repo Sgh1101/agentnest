@@ -193,6 +193,7 @@ abstract class ShotBase {
 
     /** Swaps the frame content (state is reset: every scene gets a fresh composition). */
     fun show(width: Int, height: Int, dark: Boolean, fontScale: Float, content: @Composable () -> Unit) {
+        SD.refreshNow()
         scene.value = Scene(++counter, width, height, dark, fontScale, content)
     }
 

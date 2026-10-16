@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.keepWords
 import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.theme.ToneTheme
 import dev.agentnest.app.ui.theme.isDarkTheme
@@ -109,7 +110,7 @@ fun InfoCard(
 fun EmptyHint(text: String, modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
         Text(
-            text = text,
+            text = text.keepWords(),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
