@@ -1,2 +1,9 @@
 # glob [scale%] [colors]
-* 45 64
+kongi_gallery_* 60
+kongi_big_blink_slow 60
+kongi_big_typing_strong 60
+kongi_big_tools 60
+kongi_big_raise_hand_excl 60
+kongi_big_sleepy_dark 60
+kongi_anim_* 40
+kongi_sizes 60

@@ -65,9 +65,9 @@ object KongiMotion {
     const val BODY_CY = 60f
     const val BODY_RX = 28f
     const val BODY_RY = 25f
-    const val EYE_DX = 10f
+    const val EYE_DX = 10.5f
     const val EYE_Y = 54f
-    const val EYE_R = 4.6f
+    const val EYE_R = 5.1f
     const val MOUTH_Y = 67f
     const val HAND_R = 5f
     const val REST_HAND_DX = 31f
@@ -215,7 +215,7 @@ object KongiMotion {
         out.handLy = 79f + max(0f, a) * 3f
         out.handRy = 79f + max(0f, -a) * 3f
         out.propX = BODY_CX
-        out.propY = 84f
+        out.propY = 83f
         out.mouthCurve = 0.15f
     }
 
@@ -235,8 +235,8 @@ object KongiMotion {
         val s = wave(t, 1600)
         out.propX = BODY_CX + 22f * s
         out.propY = 64f
-        out.handRx = out.propX + 7f
-        out.handRy = out.propY + 9f
+        out.handRx = out.propX + 10.5f
+        out.handRy = out.propY + 10.5f
         out.pupilDx = if (s >= 0f) 1.8f else -1.8f
         if (s >= 0f) out.eyeScaleR = 1.35f else out.eyeScaleL = 1.35f
         out.mouthCurve = 0.1f
@@ -244,12 +244,12 @@ object KongiMotion {
 
     private fun tools(t: Long, out: KongiPose) {
         val s = wave(t, 500)
-        out.propX = 76f
-        out.propY = 66f
+        out.propX = 82f
+        out.propY = 68f
         out.propAngle = 35f * s
         out.propPhase = fraction(t, 500)
-        out.handRx = 76f
-        out.handRy = 66f
+        out.handRx = 82f
+        out.handRy = 68f
         out.eyeOpenL = 0.7f
         out.eyeOpenR = 0.7f
         out.mouthCurve = 0.05f

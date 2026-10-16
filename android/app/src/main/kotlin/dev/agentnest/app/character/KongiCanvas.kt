@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -33,12 +34,30 @@ private class StrokeCache {
     private var unit = -1f
     var thin: Stroke = Stroke(width = 1f)
     var normal: Stroke = Stroke(width = 1f)
+    var rim: Stroke = Stroke(width = 1f)
+    var outline: Stroke = Stroke(width = 1f)
+    var kbHalo: Stroke = Stroke(width = 1f)
+    var kbLine: Stroke = Stroke(width = 1f)
+    var ringHalo: Stroke = Stroke(width = 1f)
+    var ring: Stroke = Stroke(width = 1f)
+    var wrenchHalo: Stroke = Stroke(width = 1f)
+    var wrench: Stroke = Stroke(width = 1f)
+    var question: Stroke = Stroke(width = 1f)
 
     fun update(u: Float) {
         if (u == unit) return
         unit = u
         thin = Stroke(width = 1.4f * u, cap = StrokeCap.Round)
         normal = Stroke(width = 2.0f * u, cap = StrokeCap.Round)
+        rim = Stroke(width = 2.4f * u, cap = StrokeCap.Round)
+        outline = Stroke(width = 1.1f * u)
+        kbHalo = Stroke(width = 3.4f * u)
+        kbLine = Stroke(width = 1.3f * u)
+        ringHalo = Stroke(width = 5.2f * u)
+        ring = Stroke(width = 2.6f * u)
+        wrenchHalo = Stroke(width = 6f * u, cap = StrokeCap.Round)
+        wrench = Stroke(width = 3.4f * u, cap = StrokeCap.Round)
+        question = Stroke(width = 2.2f * u, cap = StrokeCap.Round)
     }
 }
 
@@ -58,9 +77,7 @@ fun KongiCanvas(
     dimension: Dp = 160.dp,
 ) {
     val dark = isDarkTheme()
-    val bodyColor = ToneTheme.solid(spec.tone, dark)
-    val ink = if (dark) Color(0xFF1B1713) else Color(0xFF2B2118)
-    val badgeColor = ToneTheme.solid(dev.agentnest.app.ui.Tone.WARNING, dark)
+    val palette = remember(spec.tone, dark) { KongiPalette.of(ToneTheme.solid(spec.tone, dark), ToneTheme.solid(dev.agentnest.app.ui.Tone.WARNING, dark), dark) }
 
     var timeMs by remember { mutableLongStateOf(0L) }
     var switchAtMs by remember { mutableLongStateOf(0L) }
@@ -121,11 +138,40 @@ fun KongiCanvas(
             KongiMotion.pose(cur, motion, t, elapsed, poseOut)
         }
         strokes.update(this.size.minDimension / 100f)
-        drawKongi(poseOut, bodyColor, ink, badgeColor, strokes)
+        drawKongi(poseOut, palette, strokes)
     }
 }
 
-private fun DrawScope.drawKongi(p: KongiPose, body: Color, ink: Color, badgeColor: Color, strokes: StrokeCache) {
+/**
+ * Colours of one drawing. [ink] is for the face (drawn on the body, always dark), [prop] for held objects and floating
+ * letters (drawn on the screen background, so it flips with the theme) with a [halo] of the opposite lightness so a
+ * prop stays readable both over the body and over the background.
+ */
+private class KongiPalette(
+    val body: Color,
+    val bodyDark: Color,
+    val bodyLight: Color,
+    val ink: Color,
+    val prop: Color,
+    val halo: Color,
+    val badge: Color,
+) {
+    companion object {
+        fun of(body: Color, badge: Color, dark: Boolean) = KongiPalette(
+            body = body,
+            bodyDark = lerp(body, Color.Black, 0.22f),
+            bodyLight = lerp(body, Color.White, 0.28f),
+            ink = if (dark) Color(0xFF1B1713) else Color(0xFF2B2118),
+            prop = if (dark) Color(0xFFF1E8DA) else Color(0xFF2B2118),
+            halo = if (dark) Color(0xFF14110E) else Color(0xFFFFFFFF),
+            badge = badge,
+        )
+    }
+}
+
+private const val SCALE = 1.1f
+
+private fun DrawScope.drawKongi(p: KongiPose, c: KongiPalette, strokes: StrokeCache) {
     val u = size.minDimension / 100f
     val dx = p.bodyDx
     val dy = p.bodyDy
@@ -133,32 +179,93 @@ private fun DrawScope.drawKongi(p: KongiPose, body: Color, ink: Color, badgeColo
 
     // Shadow stays on the ground while the body bobs or jumps.
     drawOval(
-        color = ink,
+        color = c.ink,
         topLeft = Offset((KongiMotion.BODY_CX - 22f) * u, 88f * u),
         size = Size(44f * u, 6f * u),
         alpha = 0.12f,
     )
-    // Body and a soft highlight.
-    drawOval(
-        color = body,
-        topLeft = Offset((cx - KongiMotion.BODY_RX) * u, (KongiMotion.BODY_CY - KongiMotion.BODY_RY + dy) * u),
-        size = Size(KongiMotion.BODY_RX * 2f * u, KongiMotion.BODY_RY * 2f * u),
-    )
-    drawOval(
-        color = Color.White,
-        topLeft = Offset((cx - 16f) * u, (KongiMotion.BODY_CY - 19f + dy) * u),
-        size = Size(14f * u, 8f * u),
-        alpha = 0.22f,
-    )
-    // Hands travel with the body (so a jump does not detach them).
-    drawCircle(body, KongiMotion.HAND_R * u, Offset((p.handLx + dx) * u, (p.handLy + dy) * u))
-    drawCircle(body, KongiMotion.HAND_R * u, Offset((p.handRx + dx) * u, (p.handRy + dy) * u))
+    // The whole character is drawn 10 % larger around its middle: the face needs the room to read at 40-160 dp.
+    val canvas = drawContext.canvas
+    canvas.save()
+    canvas.translate(50f * u, 62f * u)
+    canvas.scale(SCALE, SCALE)
+    canvas.translate(-50f * u, -62f * u)
+    run {
+        // Arms first (behind the body): every hand is joined to a shoulder, so nothing floats.
+        arm(c, u, cx - 21f, 64f + dy, p.handLx + dx, p.handLy + dy)
+        arm(c, u, cx + 21f, 64f + dy, p.handRx + dx, p.handRy + dy)
 
-    drawProp(p, ink, strokes, dx, dy)
-    drawEyes(p, ink, strokes, cx, dy)
-    drawBrows(p, ink, cx, dy)
-    drawMouth(p, ink, strokes, cx, dy)
-    drawBadge(p, badgeColor, strokes)
+        // Body, a rim light on the upper left and, for happy moods, blush.
+        drawOval(
+            color = c.body,
+            topLeft = Offset((cx - KongiMotion.BODY_RX) * u, (KongiMotion.BODY_CY - KongiMotion.BODY_RY + dy) * u),
+            size = Size(KongiMotion.BODY_RX * 2f * u, KongiMotion.BODY_RY * 2f * u),
+        )
+        drawArc(
+            color = Color.White,
+            startAngle = 196f,
+            sweepAngle = 54f,
+            useCenter = false,
+            topLeft = Offset((cx - 23f) * u, (KongiMotion.BODY_CY - 20.5f + dy) * u),
+            size = Size(46f * u, 41f * u),
+            style = strokes.rim,
+            alpha = 0.4f,
+        )
+        if (p.mouthCurve > 0.05f || p.eyeHappy > 0.5f) {
+            val blush = Color(0xFFFF7A70)
+            drawCircle(blush, 3.4f * u, Offset((cx - 18f) * u, (KongiMotion.MOUTH_Y - 4f + dy) * u), alpha = 0.3f)
+            drawCircle(blush, 3.4f * u, Offset((cx + 18f) * u, (KongiMotion.MOUTH_Y - 4f + dy) * u), alpha = 0.3f)
+        }
+
+        // The keyboard sits in front of the belly; the hands are drawn over it.
+        if (p.prop == Prop.KEYBOARD) drawKeyboard(c, strokes, u, p.propX + dx, p.propY + dy)
+        hand(c, strokes, u, p.handLx + dx, p.handLy + dy)
+        hand(c, strokes, u, p.handRx + dx, p.handRy + dy)
+
+        drawProp(p, c, strokes, dx, dy)
+        drawEyes(p, c.ink, strokes, cx, dy)
+        drawBrows(p, c.ink, cx, dy)
+        drawMouth(p, c.ink, strokes, cx, dy)
+        drawBadge(p, c.badge, strokes)
+    }
+    canvas.restore()
+}
+
+/** An arm: a thick rounded line from the shoulder to the hand, in a slightly darker body colour. */
+private fun DrawScope.arm(c: KongiPalette, u: Float, sx: Float, sy: Float, hx: Float, hy: Float) {
+    drawLine(c.bodyDark, Offset(sx * u, sy * u), Offset(hx * u, hy * u), strokeWidth = 7.2f * u, cap = StrokeCap.Round)
+}
+
+/** A hand: a lighter disc with a thin outline so it also reads when it lies on the body. */
+private fun DrawScope.hand(c: KongiPalette, strokes: StrokeCache, u: Float, x: Float, y: Float) {
+    drawCircle(c.bodyLight, KongiMotion.HAND_R * u, Offset(x * u, y * u))
+    drawCircle(c.bodyDark, KongiMotion.HAND_R * u, Offset(x * u, y * u), style = strokes.outline)
+}
+
+private fun DrawScope.drawKeyboard(c: KongiPalette, strokes: StrokeCache, u: Float, x: Float, y: Float) {
+    val w = 42f
+    val h = 10f
+    val tl = Offset((x - w / 2f) * u, (y - h / 2f) * u)
+    drawRoundRect(c.halo, tl, Size(w * u, h * u), CornerRadius(2.4f * u), style = strokes.kbHalo, alpha = 0.7f)
+    drawRoundRect(Color(0xFFEDE6DA), tl, Size(w * u, h * u), CornerRadius(2f * u))
+    drawRoundRect(c.prop, tl, Size(w * u, h * u), CornerRadius(2f * u), style = strokes.kbLine)
+    val key = Color(0xFF8A7C6A)
+    for (row in 0..1) {
+        for (col in 0..4) {
+            drawRoundRect(
+                key,
+                Offset((x - w / 2f + 4.6f + col * 7.2f) * u, (y - h / 2f + 2.2f + row * 3.6f) * u),
+                Size(5f * u, 2.2f * u),
+                CornerRadius(0.6f * u),
+            )
+        }
+    }
+}
+
+/** A line with a thin halo underneath, so a dark prop stays visible on a dark background and vice versa. */
+private fun DrawScope.haloLine(c: KongiPalette, u: Float, a: Offset, b: Offset, width: Float) {
+    drawLine(c.halo, a * u, b * u, strokeWidth = (width + 2.4f) * u, cap = StrokeCap.Round, alpha = 0.7f)
+    drawLine(c.prop, a * u, b * u, strokeWidth = width * u, cap = StrokeCap.Round)
 }
 
 private fun DrawScope.drawEyes(p: KongiPose, ink: Color, strokes: StrokeCache, cx: Float, dy: Float) {
@@ -188,7 +295,7 @@ private fun DrawScope.drawEyes(p: KongiPose, ink: Color, strokes: StrokeCache, c
             val h = 2f * er * open
             drawOval(ink, Offset((x - er + p.pupilDx * 0.3f) * u, y - h / 2f * u + p.pupilDy * 0.4f * u), Size(2f * er * u, h * u))
             if (open > 0.5f) {
-                drawCircle(Color.White, 1.1f * u * scale, Offset((x - er * 0.3f) * u, y - er * 0.35f * u), alpha = 0.85f)
+                drawCircle(Color.White, 1.3f * u * scale, Offset((x - er * 0.3f) * u, y - er * 0.35f * u), alpha = 0.9f)
             }
         }
     }
@@ -197,10 +304,10 @@ private fun DrawScope.drawEyes(p: KongiPose, ink: Color, strokes: StrokeCache, c
 private fun DrawScope.drawBrows(p: KongiPose, ink: Color, cx: Float, dy: Float) {
     if (p.brow < 0.05f) return
     val u = size.minDimension / 100f
-    val y = (KongiMotion.EYE_Y - 9f + dy) * u
+    val y = (KongiMotion.EYE_Y - 9.5f + dy) * u
     // Inner ends higher than outer ends: the worried look.
-    drawLine(ink, Offset((cx - 16f) * u, y + 2.5f * u), Offset((cx - 5f) * u, y - 1.5f * u), strokeWidth = 1.8f * u, cap = StrokeCap.Round, alpha = p.brow)
-    drawLine(ink, Offset((cx + 16f) * u, y + 2.5f * u), Offset((cx + 5f) * u, y - 1.5f * u), strokeWidth = 1.8f * u, cap = StrokeCap.Round, alpha = p.brow)
+    drawLine(ink, Offset((cx - 17f) * u, y + 3f * u), Offset((cx - 5f) * u, y - 1.5f * u), strokeWidth = 2.2f * u, cap = StrokeCap.Round, alpha = p.brow)
+    drawLine(ink, Offset((cx + 17f) * u, y + 3f * u), Offset((cx + 5f) * u, y - 1.5f * u), strokeWidth = 2.2f * u, cap = StrokeCap.Round, alpha = p.brow)
 }
 
 private fun DrawScope.drawMouth(p: KongiPose, ink: Color, strokes: StrokeCache, cx: Float, dy: Float) {
@@ -214,97 +321,108 @@ private fun DrawScope.drawMouth(p: KongiPose, ink: Color, strokes: StrokeCache, 
     }
     val c = p.mouthCurve
     if (c > -0.08f && c < 0.08f) {
-        drawLine(ink, Offset((cx - 4f) * u, y * u), Offset((cx + 4f) * u, y * u), strokeWidth = 1.6f * u, cap = StrokeCap.Round)
+        drawLine(ink, Offset((cx - 4f) * u, y * u), Offset((cx + 4f) * u, y * u), strokeWidth = 1.8f * u, cap = StrokeCap.Round)
         return
     }
     val h = 5f * (if (c < 0f) -c else c)
     if (c > 0f) {
         // Smile: lower half of an ellipse.
-        drawArc(ink, 0f, 180f, false, Offset((cx - 6f) * u, (y - h) * u), Size(12f * u, 2f * h * u), style = strokes.thin)
+        drawArc(ink, 0f, 180f, false, Offset((cx - 6f) * u, (y - h) * u), Size(12f * u, 2f * h * u), style = strokes.normal)
     } else {
         // Frown: upper half of an ellipse, placed lower.
-        drawArc(ink, 180f, 180f, false, Offset((cx - 5f) * u, y * u), Size(10f * u, 2f * h * u), style = strokes.thin)
+        drawArc(ink, 180f, 180f, false, Offset((cx - 5f) * u, y * u), Size(10f * u, 2f * h * u), style = strokes.normal)
     }
 }
 
-private fun DrawScope.drawProp(p: KongiPose, ink: Color, strokes: StrokeCache, dx: Float, dy: Float) {
+private fun DrawScope.drawProp(p: KongiPose, c: KongiPalette, strokes: StrokeCache, dx: Float, dy: Float) {
     val u = size.minDimension / 100f
     when (p.prop) {
-        Prop.KEYBOARD -> {
-            drawRoundRect(
-                color = ink,
-                topLeft = Offset((p.propX + dx - 18f) * u, (p.propY + dy - 4f) * u),
-                size = Size(36f * u, 8f * u),
-                cornerRadius = CornerRadius(2f * u),
-                alpha = 0.85f,
-            )
-            drawLine(Color.White, Offset((p.propX + dx - 14f) * u, (p.propY + dy) * u), Offset((p.propX + dx + 14f) * u, (p.propY + dy) * u), strokeWidth = 1.2f * u, alpha = 0.45f)
-        }
         Prop.MAGNIFIER -> {
             val x = p.propX + dx
             val y = p.propY + dy
-            drawCircle(Color.White, 9f * u, Offset(x * u, y * u), alpha = 0.25f)
-            drawCircle(ink, 9f * u, Offset(x * u, y * u), style = strokes.normal)
-            drawLine(ink, Offset((x + 6.4f) * u, (y + 6.4f) * u), Offset((x + 13f) * u, (y + 13f) * u), strokeWidth = 2.6f * u, cap = StrokeCap.Round)
+            drawLine(c.halo, Offset((x + 6.6f) * u, (y + 6.6f) * u), Offset((x + 15f) * u, (y + 15f) * u), strokeWidth = 6f * u, cap = StrokeCap.Round, alpha = 0.7f)
+            drawLine(c.prop, Offset((x + 6.6f) * u, (y + 6.6f) * u), Offset((x + 15f) * u, (y + 15f) * u), strokeWidth = 3.4f * u, cap = StrokeCap.Round)
+            drawCircle(Color.White, 10f * u, Offset(x * u, y * u), alpha = 0.3f)
+            drawCircle(c.halo, 10f * u, Offset(x * u, y * u), style = strokes.ringHalo, alpha = 0.7f)
+            drawCircle(c.prop, 10f * u, Offset(x * u, y * u), style = strokes.ring)
         }
         Prop.WRENCH -> {
             val rad = Math.toRadians((-90f + p.propAngle).toDouble())
             val px = p.propX + dx
             val py = p.propY + dy
-            val tipX = px + 18f * cos(rad).toFloat()
-            val tipY = py + 18f * sin(rad).toFloat()
-            drawLine(ink, Offset(px * u, py * u), Offset(tipX * u, tipY * u), strokeWidth = 3f * u, cap = StrokeCap.Round)
-            drawCircle(ink, 4f * u, Offset(tipX * u, tipY * u), style = strokes.normal)
+            val len = 21f
+            val tipX = px + len * cos(rad).toFloat()
+            val tipY = py + len * sin(rad).toFloat()
+            haloLine(c, u, Offset(px, py), Offset(tipX, tipY), 3.6f)
+            // Open-ended head: a ring with a gap that faces away from the handle.
+            val canvas = drawContext.canvas
+            canvas.save()
+            canvas.translate(tipX * u, tipY * u)
+            canvas.rotate(p.propAngle)
+            canvas.translate(-tipX * u, -tipY * u)
+            val r = 5.6f * u
+            val tl = Offset(tipX * u - r, tipY * u - r)
+            drawArc(c.halo, -50f, 280f, false, tl, Size(2f * r, 2f * r), style = strokes.wrenchHalo, alpha = 0.7f)
+            drawArc(c.prop, -50f, 280f, false, tl, Size(2f * r, 2f * r), style = strokes.wrench)
+            canvas.restore()
             if (p.propPhase < 0.5f) {
-                drawCircle(Color(0xFFFFC857), 1.3f * u, Offset((tipX + 5f) * u, (tipY - 3f) * u))
-                drawCircle(Color(0xFFFFC857), 1.0f * u, Offset((tipX - 5f) * u, (tipY - 5f) * u))
+                drawCircle(Color(0xFFFFC857), 1.7f * u, Offset((tipX + 8f) * u, (tipY - 3f) * u))
+                drawCircle(Color(0xFFFFC857), 1.3f * u, Offset((tipX - 8f) * u, (tipY - 6f) * u))
+                drawCircle(Color(0xFFFFC857), 1.1f * u, Offset((tipX + 5f) * u, (tipY - 10f) * u))
             }
         }
         Prop.SWEAT -> {
             val ph = p.propPhase
-            val alpha = 1f - ph * ph
-            drawOval(Color(0xFF6CB8F0), Offset((74f + dx) * u, (40f + 24f * ph + dy) * u), Size(4f * u, 6f * u), alpha = alpha)
+            val drop = Color(0xFF4FA3E0)
+            drawOval(drop, Offset((74f + dx) * u, (38f + 24f * ph + dy) * u), Size(5f * u, 7.5f * u), alpha = 1f - ph * ph)
             val ph2 = (ph + 0.5f) % 1f
-            drawOval(Color(0xFF6CB8F0), Offset((22f + dx) * u, (40f + 24f * ph2 + dy) * u), Size(3f * u, 5f * u), alpha = 1f - ph2 * ph2)
+            drawOval(drop, Offset((21f + dx) * u, (38f + 24f * ph2 + dy) * u), Size(4f * u, 6f * u), alpha = 1f - ph2 * ph2)
         }
         Prop.ZZZ -> {
-            drawZ(ink, 66f, 42f, p.propPhase, u)
-            drawZ(ink, 74f, 34f, (p.propPhase + 0.5f) % 1f, u)
+            drawZ(c, 66f, 44f, p.propPhase, u)
+            drawZ(c, 75f, 34f, (p.propPhase + 0.5f) % 1f, u)
         }
-        Prop.HAND, Prop.NONE -> Unit
+        Prop.KEYBOARD, Prop.HAND, Prop.NONE -> Unit
     }
 }
 
 /** A floating "Z" built from three lines: rises and fades as [phase] goes 0 -> 1. */
-private fun DrawScope.drawZ(ink: Color, x: Float, y: Float, phase: Float, u: Float) {
-    val s = 4f + 3f * phase
-    val top = y - 14f * phase
-    val alpha = 1f - phase
-    drawLine(ink, Offset(x * u, top * u), Offset((x + s) * u, top * u), strokeWidth = 1.2f * u, alpha = alpha)
-    drawLine(ink, Offset((x + s) * u, top * u), Offset(x * u, (top + s) * u), strokeWidth = 1.2f * u, alpha = alpha)
-    drawLine(ink, Offset(x * u, (top + s) * u), Offset((x + s) * u, (top + s) * u), strokeWidth = 1.2f * u, alpha = alpha)
+private fun DrawScope.drawZ(c: KongiPalette, x: Float, y: Float, phase: Float, u: Float) {
+    val s = 6f + 4f * phase
+    val top = y - 16f * phase
+    val alpha = (1f - phase * phase).coerceIn(0f, 1f)
+    zLine(c, u, x, top, x + s, top, alpha)
+    zLine(c, u, x + s, top, x, top + s, alpha)
+    zLine(c, u, x, top + s, x + s, top + s, alpha)
+}
+
+private fun DrawScope.zLine(c: KongiPalette, u: Float, x1: Float, y1: Float, x2: Float, y2: Float, alpha: Float) {
+    val from = Offset(x1 * u, y1 * u)
+    val to = Offset(x2 * u, y2 * u)
+    drawLine(c.halo, from, to, strokeWidth = 3.4f * u, cap = StrokeCap.Round, alpha = alpha * 0.6f)
+    drawLine(c.prop, from, to, strokeWidth = 1.9f * u, cap = StrokeCap.Round, alpha = alpha)
 }
 
 /** The "!" / "?" bubble above the head, drawn from circles, lines and arcs (no text). */
 private fun DrawScope.drawBadge(p: KongiPose, badgeColor: Color, strokes: StrokeCache) {
     if (p.badge == Badge.NONE) return
     val u = size.minDimension / 100f
-    val r = 8f * p.badgeScale
+    val r = 8.5f * p.badgeScale
     drawCircle(badgeColor, r * u, Offset(50f * u, 17f * u))
     val glyph = Color.White
     if (p.badge == Badge.EXCLAMATION) {
-        drawLine(glyph, Offset(50f * u, 11.5f * u), Offset(50f * u, 17.5f * u), strokeWidth = 2.4f * u, cap = StrokeCap.Round)
-        drawCircle(glyph, 1.3f * u, Offset(50f * u, 21.2f * u))
+        drawLine(glyph, Offset(50f * u, 11f * u), Offset(50f * u, 17.5f * u), strokeWidth = 2.8f * u, cap = StrokeCap.Round)
+        drawCircle(glyph, 1.5f * u, Offset(50f * u, 21.4f * u))
     } else {
         drawArc(
             color = glyph,
             startAngle = 180f,
             sweepAngle = 270f,
             useCenter = false,
-            topLeft = Offset(46.6f * u, 12f * u),
-            size = Size(6.8f * u, 6.8f * u),
-            style = strokes.thin,
+            topLeft = Offset(46.4f * u, 11.6f * u),
+            size = Size(7.2f * u, 7.2f * u),
+            style = strokes.question,
         )
-        drawCircle(glyph, 1.2f * u, Offset(50f * u, 22f * u))
+        drawCircle(glyph, 1.4f * u, Offset(50f * u, 22.2f * u))
     }
 }
