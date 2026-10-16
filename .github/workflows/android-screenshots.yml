@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: android-screenshots-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-screenshots-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   screenshots:
@@ -56,7 +56,10 @@ jobs:
 
       - name: print selected screenshots to the log
         if: always()
-        run: bash android/tools/emit-shots.sh
+        run: |
+          python3 -m venv /tmp/shotsvenv
+          /tmp/shotsvenv/bin/pip install --quiet pillow
+          /tmp/shotsvenv/bin/python android/tools/emit_shots.py
 
       - uses: actions/upload-artifact@v4
         if: always()
