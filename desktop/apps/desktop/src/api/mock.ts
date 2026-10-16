@@ -224,7 +224,8 @@ export class MockBackend implements Backend {
       spki_pin: "sha256/glLmKAo9gdGvAGIYNxNEvncjE6SNAheIa/dX4bFINbU=",
       hooks_installed: this.claudeHooksInstalled,
       effective_ttl_s: this.effectiveTtl(),
-      hook_timeout_s: this.hookTimeoutS,
+      // like the daemon: 0 when no hook is installed (nothing to compare the TTL against)
+      hook_timeout_s: this.claudeHooksInstalled ? this.hookTimeoutS : 0,
       codex_mode: "hooks",
       sessions: this.sessions.length,
       devices_online: this.devices.filter((d) => d.online && d.revoked_at === null).length,

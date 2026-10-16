@@ -64,7 +64,7 @@ desktop/crates/agentnest-shell-api/src/        # Tauri 없음. `cargo test -p ag
 ├── pump.rs          run_event_pump(배칭 100 ms, 순서 보존) + UiSink 트레이트
 ├── settings.rs      settings_get/set 화이트리스트(금지 필드는 존재하지 않음), ui-settings.json
 ├── history.rs       approvals_history, last_event_at (읽기 전용 SQL)
-├── logs.rs          파일 로거(일 단위 롤링 14개), logs_tail(레댁션·상한)
+├── logs.rs          파일 로거(일 단위 롤링 7개, 모든 줄 기록 전 `redact::mask` 통과), logs_tail(레댁션·상한)
 ├── codex.rs         codex_probe(경로 존재 확인만; RPC 핸드셰이크는 UNVERIFIED C1)
 ├── net.rs           NetworkOps 트레이트 + WindowsNetwork<ProcessRunner>(PowerShell/netsh) + UnsupportedNetwork, 출력 파서
 ├── diagnostics.rs   diagnostics_run 보고서·한국어 힌트
@@ -137,7 +137,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 - **`approvals_history`**: `approvals`에서 종결된 행을 `COALESCE(resolved_at, expires_at)` 내림차순 최대 200건(기본 UI 50건). 표시 필드만 선택한다(명령·nonce·해시 없음).
 - **`logs_tail`**: 최신 `agentnest.<날짜>.log`들의 마지막 줄들(파일 끝 512 KiB만 읽음). 각 줄은 공용 레댁터 + `Authorization`/`Bearer` 헤더 마스킹 후 600자로 자른다. `logs_open_dir`은 opener 플러그인의 `reveal_item_in_dir`.
 - **`codex_probe`**: 문서화된 소켓 경로(`$CODEX_HOME` 또는 `~/.codex` 아래 `app-server-control/app-server-control.sock`)의 **존재 여부만** 확인한다. `initialize` 핸드셰이크(`user_agent`, `threads`)는 `// UNVERIFIED (Phase 0 C1)`이라 하지 않는다(`null`/`0`).
-- **트레이 클릭**: "기기 추가…"는 창만 연다(프런트에 화면 이동 이벤트 계약이 없음). 요청별 "허용/거부"는 `ShellApi::tray_decide`가 **현재 카드**를 다시 읽어 `low`/`medium`이고 추가 확인이 없을 때만 `confirm_ack=false`로 같은 로컬 결정을 보낸다(그 밖에는 창을 연다). `high`/`critical`은 메뉴에 허용/거부 항목 자체가 없다.
+- **트레이 클릭**: "기기 추가…"는 창만 연다(프런트에 화면 이동 이벤트 계약이 없음). 요청별 "허용/거부"는 `ShellApi::tray_decide`가 **현재 카드**를 다시 읽어 허용은 `low`, 거부는 `low`/`medium`이면서 추가 확인이 없을 때만 `confirm_ack=false`로 같은 로컬 결정을 보낸다(그 밖에는 창을 연다). `high`/`critical`은 메뉴에 허용/거부 항목 자체가 없다.
 
 ---
 
@@ -145,7 +145,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 
 - 아이콘 4종(포커스 상태 `protocol.md` §5.5 규칙과 동일): 회색(idle/세션 없음), 파랑(working 계열), 노랑 깜빡임(awaiting_approval/awaiting_input), 빨강(error/데몬 오류). 툴팁 "AgentNest — 승인 대기 1".
 - 메뉴: `열기` · `기기 추가…` · `승인 대기 N건 ▸ (요청별: 로컬로 처리 / 승인 창 열기 …)` · `원격 승인 일시정지`(체크) · `휴대폰 연결 끊기`(체크, `link.enabled` — 리스너 중지, `security.md` §3.3) · 상태 줄(비활성: "Claude Code ● 연결됨 / Codex ○ hooks / 폰 1대 온라인") · `자동 시작`(체크) · `로그 폴더` · `종료`.
-- **트레이는 승인 게이트의 단축 경로가 아니다.** 요청별 항목은 항상 `로컬로 처리`와 `승인 창 열기`뿐이다. **`low`/`medium` 요청에 한해** 추가로 인라인 `허용`/`거부`를 둔다(§6의 게이트가 `none`/생체 불필요 수준과 같은 마찰). **`high`/`critical` 요청은 트레이에 `허용`을 두지 않는다** — 승인 창을 열어 §6의 길게 누르기(+`critical`은 명령 전체 재표시와 확인 체크)를 거쳐야 하며, 서버도 `confirm_ack` 없이는 거부한다(`security.md` §6.2.1). 한 번의 오클릭이 폰보다 낮은 마찰로 위험 명령을 허용하는 경로는 없다. 트레이 메뉴 항목 라벨에는 `title`과 위험 등급만 쓰고 명령 전문은 쓰지 않는다. 인라인 항목의 조건은 `risk.level ∈ {low, medium}` **그리고** `risk.extra_confirmation == none` **그리고** 카드의 `allowed_decisions`에 그 결정이 있을 때다(알 수 없는 값은 막힘; `deny_and_stop`은 인라인 없음). 요청은 최대 5건을 개별 나열하고 나머지는 "외 N건 — 승인 창 열기"로 묶는다.
+- **트레이는 승인 게이트의 단축 경로가 아니다.** 요청별 항목은 항상 `로컬로 처리`와 `승인 창 열기`뿐이다. **인라인 `허용`은 `low` 요청에 한해서만** 둔다(트레이 메뉴에는 제목과 위험 등급만 보이고 명령은 보이지 않으므로, 명령 표시 + 생체가 필요한 폰보다 낮은 마찰이 되지 않도록 `medium`은 승인 창에서만 허용한다). 인라인 `거부`는 안전하므로 `low`/`medium`에 둔다. **`high`/`critical` 요청은 트레이에 `허용`을 두지 않는다** — 승인 창을 열어 §6의 길게 누르기(+`critical`은 명령 전체 재표시와 확인 체크)를 거쳐야 하며, 서버도 `confirm_ack` 없이는 거부한다(`security.md` §6.2.1). 한 번의 오클릭이 폰보다 낮은 마찰로 위험 명령을 허용하는 경로는 없다. 트레이 메뉴 항목 라벨에는 `title`과 위험 등급만 쓰고 명령 전문은 쓰지 않는다. 인라인 항목의 조건은 허용: `risk.level == low`, 거부: `risk.level ∈ {low, medium}` **그리고** `risk.extra_confirmation == none` **그리고** 카드의 `allowed_decisions`에 그 결정이 있을 때다(알 수 없는 값은 막힘; `deny_and_stop`은 인라인 없음). 요청은 최대 5건을 개별 나열하고 나머지는 "외 N건 — 승인 창 열기"로 묶는다.
 - Windows 토스트(`notification`): 승인 요청이 `handed_off_local`/`no_device`로 떨어졌을 때("PC에서 처리해야 하는 요청"), 승인 요청 도착(본문 `title`만), 페어링 완료, 기기 폐기, 인증서 갱신(코어에 해당 이벤트가 없어 **미구현**), 폰 연결/끊김. 토스트는 설정 `app.notifications`를 따른다.
 
 ---

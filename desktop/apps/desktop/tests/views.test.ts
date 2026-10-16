@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sampleApproval, sampleSession } from "../src/api/samples";
+import { ttlWarning } from "../src/views/integrations";
 import { T0, click, mountHarness, q, qa, settle, type Harness } from "./helpers";
 
 describe("views (Korean UI, measured status)", () => {
@@ -118,6 +119,29 @@ describe("views (Korean UI, measured status)", () => {
     await settle();
     expect(h.root.querySelector("[data-ttl-warning]")).toBeNull();
     expect(h.store.get().status?.effective_ttl_s).toBe(180);
+  });
+
+  it("ttlWarning: no warning without installed hooks or a hook timeout (no negative effective TTL)", () => {
+    expect(ttlWarning(120, 0, false)).toBeNull();
+    expect(ttlWarning(120, 0, true)).toBeNull();
+    expect(ttlWarning(120, 120, false)).toBeNull();
+    expect(ttlWarning(180, 120, true)).toEqual({ effective: 90 });
+    expect(ttlWarning(90, 120, true)).toBeNull();
+    expect(ttlWarning(undefined, 120, true)).toBeNull();
+  });
+
+  it("settings and integrations: no TTL warning banner while the hooks are not installed", async () => {
+    h = await mountHarness({ settings: { seed: true } });
+    await h.controller.setSetting("approval.ttl_s", 180);
+    await h.controller.hooksUninstall("claude_code", "http");
+    await settle();
+    expect(h.store.get().status?.hooks_installed).toBe(false);
+    expect(h.store.get().status?.hook_timeout_s).toBe(0);
+    await h.go("settings");
+    expect(h.root.querySelector("[data-ttl-warning]")).toBeNull();
+    await h.go("integrations");
+    expect(h.root.querySelector("[data-ttl-warning]")).toBeNull();
+    expect(h.root.textContent ?? "").not.toContain("-30");
   });
 
   it("integrations: Claude install/uninstall; Codex checklist persists manual steps, copies the draft, flags missing first event", async () => {

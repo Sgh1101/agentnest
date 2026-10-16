@@ -2,10 +2,12 @@
 //!
 //! The tray is **not** a shortcut around the approval gate. For every pending request the menu always offers
 //! "로컬로 처리" (hand off to the agent's own prompt, which never decides anything) and "승인 창 열기". Only requests
-//! whose risk is `low` or `medium` **and** whose card asks for no extra confirmation additionally get an inline
-//! allow / deny. `high` and `critical` requests never get an allow item: the user has to open the window and pass the
-//! long-press (and, for `critical`, re-display) gate there, and the daemon refuses an allow without `confirm_ack`
-//! anyway (security.md 6.2.1). [`inline_decision_allowed`] is the single predicate; the menu builder uses it and the
+//! whose card asks for no extra confirmation additionally get an inline deny when the risk is `low` or `medium`
+//! (denying is always safe), and an inline allow **only when the risk is `low`**. The menu shows the title and the
+//! risk label but never the command, so a `medium` request (which the phone only lets the user allow after showing the
+//! command and a biometric check) has to be allowed in the window. `high` and `critical` requests never get an allow
+//! item: the user has to open the window and pass the long-press (and, for `critical`, re-display) gate there, and the
+//! daemon refuses an allow without `confirm_ack` anyway (security.md 6.2.1). [`inline_decision_allowed`] is the single predicate; the menu builder uses it and the
 //! action handler in [`crate::ShellApi::tray_decide`] re-checks it against the *live* card, so a stale menu entry
 //! cannot approve a request that has since been replaced by a riskier one.
 
@@ -31,15 +33,22 @@ pub enum TrayIcon {
     Red,
 }
 
-/// What an inline decision may be.
+/// What an inline decision may be: an allow only for `low` risk, a deny for `low` / `medium`, both only without extra
+/// confirmation and only when the card offers the decision. Unknown risk levels and confirmations fail closed.
 pub fn inline_decision_allowed(card: &ApprovalRequest, decision: Decision) -> bool {
-    let low_friction = matches!(
-        card.risk.level.effective(),
-        RiskLevel::Low | RiskLevel::Medium
-    ) && card.risk.extra_confirmation == ExtraConfirmation::None;
-    // `deny_and_stop` is never offered inline: stopping the agent is a deliberate act in the window
-    let kind_ok = matches!(decision, Decision::Allow | Decision::Deny);
-    low_friction && kind_ok && card.allows(decision)
+    if card.risk.extra_confirmation != ExtraConfirmation::None {
+        return false;
+    }
+    let level = card.risk.level.effective();
+    // `deny_and_stop` is never offered inline: stopping the agent is a deliberate act in the window.
+    // An inline allow is limited to `low`: the menu cannot show the command, so a `medium` request is allowed in the
+    // window only (docs/desktop.md 4: no path with less friction than the phone).
+    let kind_ok = match decision {
+        Decision::Allow => matches!(level, RiskLevel::Low),
+        Decision::Deny => matches!(level, RiskLevel::Low | RiskLevel::Medium),
+        _ => false,
+    };
+    kind_ok && card.allows(decision)
 }
 
 /// The gate of a tray "허용" / "거부" click, applied to the **live** pending cards: the card must still exist, and the
@@ -238,7 +247,7 @@ pub enum ApprovalClick {
     Handoff,
     /// "승인 창 열기".
     OpenWindow,
-    /// "허용" (low / medium only).
+    /// "허용" (low only).
     Allow,
     /// "거부" (low / medium only).
     Deny,
@@ -544,32 +553,33 @@ mod tests {
     }
 
     #[test]
-    fn only_low_and_medium_requests_get_inline_allow_and_deny() {
-        for (level, extra, inline) in [
-            ("low", "none", true),
-            ("medium", "none", true),
-            ("high", "hold", false),
-            ("critical", "hold_and_reconfirm", false),
+    fn inline_allow_is_low_only_and_inline_deny_is_low_or_medium() {
+        for (level, extra, inline_allow, inline_deny) in [
+            ("low", "none", true, true),
+            // the menu cannot show the command: a medium request is allowed in the window only, but may be denied
+            ("medium", "none", false, true),
+            ("high", "hold", false, false),
+            ("critical", "hold_and_reconfirm", false, false),
             // a contradictory card (low but asking for a hold) is not inline-approvable either
-            ("low", "hold", false),
-            ("medium", "hold_and_reconfirm", false),
+            ("low", "hold", false, false),
+            ("medium", "hold_and_reconfirm", false, false),
             // high without extra confirmation would be a classifier bug: still not inline
-            ("high", "none", false),
-            ("critical", "none", false),
+            ("high", "none", false, false),
+            ("critical", "none", false, false),
             // unknown values fail closed
-            ("future_level", "none", false),
-            ("low", "future_gate", false),
+            ("future_level", "none", false, false),
+            ("low", "future_gate", false, false),
         ] {
             let c = card("ar_1", level, extra, &["allow", "deny", "deny_and_stop"]);
             let model = TrayModel::build(&input_with(&[c]));
             assert_eq!(
                 has_decision_item(&model, "ar_1", "allow"),
-                inline,
+                inline_allow,
                 "{level}/{extra} allow"
             );
             assert_eq!(
                 has_decision_item(&model, "ar_1", "deny"),
-                inline,
+                inline_deny,
                 "{level}/{extra} deny"
             );
             // hand-off and the window are always there
@@ -603,11 +613,22 @@ mod tests {
             card("ar_swapped", "high", "hold", &["allow", "deny"]),
             card("ar_denyonly", "low", "none", &["deny"]),
         ];
-        for id in ["ar_low", "ar_med"] {
-            for d in [Decision::Allow, Decision::Deny] {
-                assert_eq!(tray_gate(&cards, id, d).unwrap().request_id, id);
-            }
+        for d in [Decision::Allow, Decision::Deny] {
+            assert_eq!(tray_gate(&cards, "ar_low", d).unwrap().request_id, "ar_low");
         }
+        // medium: deny inline, allow only in the window
+        assert_eq!(
+            tray_gate(&cards, "ar_med", Decision::Deny)
+                .unwrap()
+                .request_id,
+            "ar_med"
+        );
+        assert_eq!(
+            tray_gate(&cards, "ar_med", Decision::Allow)
+                .unwrap_err()
+                .code,
+            code::EXTRA_CONFIRMATION_REQUIRED
+        );
         for id in ["ar_high", "ar_crit", "ar_swapped"] {
             for d in [Decision::Allow, Decision::Deny, Decision::DenyAndStop] {
                 assert_eq!(

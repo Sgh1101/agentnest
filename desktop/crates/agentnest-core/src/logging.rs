@@ -63,7 +63,7 @@ fn max_level(level: LogLevel) -> tracing::Level {
 }
 
 /// A writer that masks every complete line before handing it on.
-struct RedactingWriter<W: Write> {
+pub struct RedactingWriter<W: Write> {
     inner: W,
     pending: Vec<u8>,
 }
@@ -109,9 +109,19 @@ impl<W: Write> Drop for RedactingWriter<W> {
     }
 }
 
+/// A [`MakeWriter`] whose writers mask every line with [`crate::redact::mask`] before it reaches the wrapped
+/// non-blocking file writer. The desktop shell installs its own subscriber and must use this writer too, so that the
+/// shell's log file gets the same masking as the daemon's (docs/security.md 8.2).
 #[derive(Clone)]
-struct RedactingMakeWriter {
+pub struct RedactingMakeWriter {
     inner: NonBlocking,
+}
+
+impl RedactingMakeWriter {
+    /// Wraps `inner`; every line written through the produced writers is masked first.
+    pub fn new(inner: NonBlocking) -> Self {
+        Self { inner }
+    }
 }
 
 impl<'a> MakeWriter<'a> for RedactingMakeWriter {
@@ -140,7 +150,7 @@ pub fn build_file_subscriber(
         .map_err(|_| LogError::Writer)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let subscriber = tracing_subscriber::fmt()
-        .with_writer(RedactingMakeWriter { inner: writer })
+        .with_writer(RedactingMakeWriter::new(writer))
         .with_ansi(false)
         .with_max_level(max_level(level))
         .finish();

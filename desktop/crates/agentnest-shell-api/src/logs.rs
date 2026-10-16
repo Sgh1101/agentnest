@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use agentnest_core::config::LogLevel;
+use agentnest_core::logging::RedactingMakeWriter;
 use agentnest_core::redact::{clip, mask};
 use regex::Regex;
 use thiserror::Error;
@@ -20,8 +21,8 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 pub const LOG_FILE_PREFIX: &str = "agentnest";
 /// See above.
 pub const LOG_FILE_SUFFIX: &str = "log";
-/// Daily files kept on disk.
-pub const LOG_FILES_KEPT: usize = 14;
+/// Daily files kept on disk (the same window as the daemon's logger: docs/security.md 8.2, docs/storage.md 3).
+pub const LOG_FILES_KEPT: usize = agentnest_core::logging::LOG_FILES_KEPT;
 /// Most lines `logs_tail` returns.
 pub const TAIL_MAX_LINES: usize = 1000;
 /// One line is cut to this many characters.
@@ -52,7 +53,8 @@ fn max_level(level: LogLevel) -> tracing::Level {
     }
 }
 
-/// A subscriber that writes plain text lines to the daily rolling file in `logs_dir`.
+/// A subscriber that writes plain text lines to the daily rolling file in `logs_dir`. Every line is masked with the
+/// shared redactor before it is written (security.md 8.2), exactly like the daemon's own file logger.
 pub fn build_file_subscriber(
     logs_dir: &Path,
     level: LogLevel,
@@ -73,7 +75,7 @@ pub fn build_file_subscriber(
         .map_err(|_| LogInitError::Writer)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
     let subscriber = tracing_subscriber::fmt()
-        .with_writer(writer)
+        .with_writer(RedactingMakeWriter::new(writer))
         .with_ansi(false)
         .with_max_level(max_level(level))
         .finish();
@@ -286,6 +288,35 @@ mod tests {
             .iter()
             .any(|l| l.contains("something odd") && l.contains("attempt=3")));
         assert!(!t.iter().any(|l| l.contains("not at info level")));
+    }
+
+    #[test]
+    fn the_log_file_itself_never_holds_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let (subscriber, guard) = build_file_subscriber(dir.path(), LogLevel::Info).unwrap();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!("request with Authorization: Bearer fakeBearerValue123456 failed");
+            tracing::error!(
+                url = "https://someuser:fakeUrlPassw0rd@example.com/x",
+                "fetch failed"
+            );
+            tracing::info!("login password=fakePasswordValue99 accepted");
+        });
+        drop(guard); // flush
+        let mut raw = String::new();
+        for e in fs::read_dir(dir.path()).unwrap().flatten() {
+            raw.push_str(&fs::read_to_string(e.path()).unwrap());
+        }
+        for secret in ["fakeBearerValue123456", "fakeUrlPassw0rd", "fakePasswordValue99"] {
+            assert!(!raw.contains(secret), "{secret} reached the file: {raw}");
+        }
+        assert!(raw.contains("<redacted>"), "{raw}");
+        assert!(raw.contains("fetch failed"), "{raw}");
+    }
+
+    #[test]
+    fn seven_daily_files_are_kept() {
+        assert_eq!(LOG_FILES_KEPT, 7);
     }
 
     #[test]

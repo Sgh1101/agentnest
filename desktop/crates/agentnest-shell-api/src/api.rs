@@ -722,7 +722,7 @@ impl ShellApi {
         }
     }
 
-    /// A tray "허용" / "거부" click. The menu only offers these for `low` / `medium` requests; this re-checks the
+    /// A tray "허용" / "거부" click. The menu offers an allow for `low` requests only and a deny for `low` / `medium` requests; this re-checks the
     /// **live** card (a menu can be stale) and then sends the same `confirm_ack = false` local decision the window
     /// would, which the broker validates like any other (security.md 6.2.1).
     pub async fn tray_decide(&self, request_id: &str, decision: Decision) -> Result<(), IpcError> {

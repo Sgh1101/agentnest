@@ -24,7 +24,7 @@ function toggle<K extends WritableSettingKey>(c: AppController, key: K, checked:
 
 export const settingsView = simpleView(
   // Primitive status fields only: unrelated daemon events must not rebuild the page mid-drag.
-  (s) => [s.settings, s.status?.link_enabled, s.status?.remote_approval_paused, s.status?.hook_timeout_s],
+  (s) => [s.settings, s.status?.link_enabled, s.status?.remote_approval_paused, s.status?.hook_timeout_s, s.status?.hooks_installed],
   (s, ctx) => {
     const set = s.settings;
     const st = s.status;
@@ -38,7 +38,7 @@ export const settingsView = simpleView(
       out.textContent = `${slider.value}초`;
     });
     slider.addEventListener("change", () => void c.setSetting("approval.ttl_s", Number(slider.value)));
-    const warn = ttlWarning(ttl, st?.hook_timeout_s);
+    const warn = ttlWarning(ttl, st?.hook_timeout_s, st?.hooks_installed);
 
     const critical = h("select", { class: "input", "data-fid": "set-critical", "data-key": "approval.critical_remote", "aria-label": "매우 높은 위험 요청의 원격 승인" }, h("option", { value: "extra_confirmation" }, "추가 확인 후 원격 승인 허용"), h("option", { value: "local_only" }, "PC에서만 처리"));
     critical.value = set["approval.critical_remote"];

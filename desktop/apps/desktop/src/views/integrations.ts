@@ -7,9 +7,16 @@ import { badge, button, kv, section } from "../ui/components";
 import { codexChecklist } from "../ui/codexChecklist";
 import { simpleView, type ViewCtx } from "../ui/view";
 
-/** Effective-TTL warning (desktop.md section 6 "Integrations"): setting TTL > hook timeout - 30. */
-export function ttlWarning(ttl: number | undefined, hookTimeoutS: number | undefined): { effective: number } | null {
-  if (ttl === undefined || hookTimeoutS === undefined) return null;
+/**
+ * Effective-TTL warning (desktop.md section 6 "Integrations"): setting TTL > hook timeout - 30. Without installed hooks
+ * the daemon reports a timeout of 0 (nothing to compare against), which must not turn into a negative "effective" TTL.
+ */
+export function ttlWarning(
+  ttl: number | undefined,
+  hookTimeoutS: number | undefined,
+  hooksInstalled: boolean | undefined,
+): { effective: number } | null {
+  if (ttl === undefined || hookTimeoutS === undefined || hooksInstalled !== true || !(hookTimeoutS > 0)) return null;
   const effective = hookTimeoutS - 30;
   return ttl > effective ? { effective } : null;
 }
@@ -22,7 +29,7 @@ export const integrationsView = (ctx: ViewCtx) => {
       const st = s.status;
       const claude = s.hooks.claude_code;
       const now = c.clock();
-      const warn = ttlWarning(s.settings?.["approval.ttl_s"], st?.hook_timeout_s);
+      const warn = ttlWarning(s.settings?.["approval.ttl_s"], st?.hook_timeout_s, st?.hooks_installed);
       const probe = s.codexProbe;
       const codexAdapter = s.adapters.codex;
 
