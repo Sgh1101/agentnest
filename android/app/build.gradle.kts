@@ -1,7 +1,7 @@
 // CI-only module: it needs the Android SDK (ubuntu-latest has it; the local build box does not, see settings.gradle.kts).
 // AGP 9 has built-in Kotlin: org.jetbrains.kotlin.android must NOT be applied (docs/android.md 1.1).
 plugins {
-    alias(libs.plugins.android.application)
+    id("com.android.application") // version comes from the root buildscript classpath
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }

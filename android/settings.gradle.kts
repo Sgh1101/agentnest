@@ -39,7 +39,11 @@ fun androidSdkDir(): File? {
 }
 val skipAndroid = providers.gradleProperty("agentnest.skipAndroid").map { it.toBoolean() }.getOrElse(false)
 val sdk = androidSdkDir()
-if (sdk != null && !skipAndroid) {
+val includeApp = sdk != null && !skipAndroid
+// Read by the root build script: AGP must sit on the ROOT classpath next to the Kotlin Gradle plugin
+// (same classloader), otherwise KGP cannot see AGP classes (NoClassDefFoundError BaseVariant).
+System.setProperty("agentnest.includeApp", includeApp.toString())
+if (includeApp) {
     include(":app")
     logger.lifecycle("[agentnest] Android SDK at $sdk -> including :app")
 } else {

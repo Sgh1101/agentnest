@@ -1,0 +1,7 @@
+# Keep line endings stable across platforms: tests compare docs/fixtures byte-for-byte.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
+*.jar binary
+*.keystore binary

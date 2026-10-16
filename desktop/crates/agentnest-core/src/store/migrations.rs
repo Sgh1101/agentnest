@@ -265,7 +265,8 @@ mod tests {
 
     fn storage_doc_ddl() -> Vec<String> {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../docs/storage.md");
-        let doc = std::fs::read_to_string(path).unwrap();
+        // Normalise CRLF so the check also holds on a Windows checkout with autocrlf.
+        let doc = std::fs::read_to_string(path).unwrap().replace("\r\n", "\n");
         let start = doc.find("```sql\n").unwrap() + "```sql\n".len();
         let end = start + doc[start..].find("\n```").unwrap();
         let sql = &doc[start..end];
