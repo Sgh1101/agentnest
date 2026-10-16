@@ -257,7 +257,7 @@ class ReviewRegressionTest {
         assertEquals(ExtraConfirmationLevel.NONE, DecisionValidator.gate(tricky, Decision.DENY, Policy()).extraConfirmation)
         // the build step enforces it too
         val card = ApprovalCard(tricky.requestId, tricky, T.T0)
-        val ctx = DecisionContext(now, 0, T.connected(), null, Policy(), awaitingSnapshot = false)
+        val ctx = DecisionContext(now, 0, T.connected(), T.session("claude_code:s1", AgentState.AWAITING_APPROVAL), Policy(), awaitingSnapshot = false)
         assertEquals(
             BuildResult.Refused(DecisionBlock.EXTRA_CONFIRMATION_REQUIRED),
             DecisionBuilder().build(card, Decision.ALLOW, UserGateResult(AuthMethod.BIOMETRIC, now.minusSeconds(1)), ctx),
@@ -308,7 +308,7 @@ class ReviewRegressionTest {
     private fun ghostDecision(id: String, decision: Decision = Decision.DENY, user: UserGateResult = UserGateResult()): DecisionMessage {
         val ghost = T.request(id = id, created = T.T0)
         val card = ApprovalCard(ghost.requestId, ghost, T.T0)
-        val ctx = DecisionContext(now, 0, T.connected(), null, Policy(), awaitingSnapshot = false)
+        val ctx = DecisionContext(now, 0, T.connected(), T.session("claude_code:s1", AgentState.AWAITING_APPROVAL), Policy(), awaitingSnapshot = false)
         return (DecisionBuilder().build(card, decision, user, ctx) as BuildResult.Built).message
     }
 

@@ -21,6 +21,7 @@ import dev.agentnest.app.ui.common.ToneChip
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.SessionState
 import java.time.Instant
+import dev.agentnest.core.text.DisplaySanitizer
 
 /** One project as far as the phone can infer it from sessions (Phase 1, docs/android.md 2.3). */
 data class ProjectSummary(
@@ -40,9 +41,9 @@ object ProjectList {
                 val newest = list.maxByOrNull { it.lastEventAt?.instant ?: Instant.EPOCH } ?: list.first()
                 ProjectSummary(
                     key = key,
-                    name = newest.project.name.ifBlank { key },
-                    pathHint = newest.project.pathHint?.takeIf { it.isNotBlank() },
-                    branch = newest.project.branch?.takeIf { it.isNotBlank() },
+                    name = DisplaySanitizer.display(newest.project.name.ifBlank { key }),
+                    pathHint = newest.project.pathHint?.let { DisplaySanitizer.display(it) }?.takeIf { it.isNotBlank() },
+                    branch = newest.project.branch?.let { DisplaySanitizer.display(it) }?.takeIf { it.isNotBlank() },
                     agents = list.map { Labels.agent(it.agentKind, it.agentLabel) }.distinct(),
                     lastActivity = newest.lastEventAt,
                 )

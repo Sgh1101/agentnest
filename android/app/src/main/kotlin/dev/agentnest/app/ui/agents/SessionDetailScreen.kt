@@ -106,7 +106,7 @@ fun EventRow(event: AgentEvent, skewMs: Long, modifier: Modifier = Modifier, sho
             )
             ToneChip(Labels.eventKind(event.kind), Labels.eventTone(event))
             if (showSession) {
-                val project = event.project?.name.orEmpty()
+                val project = dev.agentnest.core.text.DisplaySanitizer.display(event.project?.name)
                 if (project.isNotBlank()) {
                     Text(project, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

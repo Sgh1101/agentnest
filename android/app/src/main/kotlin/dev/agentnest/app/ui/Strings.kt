@@ -87,6 +87,7 @@ object S {
     const val DENY_AND_STOP = "거부하고 멈추기"
     const val HOLD_TO_ALLOW = "길게 눌러 허용"
     const val HOLD_HINT = "허용은 버튼을 1.5초 동안 누르고 있어야 해요"
+    const val EXPAND_BEFORE_ALLOW = "명령이 길어서 잘려 보여요. '전체 보기'로 끝까지 읽어야 허용할 수 있어요"
     const val HOLD_TO_CONFIRM = "길게 눌러 확인"
     const val COMMAND_LABEL = "실행될 명령"
     const val CHANGE_LABEL = "변경될 내용"

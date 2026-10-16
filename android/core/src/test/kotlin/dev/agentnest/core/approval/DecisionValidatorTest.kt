@@ -121,8 +121,9 @@ class DecisionValidatorTest {
         assertEquals(DecisionBlock.REMOTE_UNAVAILABLE, blockOf(DecisionValidator.enablement(card(), Decision.ALLOW, ctx(remote = RemoteApproval.UNAVAILABLE))))
         assertEquals(DecisionBlock.REMOTE_UNAVAILABLE, blockOf(DecisionValidator.enablement(card(), Decision.ALLOW, ctx(remote = RemoteApproval.UNKNOWN))))
         assertEquals(DecisionBlock.REMOTE_PAUSED, blockOf(DecisionValidator.enablement(card(), Decision.DENY, ctx(remote = RemoteApproval.PAUSED))))
-        // The session is not known yet: the PC enforces it, the phone does not guess.
-        assertIs<Enablement.Enabled>(DecisionValidator.enablement(card(), Decision.ALLOW, ctx(remote = null)))
+        // The session is not known: fail-closed, no remote approval for a session the phone cannot vouch for.
+        assertEquals(DecisionBlock.REMOTE_UNAVAILABLE, blockOf(DecisionValidator.enablement(card(), Decision.ALLOW, ctx(remote = null))))
+        assertEquals(DecisionBlock.REMOTE_UNAVAILABLE, blockOf(DecisionValidator.enablement(card(), Decision.DENY, ctx(remote = null))))
     }
 
     @Test

@@ -33,6 +33,8 @@ data class HelloPayload(
     val appVersion: String? = null,
     val lastSeq: Long = 0,
     val wantsSnapshot: Boolean = false,
+    /** Phase 3 signature (optional in the v1 schema); Phase 1 servers ignore it and the phone never sets it. */
+    val signatureB64: String? = null,
 ) {
     override fun toString(): String = "HelloPayload(deviceId=$deviceId, lastSeq=$lastSeq, token=<redacted>)"
 }
@@ -69,6 +71,8 @@ data class DecisionPayload(
     val decidedAt: Ts,
     val auth: AuthClaim? = null,
     val extraConfirmation: ExtraConfirmationClaim? = null,
+    /** Phase 3 signature (optional in the v1 schema); Phase 1 servers ignore it and the phone never sets it. */
+    val signatureB64: String? = null,
 ) {
     override fun toString(): String =
         "DecisionPayload(requestId=$requestId, decision=${decision.wire}, auth=${auth?.method?.wire})"

@@ -107,7 +107,7 @@ private fun HistoryRow(entry: ApprovalHistoryEntry, skewMs: Long, modifier: Modi
         lines.drop(1).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         val by = ApprovalStatus.resolvedBy(entry.resolvedBy)
         val at = entry.resolvedAt?.let { Format.clock(dev.agentnest.core.protocol.Ts.of(it), skewMs) }
-        val meta = listOfNotNull(by.takeIf { it.isNotEmpty() }, at, entry.agentLabel.takeIf { it.isNotBlank() }, entry.projectName.takeIf { it.isNotBlank() })
+        val meta = listOfNotNull(by.takeIf { it.isNotEmpty() }, at, dev.agentnest.core.text.DisplaySanitizer.display(entry.agentLabel).takeIf { it.isNotBlank() }, dev.agentnest.core.text.DisplaySanitizer.display(entry.projectName).takeIf { it.isNotBlank() })
         if (meta.isNotEmpty()) {
             Text(
                 meta.joinToString(" · "),

@@ -193,6 +193,6 @@ class ApprovalStatusTest {
         assertTrue(text.length <= 80)
         assertTrue(text.endsWith("…"))
         assertFalse(text.contains("SECRET PURPOSE"))
-        assertEquals("ls -la", AuthText.description(TD.request(command = "ls -la\nsecond line")))
+        assertEquals("ls -la (+1줄)", AuthText.description(TD.request(command = "ls -la\nsecond line")))
     }
 }

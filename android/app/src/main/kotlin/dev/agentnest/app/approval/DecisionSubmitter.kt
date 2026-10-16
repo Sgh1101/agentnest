@@ -179,25 +179,33 @@ object AuthText {
     private const val MAX_DESCRIPTION_CHARS = 80
 
     /**
-     * The command (first line, 80 characters) or, when there is none, the first affected path. Never the agent's
-     * purpose. Hidden / direction-changing characters are shown as `⟨U+XXXX⟩` escapes, and a second line says how many
-     * there are (the prompt must not show something the user cannot see).
+     * The command (first line, at most 80 characters in total) or, when there is none, the first affected path. When
+     * the command has more lines the first line is followed by " (+N줄)" (N = further non-blank lines), so the prompt
+     * never suggests that the whole command is one line. Never the agent's purpose. Hidden / direction-changing
+     * characters are shown as `⟨U+XXXX⟩` escapes, and a second line says how many there are (the prompt must not show
+     * something the user cannot see).
      */
     fun description(request: ApprovalRequest): String {
         val source = request.details.command?.takeIf { it.isNotBlank() }
             ?: request.details.filePaths.firstOrNull()
             ?: request.toolName
-        val oneLine = source.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: ""
-        val shown = clip(oneLine)
+        val lines = source.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.toList()
+        val first = lines.firstOrNull() ?: ""
+        val more = lines.size - 1
+        val suffix = if (more > 0) moreLines(more) else ""
+        val shown = clip(first, MAX_DESCRIPTION_CHARS - suffix.length) + suffix
         val hidden = ApprovalDisplay.hiddenCharCount(request)
         return if (hidden > 0) shown + "\n" + hiddenNote(hidden) else shown
     }
 
+    /** " (+N줄)": how many more lines the command has than the one shown. */
+    fun moreLines(count: Int): String = " (+${count}줄)"
+
     /** "보이지 않는 문자 N개" (also used by the cards). */
     fun hiddenNote(count: Int): String = dev.agentnest.app.ui.S.hiddenChars(count)
 
-    /** Sanitises [line] and cuts it to [MAX_DESCRIPTION_CHARS] without splitting an escape. */
-    private fun clip(line: String): String {
+    /** Sanitises [line] and cuts it to [limit] characters without splitting an escape. */
+    private fun clip(line: String, limit: Int): String {
         val pieces = ArrayList<String>()
         var i = 0
         while (i < line.length) {
@@ -205,10 +213,10 @@ object AuthText {
             i += Character.charCount(cp)
             pieces += if (DisplaySanitizer.isHidden(cp)) DisplaySanitizer.escape(cp) else String(Character.toChars(cp))
         }
-        if (pieces.sumOf { it.length } <= MAX_DESCRIPTION_CHARS) return pieces.joinToString("")
+        if (pieces.sumOf { it.length } <= limit) return pieces.joinToString("")
         val sb = StringBuilder()
         for (piece in pieces) {
-            if (sb.length + piece.length > MAX_DESCRIPTION_CHARS - 1) break
+            if (sb.length + piece.length > limit - 1) break
             sb.append(piece)
         }
         return sb.append('…').toString()

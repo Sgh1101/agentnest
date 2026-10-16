@@ -14,6 +14,7 @@ import dev.agentnest.core.protocol.RiskLevel
 import dev.agentnest.core.protocol.Severity
 import dev.agentnest.core.protocol.TestStatus
 import dev.agentnest.core.text.Fallbacks
+import dev.agentnest.core.text.DisplaySanitizer
 
 /**
  * Korean labels for protocol enums (pure, unit-tested). Text about agents, sessions and approvals comes from the PC
@@ -62,8 +63,11 @@ object Labels {
         AgentState.DISCONNECTED -> Tone.MUTED
     }
 
-    /** Product name for an agent kind. */
-    fun agent(kind: AgentKind, label: String): String = label.ifBlank { kind.shortName }
+    /** Product name for an agent kind. The PC-supplied [label] goes through the display sanitiser like all server text. */
+    fun agent(kind: AgentKind, label: String): String = DisplaySanitizer.display(label).ifBlank { kind.shortName }
+
+    /** The PC's name as shown in banners, status rows and notifications (sanitised, may be empty). */
+    fun pcName(name: String?): String = DisplaySanitizer.display(name)
 
     /** What happened to a finished approval. Unknown outcomes read as "처리됨". */
     fun outcome(outcome: ApprovalOutcome): String = when (outcome) {

@@ -9,6 +9,7 @@ import dev.agentnest.core.protocol.Delivery
 import dev.agentnest.core.protocol.ResolvedBy
 import java.time.Duration
 import java.time.Instant
+import dev.agentnest.core.text.DisplaySanitizer
 
 /** Pure wording of the decision progress and result lines (docs/android.md 2.2). Unit-tested. */
 object ApprovalStatus {
@@ -21,7 +22,7 @@ object ApprovalStatus {
         val result = card.lastResult
         if (inFlight == null) {
             // A rejected decision leaves the card pending; show why so the user can try again.
-            return if (result != null && !result.accepted) result.messageKo ?: "PC가 이 결정을 받아들이지 않았어요" else null
+            return if (result != null && !result.accepted) result.messageKo?.let { DisplaySanitizer.display(it) }?.takeIf { it.isNotBlank() } ?: "PC가 이 결정을 받아들이지 않았어요" else null
         }
         return when {
             result != null && result.accepted -> "PC가 받았어요 · 처리 결과를 기다리는 중이에요"
@@ -37,11 +38,11 @@ object ApprovalStatus {
             (entry.outcome == ApprovalOutcome.ALLOWED ||
                 entry.outcome == ApprovalOutcome.DENIED ||
                 entry.outcome == ApprovalOutcome.DENIED_AND_STOPPED)
-        val agent = shortAgent(entry.agentLabel)
+        val agent = shortAgent(DisplaySanitizer.display(entry.agentLabel))
         lines += if (delivered && agent.isNotEmpty()) "${Labels.outcome(entry.outcome)} · ${agent}에 전달했어요" else Labels.outcome(entry.outcome)
         val observed = Labels.observed(entry.observedResult, agent.ifEmpty { "에이전트" })
         if (observed.isNotEmpty()) lines += observed
-        entry.messageKo?.takeIf { it.isNotBlank() && it != lines.first() }?.let { lines += it }
+        entry.messageKo?.let { DisplaySanitizer.display(it) }?.takeIf { it.isNotBlank() && it != lines.first() }?.let { lines += it }
         return lines
     }
 

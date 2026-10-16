@@ -342,7 +342,7 @@ class NestReducerTest {
         var s = synced(100).apply(T.approvalMsg(101, req)).first
         s = reducer.markDecisionSent(s, "ar_1", "msg1", Decision.ALLOW, now)
         assertNotNull(s.approvals.getValue("ar_1").inFlight)
-        s = s.apply(T.decisionResult("ar_1", true, DecisionResultReason.APPLIED)).first
+        s = s.apply(T.decisionResult("ar_1", true, DecisionResultReason.APPLIED, inReplyTo = "msg1")).first
         assertNotNull(s.approvals.getValue("ar_1").inFlight)
         s = s.apply(T.resolvedMsg(102, "ar_1")).first
         assertTrue(s.approvals.isEmpty())
@@ -353,7 +353,7 @@ class NestReducerTest {
         val req = T.request(id = "ar_1")
         var s = synced(100).apply(T.approvalMsg(101, req)).first
         s = reducer.markDecisionSent(s, "ar_1", "msg1", Decision.ALLOW, now)
-        s = s.apply(T.decisionResult("ar_1", false, DecisionResultReason.AUTH_REQUIRED)).first
+        s = s.apply(T.decisionResult("ar_1", false, DecisionResultReason.AUTH_REQUIRED, inReplyTo = "msg1")).first
         val card = s.approvals.getValue("ar_1")
         assertNull(card.inFlight)
         assertEquals(DecisionResultReason.AUTH_REQUIRED, card.lastResult?.reason)

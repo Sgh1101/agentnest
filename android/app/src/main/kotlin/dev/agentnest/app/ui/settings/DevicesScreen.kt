@@ -31,6 +31,7 @@ import dev.agentnest.app.ui.common.RepairDialog
 import dev.agentnest.app.ui.common.ScreenHeader
 import dev.agentnest.app.ui.common.SectionLabel
 import kotlinx.coroutines.launch
+import dev.agentnest.app.ui.Labels
 
 /**
  * Devices (docs/android.md 2.3): the paired PC, its stored addresses, "IP 직접 입력", an address refresh by QR rescan,
@@ -65,7 +66,7 @@ fun DevicesScreen(
         }
         SectionLabel(S.THIS_DEVICE)
         InfoCard(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Text(paired.pcName.ifBlank { paired.pcId }, style = MaterialTheme.typography.titleMedium)
+            Text(Labels.pcName(paired.pcName).ifBlank { paired.pcId }, style = MaterialTheme.typography.titleMedium)
             KeyValueRow(S.PC_ID, paired.pcId)
             KeyValueRow(S.DEVICE_ID, paired.deviceId)
         }

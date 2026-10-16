@@ -18,6 +18,8 @@ import dev.agentnest.core.link.LinkState
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.text.RelativeTime
 import java.time.Instant
+import dev.agentnest.core.text.DisplaySanitizer
+import dev.agentnest.app.ui.Labels
 
 /** One diagnostics line. */
 data class DiagLine(val label: String, val value: String)
@@ -33,7 +35,7 @@ object Diagnostics {
         (nest.link as? LinkState.Connected)?.let { c ->
             out += DiagLine(S.DIAG_RTT, c.rttMs?.let { "$it ms" } ?: "-")
         }
-        out += DiagLine(S.DIAG_PC, nest.pc?.let { "${it.name} (${it.appVersion})" } ?: "-")
+        out += DiagLine(S.DIAG_PC, nest.pc?.let { "${Labels.pcName(it.name)} (${DisplaySanitizer.display(it.appVersion)})" } ?: "-")
         out += DiagLine(S.DIAG_SESSIONS, nest.sessions.size.toString())
         out += DiagLine(S.DIAG_APPROVALS, nest.approvals.size.toString())
         out += DiagLine(S.DIAG_LAST_SEQ, nest.lastSeq.toString())

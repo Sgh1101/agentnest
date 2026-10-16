@@ -335,7 +335,7 @@ class ReviewRegressionTest {
         }
         assertEquals(VaultAction.GIVE_UP, VaultRetry.action(VaultResult.Transient, VaultRetry.DELAYS_MS.size))
         assertTrue(VaultRetry.DELAYS_MS.zipWithNext().all { (a, b) -> b >= a })
-        // the only road to a wipe is Invalid
+        // the roads to a wipe are Invalid and (after a few re-checks) KeyMissing; a transient failure never wipes
         assertEquals(VaultAction.WIPE_PAIRING, VaultRetry.action(VaultResult.Invalid, 0))
         assertEquals(VaultAction.CONNECT, VaultRetry.action(VaultResult.Ok(ByteArray(1)), 3))
         for (attempt in 0..20) assertNotEquals(VaultAction.WIPE_PAIRING, VaultRetry.action(VaultResult.Transient, attempt))

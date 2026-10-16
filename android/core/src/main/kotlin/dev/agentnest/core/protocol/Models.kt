@@ -116,7 +116,10 @@ data class SessionMeta(
     val title: String? = null,
     val model: String? = null,
     val costUsd: Double? = null,
-    val contextUsedPct: Double? = null,
+    /** Integer 0..100 in the schema (Rust `u32`). */
+    val contextUsedPct: Int? = null,
+    val prNumber: Long? = null,
+    val prUrl: String? = null,
     val review: ReviewInfo? = null,
 )
 

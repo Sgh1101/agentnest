@@ -62,7 +62,7 @@ object NotificationTexts {
         if (paused) return "연결이 일시정지됐어요"
         return when (link) {
             is LinkState.Connected -> {
-                val name = pcName?.takeIf { it.isNotBlank() } ?: link.pc.name
+                val name = Labels.pcName(pcName?.takeIf { it.isNotBlank() } ?: link.pc.name)
                 if (name.isBlank()) "연결됨" else "연결됨 · $name"
             }
             else -> Fallbacks.linkHeadline(link, now)

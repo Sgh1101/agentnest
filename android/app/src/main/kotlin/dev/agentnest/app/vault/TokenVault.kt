@@ -33,8 +33,11 @@ class TokenVault {
      * never cost the user their pairing:
      * - [VaultResult.Ok] the plain token (the caller wipes the array);
      * - [VaultResult.Invalid] the key is permanently gone: `KeyPermanentlyInvalidatedException`,
-     *   `AEADBadTagException` (the data does not authenticate), a key that does not exist in a successfully opened
-     *   Keystore, or a blob that cannot be a sealed token. The caller wipes the pairing and asks for a new one;
+     *   `AEADBadTagException` (the data does not authenticate) or a blob that cannot be a sealed token. The caller
+     *   wipes the pairing and asks for a new one;
+     * - [VaultResult.KeyMissing] a sealed token exists but a successfully opened Keystore has no key: the caller
+     *   re-checks a few times (some devices answer `null` briefly after boot) and only then treats it as lost. A
+     *   first run has no blob at all and never gets here (the service sees "not paired" before calling [open]);
      * - [VaultResult.Transient] anything else (Keystore daemon busy or restarting, provider errors, I/O): retry later,
      *   never wipe. A missing key is never recreated here (that would hide the loss).
      */
@@ -44,7 +47,7 @@ class TokenVault {
             keyStore().getKey(ALIAS, null) as? SecretKey
         } catch (e: Exception) {
             return VaultResult.fromFailure(e)
-        } ?: return VaultResult.Invalid
+        } ?: return VaultResult.KeyMissing
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES))

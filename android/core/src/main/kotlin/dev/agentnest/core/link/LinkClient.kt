@@ -1,5 +1,6 @@
 package dev.agentnest.core.link
 
+import dev.agentnest.core.nest.ApprovalCard
 import dev.agentnest.core.nest.NestReducer
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.protocol.ClientMessage
@@ -181,7 +182,8 @@ class LinkClient(
 
     /**
      * Sends a decision built by `DecisionBuilder` and marks it in flight. Returns false (and sends nothing) when the
-     * link is not connected or the card already has a decision in flight. Decisions are never queued.
+     * link is not connected, the card already has a decision in flight, or the card's binding / expiry no longer
+     * matches the message. Decisions are never queued.
      */
     suspend fun submitDecision(message: DecisionMessage): Boolean {
         val result = CompletableDeferred<Boolean>()
@@ -250,7 +252,8 @@ class LinkClient(
                 try {
                     val request = input.message.payload.requestId
                     val card = state.value.approvals[request]
-                    val allowed = card != null && card.inFlight == null && machine.state is LinkState.Connected
+                    val allowed = card != null && card.inFlight == null && machine.state is LinkState.Connected &&
+                        bindingStillHolds(card, input.message, now)
                     sent = allowed && sendIfConnected(input.message)
                     if (sent) {
                         state.value = reducer.markDecisionSent(
@@ -286,6 +289,22 @@ class LinkClient(
             result.outbound.forEach(::sendIfConnected)
             incomingFlow.tryEmit(message)
         }
+    }
+
+    /**
+     * Defence in depth right before the wire: the card must still hold the exact body the decision was built for
+     * (a conflicting follow-up frame locks the card and a changed nonce / hash / session means the user approved
+     * something else), and it must not be expired on the server clock. Anything else is not sent.
+     */
+    private fun bindingStillHolds(card: ApprovalCard, message: DecisionMessage, now: Instant): Boolean {
+        val request = card.request ?: return false
+        val payload = message.payload
+        if (card.bindingConflict) return false
+        if (card.isExpired(now, state.value.clockSkewMs)) return false
+        return payload.requestId == request.requestId &&
+            payload.sessionKey == request.sessionKey &&
+            payload.nonceB64 == request.nonceB64 &&
+            payload.toolInputSha256 == request.toolInputSha256
     }
 
     /** Messages are only ever sent on a fully connected link (hello/unpair travel as machine effects). */

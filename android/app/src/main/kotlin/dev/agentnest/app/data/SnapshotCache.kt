@@ -20,19 +20,15 @@ private val Context.cacheDataStore: DataStore<Preferences> by preferencesDataSto
 
 /**
  * The last `snapshot` for cold starts (docs/android.md 2.1: never an empty screen). Pending approval cards are NOT
- * stored (they expire within minutes and carry command text); everything else is what the PC already sent in
- * bounded, masked form.
+ * stored (they expire within minutes and carry command text), and neither are the other command / path / prompt
+ * fields: [SnapshotRedaction] keeps only what a first frame needs.
  */
 class SnapshotCache(context: Context) {
     private val store: DataStore<Preferences> = context.applicationContext.cacheDataStore
 
-    /** Saves [message] without its approval cards. */
+    /** Saves [message] without its approval cards and without command / path / prompt text. */
     suspend fun save(message: SnapshotMessage, savedAt: Instant) {
-        val stripped = SnapshotMessage(
-            message.meta,
-            message.payload.copy(pendingApprovals = emptyList(), pendingApprovalIdsComplete = emptyList()),
-        )
-        val text = Codec.encodeAny(stripped)
+        val text = Codec.encodeAny(SnapshotRedaction.strip(message))
         store.edit {
             it[SNAPSHOT] = text
             it[SAVED_AT] = savedAt.toEpochMilli()

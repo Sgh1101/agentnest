@@ -1,5 +1,6 @@
 package dev.agentnest.app.ui.approvals
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -31,16 +32,22 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.agentnest.app.ui.S
+import dev.agentnest.app.ui.common.SecureDialogWindow
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** How long the button must be held (docs/android.md 2.2: "길게 누르기 1.5초"). */
-const val HOLD_MILLIS: Int = 1500
+/** Upper bound of wall-clock re-checks per press (a delay that returns early only costs one more round). */
+private const val MAX_HOLD_ROUNDS = 5
 
 /**
  * A button that only fires after being held for [HOLD_MILLIS]; a fill sweeps across while holding and resets when the
  * finger lifts early. This (and the re-confirm dialog) is the real extra-confirmation gate for risky approvals: a
  * single tap can never trigger [onConfirmed].
+ *
+ * The decision is made on the wall clock by [HoldGate] (`SystemClock.uptimeMillis()`), never by the end of the ring
+ * animation: with the system animation scale at 0 the animation would finish on the first frame and the gate would
+ * vanish. The ring is a visual effect only.
  *
  * Accessibility: a screen reader activates a control with a double tap, which cannot "hold". The button therefore
  * exposes a click action (only through accessibility services; touch input still requires the hold) that opens an
@@ -55,6 +62,7 @@ fun HoldToConfirmButton(
     holdMillis: Int = HOLD_MILLIS,
 ) {
     val progress = remember { Animatable(0f) }
+    val gate = remember(holdMillis) { HoldGate(holdMillis.toLong()) }
     var a11yConfirm by remember { mutableStateOf(false) }
     val latest by rememberUpdatedState(onConfirmed)
     val fill = MaterialTheme.colorScheme.primary
@@ -87,13 +95,28 @@ fun HoldToConfirmButton(
                     detectTapGestures(
                         onPress = {
                             coroutineScope {
-                                val job = launch {
+                                gate.press(SystemClock.uptimeMillis())
+                                // Cosmetic ring only; it may finish instantly when animations are turned off.
+                                val ring = launch {
                                     progress.snapTo(0f)
                                     progress.animateTo(1f, tween(durationMillis = holdMillis, easing = LinearEasing))
-                                    latest()
+                                }
+                                // The real gate: wait on the wall clock, then re-check it against uptime.
+                                val hold = launch {
+                                    var rounds = 0
+                                    while (rounds++ < MAX_HOLD_ROUNDS) {
+                                        val remaining = gate.remainingMillis(SystemClock.uptimeMillis())
+                                        if (remaining > 0) delay(remaining)
+                                        if (gate.complete(SystemClock.uptimeMillis())) {
+                                            latest()
+                                            break
+                                        }
+                                    }
                                 }
                                 tryAwaitRelease()
-                                job.cancel()
+                                gate.release()
+                                hold.cancel()
+                                ring.cancel()
                                 progress.snapTo(0f)
                             }
                         },
@@ -113,7 +136,10 @@ fun HoldToConfirmButton(
         AlertDialog(
             onDismissRequest = { a11yConfirm = false },
             title = { Text(label) },
-            text = { Text(S.HOLD_A11Y_BODY) },
+            text = {
+                SecureDialogWindow(secure = false)
+                Text(S.HOLD_A11Y_BODY)
+            },
             confirmButton = {
                 TextButton(onClick = {
                     a11yConfirm = false

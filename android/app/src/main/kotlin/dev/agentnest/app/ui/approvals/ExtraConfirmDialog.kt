@@ -26,6 +26,7 @@ import dev.agentnest.core.approval.ApprovalDisplay
 import dev.agentnest.core.protocol.ApprovalRequest
 import dev.agentnest.core.text.DisplaySanitizer
 import dev.agentnest.app.ui.common.HiddenCharsChip
+import dev.agentnest.app.ui.common.SecureDialogWindow
 
 /**
  * The re-confirmation step for risky approvals (docs/android.md 2.2): shows the FULL command again and asks the user
@@ -46,6 +47,7 @@ fun ExtraConfirmDialog(
         title = { Text(S.EXTRA_CONFIRM_TITLE) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SecureDialogWindow(secure = true)
                 Text(S.EXTRA_CONFIRM_BODY, style = MaterialTheme.typography.bodyMedium)
                 HiddenCharsChip(ApprovalDisplay.hiddenCharCount(request))
                 if (needCheckbox) {

@@ -21,6 +21,7 @@ import dev.agentnest.core.protocol.AdapterStatusKind
 import dev.agentnest.core.protocol.AgentKind
 import dev.agentnest.core.protocol.SessionState
 import java.time.Instant
+import dev.agentnest.core.text.DisplaySanitizer
 
 /** The AI tab: sessions grouped by agent (Claude Code, Codex, others) with the facts the PRD lists (section 3.B). */
 @Composable
@@ -48,7 +49,7 @@ fun AgentsScreen(
                     val adapter = nest.adapters[group.kind]
                     if (adapter != null && adapter.status != AdapterStatusKind.CONNECTED && !adapter.detail.isNullOrBlank()) {
                         Text(
-                            text = adapter.detail.orEmpty(),
+                            text = DisplaySanitizer.display(adapter.detail),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp),

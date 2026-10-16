@@ -195,11 +195,11 @@ private fun StatusRow(nest: NestState, now: Instant, inputs: HomeInputs, onRefre
         nest.link is LinkState.Reconnecting || nest.link is LinkState.Connecting -> Tone.WARNING
         else -> Tone.MUTED
     }
-    val pcName = inputs.paired?.pcName ?: nest.pc?.name
+    val pcName = Labels.pcName(inputs.paired?.pcName ?: nest.pc?.name)
     val text = when {
         nest.link is LinkState.Unpaired -> S.NOT_PAIRED
         inputs.paused -> S.LINK_PAUSED_SHORT
-        connected -> if (pcName.isNullOrBlank()) S.CONNECTED else "${S.CONNECTED} · $pcName"
+        connected -> if (pcName.isBlank()) S.CONNECTED else "${S.CONNECTED} · $pcName"
         else -> S.NOT_CONNECTED
     }
     Column {
@@ -243,7 +243,7 @@ private fun KongiHeader(nest: NestState, now: Instant, inputs: HomeInputs, unpai
     ) {
         KongiCanvas(spec = spec, motion = inputs.motion, active = inputs.animationActive)
         Text(
-            text = mood.headline.keepWords(),
+            text = DisplaySanitizer.display(mood.headline).keepWords(),
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
             maxLines = 3,

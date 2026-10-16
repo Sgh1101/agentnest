@@ -101,7 +101,7 @@ fun ApprovalDetailScreen(
         when {
             card != null && request != null -> ApprovalBody(requestId, request, nest, now, controller)
             card != null -> EmptyHint(S.APPROVAL_LOADING)
-            history != null -> ResolvedBody(history.title, ApprovalStatus.resolved(history), history.outcome)
+            history != null -> ResolvedBody(DisplaySanitizer.display(history.title), ApprovalStatus.resolved(history), history.outcome)
             else -> {
                 // Right after a notification tap the snapshot may not have arrived yet: say "loading", not "gone".
                 val synced = nest.link is LinkState.Connected && !nest.fromCache && !nest.resync.awaitingSnapshot
@@ -137,6 +137,9 @@ private fun ApprovalBody(
     var reconfirm by remember(requestId) { mutableStateOf(false) }
     var stopDialog by remember(requestId) { mutableStateOf(false) }
     var menuOpen by remember(requestId) { mutableStateOf(false) }
+    var commandExpanded by remember(requestId) { mutableStateOf(false) }
+    // Fail-closed until the first layout pass says whether the folded command is cut off.
+    var commandClipped by remember(requestId) { mutableStateOf(true) }
     val authState = remember(requestId, busy) { controller.authAvailability() }
 
     fun run(decision: Decision, extra: ExtraConfirmationLevel) {
@@ -193,7 +196,13 @@ private fun ApprovalBody(
         }
         Text(DisplaySanitizer.display(request.title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.fillMaxWidth())
 
-        CommandBlock(request)
+        CommandBlock(
+            request = request,
+            expanded = commandExpanded,
+            clipped = commandClipped,
+            onToggle = { commandExpanded = !commandExpanded },
+            onClipped = { commandClipped = it },
+        )
         FactsBlock(request)
         RiskBlock(request)
         PurposeBlock(request)
@@ -207,7 +216,10 @@ private fun ApprovalBody(
         }
 
         // --- actions ------------------------------------------------------------------------------------------
-        val allowDisabled = allow is Enablement.Disabled || busy || inFlight || !authReady
+        val allowGateLevel = (allow as? Enablement.Enabled)?.gate?.extraConfirmation ?: ExtraConfirmationLevel.NONE
+        val hasCommandBlock = (request.details.command ?: request.details.diffPreview ?: request.details.contentPreview) != null
+        val mustExpand = CommandFold.mustExpandBeforeAllow(hasCommandBlock, commandClipped, commandExpanded, allowGateLevel)
+        val allowDisabled = allow is Enablement.Disabled || busy || inFlight || !authReady || mustExpand
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -275,6 +287,9 @@ private fun ApprovalBody(
             Text(S.CODEX_HOOKS_DENY_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val blocked = (allow as? Enablement.Disabled)?.reason
+        if (mustExpand && blocked == null && authReady) {
+            Text(S.EXPAND_BEFORE_ALLOW, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
         if (!authReady && Decision.ALLOW in request.allowedDecisions) {
             Text(S.AUTH_SETUP_NEEDED, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         } else if (blocked != null && blocked != DecisionBlock.IN_FLIGHT) {
@@ -310,14 +325,18 @@ private fun ApprovalBody(
 }
 
 @Composable
-private fun CommandBlock(request: ApprovalRequest) {
+private fun CommandBlock(
+    request: ApprovalRequest,
+    expanded: Boolean,
+    clipped: Boolean,
+    onToggle: () -> Unit,
+    onClipped: (Boolean) -> Unit,
+) {
     val command = request.details.command
     val preview = request.details.diffPreview ?: request.details.contentPreview
     val raw = command ?: preview ?: return
     // Hidden / direction-changing characters become visible ⟨U+XXXX⟩ escapes; the text wraps, so nothing sits off screen.
     val text = DisplaySanitizer.display(raw)
-    var expanded by remember(request.requestId) { mutableStateOf(false) }
-    val long = text.length > 120 || text.count { it == '\n' } >= 4
     InfoCard(container = MaterialTheme.colorScheme.surfaceVariant) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -325,17 +344,19 @@ private fun CommandBlock(request: ApprovalRequest) {
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f),
             )
-            if (long) {
-                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) S.COLLAPSE else S.EXPAND) }
+            if (CommandFold.showToggle(text, clipped, expanded)) {
+                TextButton(onClick = onToggle) { Text(if (expanded) S.COLLAPSE else S.EXPAND) }
             }
         }
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = FontFamily.Monospace,
-            maxLines = if (expanded) Int.MAX_VALUE else 4,
+            maxLines = if (expanded) Int.MAX_VALUE else CommandFold.FOLDED_LINES,
             overflow = TextOverflow.Ellipsis,
             softWrap = true,
+            // Even a short command can be cut off at a large font size or in a narrow window: ask the layout.
+            onTextLayout = { layout -> if (!expanded) onClipped(layout.hasVisualOverflow) },
             modifier = Modifier.fillMaxWidth(),
         )
         if (request.details.truncated) {
@@ -371,7 +392,7 @@ private fun FactLine(label: String, value: String) {
 
 @Composable
 private fun RiskBlock(request: ApprovalRequest) {
-    val reasons = request.risk.reasonsKo.filter { it.isNotBlank() }
+    val reasons = request.risk.reasonsKo.map { DisplaySanitizer.display(it) }.filter { it.isNotBlank() }
     val level = request.risk.level
     if (reasons.isEmpty() && level.effective != dev.agentnest.core.protocol.RiskLevel.HIGH &&
         level.effective != dev.agentnest.core.protocol.RiskLevel.CRITICAL

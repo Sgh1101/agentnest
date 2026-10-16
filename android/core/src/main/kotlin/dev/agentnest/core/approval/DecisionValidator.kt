@@ -77,13 +77,19 @@ data class DecisionContext(
     val awaitingSnapshot: Boolean,
 ) {
     companion object {
+        /**
+         * The strictest policy, used until a `welcome` delivered the PC's real one (fail-closed): critical requests
+         * are local-only and even a plain `deny` needs authentication.
+         */
+        val STRICT_POLICY: Policy = Policy(remoteApproval = mapOf("critical" to "local_only"), denyRequiresAuth = true)
+
         /** The context for [request] on the freshest [state]. Fail-closed: a missing policy never relaxes anything. */
         fun from(state: NestState, request: ApprovalRequest, now: Instant): DecisionContext = DecisionContext(
             now = now,
             clockSkewMs = state.clockSkewMs,
             link = state.link,
             session = state.sessions[request.sessionKey],
-            policy = state.welcome?.policy ?: Policy(),
+            policy = state.welcome?.policy ?: STRICT_POLICY,
             awaitingSnapshot = state.resync.awaitingSnapshot,
         )
     }
@@ -176,12 +182,12 @@ object DecisionValidator {
         if (decision == Decision.UNKNOWN) return DecisionBlock.UNKNOWN_DECISION
         if (!hasTimeLeft(request, ctx.now, ctx.clockSkewMs)) return DecisionBlock.EXPIRED
         if (card.inFlight != null) return DecisionBlock.IN_FLIGHT
-        ctx.session?.let { session ->
-            when (session.remoteApproval) {
-                RemoteApproval.AVAILABLE -> Unit
-                RemoteApproval.PAUSED -> return DecisionBlock.REMOTE_PAUSED
-                RemoteApproval.UNAVAILABLE, RemoteApproval.UNKNOWN -> return DecisionBlock.REMOTE_UNAVAILABLE
-            }
+        // Fail-closed: a session the phone does not know cannot be approved remotely.
+        val session = ctx.session ?: return DecisionBlock.REMOTE_UNAVAILABLE
+        when (session.remoteApproval) {
+            RemoteApproval.AVAILABLE -> Unit
+            RemoteApproval.PAUSED -> return DecisionBlock.REMOTE_PAUSED
+            RemoteApproval.UNAVAILABLE, RemoteApproval.UNKNOWN -> return DecisionBlock.REMOTE_UNAVAILABLE
         }
         if (decision !in request.allowedDecisions) return DecisionBlock.NOT_ALLOWED
         // Codex hooks cannot stop a turn; the PC never lists deny_and_stop there, and the phone double-checks.

@@ -53,10 +53,12 @@ fun SessionCard(
                     text = Labels.agent(session.agentKind, session.agentLabel),
                     style = MaterialTheme.typography.titleSmall,
                 )
-                val where = listOfNotNull(
-                    session.project.name.takeIf { it.isNotBlank() },
-                    session.project.branch?.takeIf { it.isNotBlank() },
-                ).joinToString(" · ")
+                val where = DisplaySanitizer.display(
+                    listOfNotNull(
+                        session.project.name.takeIf { it.isNotBlank() },
+                        session.project.branch?.takeIf { it.isNotBlank() },
+                    ).joinToString(" · "),
+                )
                 if (where.isNotEmpty()) {
                     Text(
                         text = where,

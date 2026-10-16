@@ -29,16 +29,19 @@ import dev.agentnest.app.ui.Tone
 import dev.agentnest.app.ui.theme.ToneTheme
 import dev.agentnest.app.ui.theme.isDarkTheme
 
-/** Small pill with a [Tone] colour: state chips, risk badges, test results. */
+/**
+ * Small pill with a [Tone] colour: state chips, risk badges, test results. [singleLine] = false lets the text wrap
+ * instead of being ellipsised (warnings that must be read in full, e.g. the hidden-characters chip at 2.0x font).
+ */
 @Composable
-fun ToneChip(text: String, tone: Tone, modifier: Modifier = Modifier) {
+fun ToneChip(text: String, tone: Tone, modifier: Modifier = Modifier, singleLine: Boolean = true) {
     val colors = ToneTheme.colors(tone, isDarkTheme())
     Text(
         text = text,
         color = colors.content,
         style = MaterialTheme.typography.labelMedium,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+        maxLines = if (singleLine) 1 else Int.MAX_VALUE,
+        overflow = if (singleLine) TextOverflow.Ellipsis else TextOverflow.Clip,
         modifier = modifier
             .background(colors.container, RoundedCornerShape(50))
             .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -48,7 +51,8 @@ fun ToneChip(text: String, tone: Tone, modifier: Modifier = Modifier) {
 /** Warning chip "보이지 않는 문자 N개" for approval cards whose text hides or reorders characters; nothing when 0. */
 @Composable
 fun HiddenCharsChip(count: Int, modifier: Modifier = Modifier) {
-    if (count > 0) ToneChip(S.hiddenChars(count), Tone.WARNING, modifier)
+    // A warning that is cut off is no warning: it wraps instead of ending in an ellipsis.
+    if (count > 0) ToneChip(S.hiddenChars(count), Tone.WARNING, modifier, singleLine = false)
 }
 
 /** Header of a detail screen: back arrow and title. */

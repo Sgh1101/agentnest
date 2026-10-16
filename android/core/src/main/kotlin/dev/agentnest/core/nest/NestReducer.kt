@@ -384,15 +384,19 @@ class NestReducer(private val ids: () -> String = Uuid7Generator()::next) {
     private fun applyDecisionResult(state: NestState, message: DecisionResultMessage, now: Instant): NestState {
         val result = message.payload
         val card = state.approvals[result.requestId]
+        if (card == null) return state.copy(lastDecisionResult = result)
+        val closes = result.reason == DecisionResultReason.UNKNOWN_REQUEST ||
+            result.reason == DecisionResultReason.EXPIRED ||
+            result.reason == DecisionResultReason.DEVICE_REVOKED
+        // A late answer to an EARLIER decision (a different `in_reply_to`) must neither unblock nor annotate the
+        // decision that is in flight now. Answers about the request itself (closing reasons) still apply.
+        val inFlight = card.inFlight
+        if (!closes && inFlight != null && inFlight.messageId != result.inReplyTo) return state
         var next = state.copy(lastDecisionResult = result)
-        if (card == null) return next
         if (result.accepted) {
             // APPLIED: the PC took it; `approval_resolved` will close the card. Keep it blocked meanwhile.
             return next.copy(approvals = next.approvals + (card.requestId to card.copy(lastResult = result)))
         }
-        val closes = result.reason == DecisionResultReason.UNKNOWN_REQUEST ||
-            result.reason == DecisionResultReason.EXPIRED ||
-            result.reason == DecisionResultReason.DEVICE_REVOKED
         if (closes) {
             val request = card.request
             if (request != null) {

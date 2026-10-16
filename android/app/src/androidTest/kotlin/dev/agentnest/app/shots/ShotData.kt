@@ -101,7 +101,7 @@ object SD {
         title: String? = null,
         model: String? = "claude-demo",
         cost: Double? = 0.42,
-        context: Double? = 37.0,
+        context: Int? = 37,
         review: ReviewInfo? = null,
         detail: String? = null,
     ) = SessionState(
@@ -423,7 +423,7 @@ object SD {
             session(S1, AgentState.AWAITING_APPROVAL, headline = "명령 실행 승인을 기다려요", pending = listOf(REQ_HIGH, REQ_MED)),
             session(S2, AgentState.TESTING, AgentKind.CODEX, "agentnest", "feature/shots", "테스트를 돌리고 있어요",
                 lastTest = LastTest(TestStatus.PASSED, "cargo", "cargo", Ts.of(NOW.minusSeconds(30))), remote = RemoteApproval.UNAVAILABLE, model = "codex-demo"),
-            session(S3, AgentState.WRITING_CODE, AgentKind.CLAUDE_CODE, "docs-site", "main", "문서를 고치고 있어요", cost = null, context = 88.0),
+            session(S3, AgentState.WRITING_CODE, AgentKind.CLAUDE_CODE, "docs-site", "main", "문서를 고치고 있어요", cost = null, context = 88),
             session("claude_code:s4", AgentState.COMPLETED, AgentKind.CLAUDE_CODE, "old-project", "main", "작업을 마쳤어요", ended = true, lastEventSecondsAgo = 60),
         ),
         approvals = listOf(reqHigh, reqMedium),

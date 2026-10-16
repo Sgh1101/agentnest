@@ -184,8 +184,8 @@ object T {
         ),
     )
 
-    fun decisionResult(requestId: String, accepted: Boolean, reason: DecisionResultReason, at: Instant = T0) =
-        DecisionResultMessage(meta(null, at), DecisionResultPayload(requestId, null, accepted, reason, "메시지"))
+    fun decisionResult(requestId: String, accepted: Boolean, reason: DecisionResultReason, at: Instant = T0, inReplyTo: String? = null) =
+        DecisionResultMessage(meta(null, at), DecisionResultPayload(requestId, inReplyTo, accepted, reason, "메시지"))
 
     fun event(
         seq: Long,

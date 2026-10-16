@@ -34,6 +34,7 @@ import dev.agentnest.core.link.LinkState
 import dev.agentnest.core.nest.NestState
 import dev.agentnest.core.text.Fallbacks
 import java.time.Instant
+import dev.agentnest.app.ui.Labels
 
 /** Navigation callbacks of the settings tab. */
 data class SettingsActions(
@@ -73,7 +74,7 @@ fun SettingsScreen(
                 Text(S.NOT_PAIRED, style = MaterialTheme.typography.bodyLarge)
                 Button(onClick = actions.onStartPairing) { Text(S.PAIR_PC) }
             } else {
-                Text(paired.pcName.ifBlank { paired.pcId }, style = MaterialTheme.typography.titleMedium)
+                Text(Labels.pcName(paired.pcName).ifBlank { paired.pcId }, style = MaterialTheme.typography.titleMedium)
                 Text(
                     Fallbacks.linkHeadline(nest.link, now).ifBlank { S.CONNECTED },
                     style = MaterialTheme.typography.bodyMedium,

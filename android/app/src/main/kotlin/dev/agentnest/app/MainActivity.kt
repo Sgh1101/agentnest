@@ -34,7 +34,8 @@ class MainActivity : FragmentActivity(), ActivityHost {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         container.controller.attach(this)
-        handleIntent(intent)
+        // A recreated Activity (rotation, process restore) gets the same launch intent again: do not replay its deep link.
+        if (savedInstanceState == null) handleIntent(intent)
         setContent { AgentNestRoot(container.controller) }
     }
 

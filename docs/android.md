@@ -63,7 +63,7 @@ android/app/src/main/kotlin/dev/agentnest/app/
 ├── vault/                    TokenVault(Keystore AES-GCM), DeviceKey(Keystore EC P-256)
 ├── pairing/                  PairingSession(호스트 순회+PairingFlow 구동), PairingController, PairingUiState
 ├── qr/                       QrScanner(interface), GmsQrScanner (zxing 폴백은 별도 모듈 가능)
-└── data/                     NestRepository(StateFlow<NestState>), PairingStore·AppSettings(DataStore), SnapshotCache(콜드스타트; 이벤트 200건 포함, 승인 카드는 저장 안 함), ApprovalHistoryStore(최근 50건)
+└── data/                     NestRepository(StateFlow<NestState>), PairingStore·AppSettings(DataStore), SnapshotCache(콜드스타트; 이벤트 200건 포함, 승인 카드와 명령·경로·프롬프트 텍스트는 저장 안 함 — `SnapshotRedaction`), ApprovalHistoryStore(최근 50건)
 ```
 
 아키텍처: `LinkService`가 소켓을 소유하고 수신 메시지를 `NestRepository`로 보내며, `NestReducer.reduce(state, message)`(순수 함수)가 `StateFlow<NestState>`를 갱신한다. Activity는 바인드 없이 Repository를 구독한다. ViewModel은 화면별 파생만.
@@ -119,19 +119,20 @@ android/app/src/main/kotlin/dev/agentnest/app/
 | 위험 | 허용 흐름 |
 | --- | --- |
 | `low`/`medium` | 탭 → `BiometricPrompt` → 전송 |
-| `high` | 길게 누르기 1.5초(진행 링) → `BiometricPrompt` → 전송 |
+| `high` | 길게 누르기 1.5초(진행 링) → `BiometricPrompt` → 전송. 길게 누르기의 통과 여부는 **벽시계**(`SystemClock.uptimeMillis()`, `HoldGate`)로 판정한다 — 진행 링 애니메이션은 시각 효과일 뿐이라, 시스템 애니메이션 배율이 0(개발자 옵션·접근성 "애니메이션 제거")이어도 터치 한 번으로 게이트가 통과되지 않는다. 손가락을 떼면 처음부터 다시 센다 |
 | `critical` | 길게 누르기 → `ExtraConfirmSheet`(명령 전체 재표시 + 체크박스 "내용을 확인했어요") → `BiometricPrompt` → 전송 |
 | `deny` | 기본 인증 없음(PC 정책 `deny_requires_auth`가 true일 때만 요구) |
 | `deny_and_stop` | **allow와 동일 게이트**(턴을 중단시키므로) |
 
 - **추가 확인의 실제 게이트는 길게 누르기와 재확인 시트다.** `setConfirmationRequired`는 얼굴·홍채 같은 *수동* 생체에서 확인 탭을 요구할지에 대한 **시스템 힌트**일 뿐(시스템이 무시할 수 있고 지문 기기에는 영향이 없음 — 갤럭시 S 시리즈처럼 지문 인증 기기에서는 사실상 무의미) 보안 통제로 취급하지 않는다. [검증: developer.android.com `BiometricPrompt.PromptInfo.Builder#setConfirmationRequired` 2026-10-15 열람] 서버는 `extra_confirmation.completed`(클라이언트가 길게 누르기·시트를 거쳤다는 주장)를 검사하되 이것도 폰의 주장임을 안다(`security.md` §6.4).
 - `purpose`는 에이전트가 쓴 텍스트라 **"에이전트가 한 말 (검증 안 됨)"** 으로 라벨링하고 실제 명령·영향 경로·위험 등급보다 시각적으로 아래·작게 둔다(영문 의미: *Agent says (unverified)*). 헤드업 알림 본문·생체 프롬프트·`headline`에도 쓰지 않는다(허용 판단의 근거로 삼지 않게). `allowed_decisions`에 없는 결정의 버튼은 만들지 않는다 — Codex hooks 출처(`origin=codex.hook.cli`) 카드는 "거부 + 멈추기" 메뉴 대신 "거부만 가능 (Codex hooks는 작업을 멈출 수 없어요)"를 표시한다.
-- 생체 프롬프트: 제목 "승인 확인", 부제 = `title`, 설명 = `details.command` 80자(첫 줄). 모든 텍스트는 아래 표시 정화를 거친다.
-- **표시 정화(`core/text/DisplaySanitizer`, 순수·테스트됨)**: 명령·경로·cwd·diff/내용 미리보기·MCP 서버·`purpose`·`title`·프로젝트명을 화면(상세·카드·홈·재확인 대화상자·세션/이벤트 줄)과 생체 프롬프트에 올리기 전에, 방향 제어(U+202A-202E, U+2066-2069)·폭 0/서식 문자(Cf: U+200B-200F, U+061C, U+FEFF, U+2060-2064 …)·C0/C1 제어 문자(개행·탭 제외)·줄/문단 구분자·고아 서로게이트·빈 채움 글자(U+3164 등)를 눈에 보이는 `⟨U+202E⟩` 이스케이프로 바꾼다. 하나라도 있으면 경고 칩 "보이지 않는 문자 N개"를 보이고(프롬프트 설명에는 둘째 줄로), **allow·deny_and_stop의 추가 확인을 최소 HOLD로 올린다**(`DecisionValidator.gate`, 빌드 단계에서도 강제; 일반 `deny`는 그대로). 실행될 명령 블록은 줄바꿈으로 **전부 감싸 보이고**(가로 스크롤 없음) 접힘 상태는 4줄 + "전체 보기".
-- **결정 바인딩 재확인**: 생체 프롬프트가 닫힌 뒤 다시 읽은 카드의 `request_id`·`session_key`·`nonce_b64`·`tool_input_sha256`이 프롬프트를 띄운 카드와 같지 않으면 아무것도 만들지 않는다(`Blocked(BINDING_CHANGED)`). 리듀서도 이미 아는 `request_id`에 다른 nonce/해시의 본문이 오면(approval_request·snapshot 모두) 새 본문을 버리고 카드를 잠그며(`bindingConflict`, 해제 불가 — PC에서 처리) `snapshot_request`를 보낸다. 요청마다 결정 흐름은 **동시에 하나**만 돈다(두 번째 호출은 `Blocked(IN_FLIGHT)`, 프롬프트 중복 없음).
+- 생체 프롬프트: 제목 "승인 확인", 부제 = `title`, 설명 = `details.command`의 첫 줄(전체 80자 이내). 명령이 여러 줄이면 첫 줄 뒤에 " (+N줄)"(N = 나머지 비어 있지 않은 줄 수)를 붙여 한 줄짜리 명령으로 오해하지 않게 한다. 모든 텍스트는 아래 표시 정화를 거친다.
+- **표시 정화(`core/text/DisplaySanitizer`, 순수·테스트됨)**: 명령·경로·cwd·diff/내용 미리보기·MCP 서버·`purpose`·`title`·`risk.reasons_ko`·에이전트 라벨(`Labels.agent`)·프로젝트 이름/경로/브랜치·PC 이름(`Labels.pcName`)·홈 헤드라인·승인 기록 문구 같은 서버 문자열을 화면(상세·카드·홈·프로젝트·진단·재확인 대화상자·세션/이벤트 줄·알림)과 생체 프롬프트에 올리기 전에, 방향 제어(U+202A-202E, U+2066-2069)·폭 0/서식 문자(Cf: U+200B-200F, U+061C, U+FEFF, U+2060-2064 …)·C0/C1 제어 문자(개행·탭 제외)·줄/문단 구분자·고아 서로게이트·빈 채움 글자(U+3164 등)를 눈에 보이는 `⟨U+202E⟩` 이스케이프로 바꾼다. 하나라도 있으면 경고 칩 "보이지 않는 문자 N개"를 보이고(프롬프트 설명에는 둘째 줄로), **allow·deny_and_stop의 추가 확인을 최소 HOLD로 올린다**(`DecisionValidator.gate`, 빌드 단계에서도 강제; 일반 `deny`는 그대로). 이 개수(`ApprovalDisplay.hiddenCharCount`)는 제목·명령·cwd·경로·미리보기·MCP 서버·`purpose`·에이전트 라벨·프로젝트 이름/브랜치/경로 힌트·`risk.reasons_ko`를 모두 센다. 경고 칩은 글꼴을 키워도 말줄임 없이 줄바꿈한다. 실행될 명령 블록은 줄바꿈으로 **전부 감싸 보이고**(가로 스크롤 없음) 접힘 상태는 4줄 + "전체 보기"이며, 120자 이하라도 큰 글꼴·좁은 폭에서 실제로 잘리면(`onTextLayout`의 `hasVisualOverflow`) 버튼이 나온다. **추가 확인이 필요한(high·critical·숨은 문자) 허용은 명령이 잘려 보이는 동안 펼치기 전에는 비활성**이고("명령이 길어서 잘려 보여요…" 안내, `CommandFold.mustExpandBeforeAllow`), 접힌 앞부분만 보고 허용할 수 없다.
+- **결정 바인딩 재확인**: 생체 프롬프트가 닫힌 뒤 다시 읽은 카드의 `request_id`·`session_key`·`nonce_b64`·`tool_input_sha256`이 프롬프트를 띄운 카드와 같지 않으면 아무것도 만들지 않는다(`Blocked(BINDING_CHANGED)`). `LinkClient`는 전송 직전에도 카드의 `bindingConflict`·`request_id`/`session_key`/`nonce`/`hash`·만료(서버 시계)를 다시 확인하고 맞지 않으면 보내지 않는다(실패로 돌려줌). 리듀서도 이미 아는 `request_id`에 다른 nonce/해시의 본문이 오면(approval_request·snapshot 모두) 새 본문을 버리고 카드를 잠그며(`bindingConflict`, 해제 불가 — PC에서 처리) `snapshot_request`를 보낸다. 요청마다 결정 흐름은 **동시에 하나**만 돈다(두 번째 호출은 `Blocked(IN_FLIGHT)`, 프롬프트 중복 없음).
+- **정책·세션을 모를 때는 엄격하게**: `welcome`을 받기 전에는 `DecisionContext.STRICT_POLICY`(critical 은 로컬 전용, `deny`도 인증 요구)를 쓰고, 폰이 모르는 세션(`SessionState` 없음)의 카드는 원격 승인을 거부한다(`REMOTE_UNAVAILABLE`). `decision_result`는 `in_reply_to`가 지금 전송 중인 결정의 메시지 ID와 같을 때만 그 결정의 전송 중 상태를 풀거나 결과로 기록한다(이전 결정의 늦은 거절이 새 결정을 풀지 못한다; `EXPIRED`/`UNKNOWN_REQUEST`/`DEVICE_REVOKED`처럼 요청 자체에 대한 답은 그대로 카드를 닫는다).
 - **재동기화 중 비활성**: `welcome` 뒤 `snapshot`이 올 때까지(`resync.awaitingSnapshot`) 모든 카드의 버튼은 비활성("PC와 다시 맞추는 중이에요"). `resync.mode=replay`는 끝 표지가 없어 이 보호를 받지 못한다(서버가 결정 시점에 다시 검증).
 - 형식이 잘못된 바인딩 필드(`request_id`가 `ar_`+UUIDv7 아님, `nonce_b64`가 16바이트 base64 아님, `tool_input_sha256`이 소문자 hex 64자 아님)를 가진 카드는 수신 시 버리고, 같은 검사가 `decision` 인코딩에도 적용된다(받을 수 없는 값은 보내지도 않는다). `risk.extra_confirmation: null`은 `none`이 아니라 `unknown`(가장 강한 요구)으로 읽는다.
-- `deny`가 `allowed_decisions`에 없고 `deny_and_stop`만 허용되면 그 버튼이 "거부" 자리에 **"거부 (중단)"** 으로 나온다(`protocol.md` §6.1). 상세·페어링 화면은 `FLAG_SECURE`(스크린샷·화면 녹화·최근 앱 썸네일 차단)와 `filterTouchesWhenObscured`(오버레이 위 탭 무시)를 켠다. 길게 누르기 버튼은 접근성 서비스에 `onClick`("확인 창 열기")을 노출하고, 그 동작은 명시적 확인 대화상자를 연다(터치 입력은 여전히 길게 눌러야 한다).
+- `deny`가 `allowed_decisions`에 없고 `deny_and_stop`만 허용되면 그 버튼이 "거부" 자리에 **"거부 (중단)"** 으로 나온다(`protocol.md` §6.1). 상세·페어링 화면은 `FLAG_SECURE`(스크린샷·화면 녹화·최근 앱 썸네일 차단)와 `filterTouchesWhenObscured`(오버레이 위 탭 무시)를 켠다. 재확인 대화상자(`ExtraConfirmDialog`)와 접근성 확인 대화상자도 자신의 창에 `filterTouchesWhenObscured`를 켜고, 재확인 대화상자는 전체 명령을 보여주므로 `FLAG_SECURE`도 건다(`SecureDialogWindow`). 길게 누르기 버튼은 접근성 서비스에 `onClick`("확인 창 열기")을 노출하고, 그 동작은 명시적 확인 대화상자를 연다(터치 입력은 여전히 길게 눌러야 한다).
 - 전송 후 "PC에 전달 중…" → `decision_result{APPLIED}` → "허용했어요 · Claude에 전달했어요" → `approval_resolved{observed_result}` 갱신 시 "Claude가 실행했어요". 5초 내 `decision_result` 없으면 "확인 중…" 유지(**재전송 안 함**).
 - 만료/해결된 카드: 버튼 제거 + "시간이 지나 PC에서 직접 처리하도록 넘겼어요" / 결과 배지. `expires_at − skew − 5s` 이후엔 버튼 비활성.
 - 오프라인(`link != Connected`): 버튼 비활성 + "PC와 연결이 끊겨 지금은 응답할 수 없어요". **결정을 큐에 넣지 않는다.**
@@ -200,7 +201,7 @@ sealed interface LinkState {
 ### 4.1 TokenVault (Keystore AES-256-GCM, [검증: keystore 가이드])
 
 - alias `agentnest.device_token.v1`, `PURPOSE_ENCRYPT|DECRYPT`, GCM/NoPadding, 256비트, **`setUserAuthenticationRequired(false)`**, **`setUnlockedDeviceRequired` 금지**(FGS가 잠금 중 재연결), StrongBox 시도 후 `StrongBoxUnavailableException`이면 폴백. 봉인 결과 `[iv(12)|ct+tag]` base64 → DataStore.
-- `TokenVault.open`은 3상태(`Ok`/`Invalid`/`Transient`)다. **`KeyPermanentlyInvalidatedException`/`AEADBadTagException`(그리고 정상적으로 열린 Keystore에 키가 아예 없음)만** 토큰 폐기 + 재페어링 유도로 이어진다. 그 밖의 Keystore 오류(데몬 재시작·`ProviderException`·I/O 등)는 `Transient`: 1·2·4·8·16·30초 간격으로 재시도하고, 그래도 안 되면 **지우지 않고** 서비스를 멈춘 뒤 "연결을 시작하지 못했어요" 알림만 띄운다.
+- `TokenVault.open`은 4상태(`Ok`/`Invalid`/`KeyMissing`/`Transient`)다. **`KeyPermanentlyInvalidatedException`/`AEADBadTagException`**(그리고 아래 `KeyMissing`이 재확인 끝에도 계속될 때)만 토큰 폐기 + 재페어링 유도로 이어진다. `KeyMissing` = 봉인된 토큰은 있는데 정상적으로 열린 Keystore에 키가 없음: 부팅 직후·데몬 재시작 때 잠시 `null`을 주는 기기가 있어 서비스가 1·2·4초 간격으로 3번 다시 확인하고, 그래도 없으면 그때 `Invalid`처럼 폐기한다(첫 실행은 토큰 블롭 자체가 없어 `open`까지 오지 않고 "페어링 안 됨"으로 끝난다). 그 밖의 Keystore 오류(데몬 재시작·`ProviderException`·I/O 등)는 `Transient`: 1·2·4·8·16·30초 간격으로 재시도하고, 그래도 안 되면 **지우지 않고** 서비스를 멈춘 뒤 "연결을 시작하지 못했어요" 알림만 띄운다.
 - `DeviceKey`: alias `agentnest.device.v1`, EC P-256 `PURPOSE_SIGN`, 비추출, StrongBox 시도. Phase 1은 **공개키(SPKI DER)만** `pair`에 실어 등록. Phase 3에서 `setUserAuthenticationParameters`(작업별) + `CryptoObject` 서명 검토.
 - `android:allowBackup="false"` + `dataExtractionRules`로 앱 데이터 전부 제외(Keystore 키는 이전 불가라 복원 후 불일치 방지).
 
