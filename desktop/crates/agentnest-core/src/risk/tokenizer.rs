@@ -82,6 +82,66 @@ enum Quote {
     None,
     Single,
     Double,
+    /// `$'...'`: single quotes with backslash escapes (`$'\x72m'` is `rm`).
+    AnsiC,
+}
+
+/// Decodes the escape sequence that follows a backslash inside `$'...'` (`chars[at]` is the character after the
+/// backslash). Returns the character and how many characters after the backslash it used; `('\\', 0)` keeps an unknown or
+/// incomplete escape literally (the backslash stays, the next character is read normally), like bash does.
+fn ansi_c_escape(chars: &[char], at: usize) -> (char, usize) {
+    let Some(&c) = chars.get(at) else {
+        return ('\\', 0);
+    };
+    let digits = |radix: u32, max: usize, from: usize| -> (u32, usize) {
+        let mut v = 0u32;
+        let mut n = 0usize;
+        while n < max {
+            match chars.get(from + n).and_then(|d| d.to_digit(radix)) {
+                Some(d) => {
+                    v = v.saturating_mul(radix).saturating_add(d);
+                    n += 1;
+                }
+                None => break,
+            }
+        }
+        (v, n)
+    };
+    let to_char = |v: u32| char::from_u32(v).unwrap_or('\u{FFFD}');
+    match c {
+        'a' => ('\u{7}', 1),
+        'b' => ('\u{8}', 1),
+        'e' | 'E' => ('\u{1b}', 1),
+        'f' => ('\u{c}', 1),
+        'n' => ('\n', 1),
+        'r' => ('\r', 1),
+        't' => ('\t', 1),
+        'v' => ('\u{b}', 1),
+        '\\' => ('\\', 1),
+        '\'' => ('\'', 1),
+        '"' => ('"', 1),
+        '?' => ('?', 1),
+        'x' | 'u' | 'U' => {
+            let max = match c {
+                'x' => 2,
+                'u' => 4,
+                _ => 8,
+            };
+            match digits(16, max, at + 1) {
+                (_, 0) => ('\\', 0),
+                (v, n) => (to_char(v), 1 + n),
+            }
+        }
+        '0'..='7' => {
+            let (v, n) = digits(8, 3, at);
+            (to_char(v), n)
+        }
+        'c' => match chars.get(at + 1) {
+            Some(k) => (to_char(u32::from(*k) & 0x1f), 2),
+            None => ('\\', 0),
+        },
+        _ => ('\\', 0),
+    }
 }
 
 fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Segment>> {
@@ -123,6 +183,25 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
         let c = chars[i];
         let next = chars.get(i + 1).copied();
         match quote {
+            Quote::AnsiC => {
+                raw.push(c);
+                if c == '\'' {
+                    quote = Quote::None;
+                } else if c == '\\' {
+                    let (decoded, used) = ansi_c_escape(&chars, i + 1);
+                    for k in 0..used {
+                        if let Some(ch) = chars.get(i + 1 + k) {
+                            raw.push(*ch);
+                        }
+                    }
+                    tok.get_or_insert_with(String::new).push(decoded);
+                    i += used;
+                } else {
+                    tok.get_or_insert_with(String::new).push(c);
+                }
+                i += 1;
+                continue;
+            }
             Quote::Single => {
                 raw.push(c);
                 if c == '\'' {
@@ -156,8 +235,16 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
             Quote::None => {}
         }
         match c {
-            '$' if quote_aware && matches!(next, Some('\'') | Some('"')) => {
-                // `$'rm'` / `$"rm"`: ANSI-C / locale quoting; the `$` is not part of the word
+            '$' if quote_aware && next == Some('\'') => {
+                // `$'rm'`, `$'\x72m'`: ANSI-C quoting; the `$` is not part of the word and escapes are decoded
+                raw.push('$');
+                raw.push('\'');
+                quote = Quote::AnsiC;
+                tok.get_or_insert_with(String::new);
+                i += 1;
+            }
+            '$' if quote_aware && next == Some('"') => {
+                // `$"rm"`: locale quoting; the `$` is not part of the word
                 raw.push(c);
             }
             '\'' => {
@@ -226,7 +313,7 @@ fn split_inner(command: &str, shell: Shell, quote_aware: bool) -> Option<Vec<Seg
 /// Words that only structure a shell program and are not commands themselves.
 const SYNTAX_WORDS: &[&str] = &[
     "!", "{", "}", "(", ")", "((", "))", "if", "then", "else", "elif", "fi", "do", "done", "while",
-    "until", "esac", "coproc", "function", "for", "select",
+    "until", "esac", "coproc", "for", "select",
 ];
 
 /// `{a,b}` / `{1..3}`: a brace expansion, not a group opener.
@@ -245,67 +332,90 @@ fn is_brace_expansion(token: &str) -> bool {
 /// Nothing else is changed. The function is total.
 fn lower_syntax(mut tokens: Vec<String>) -> Vec<String> {
     let mut braced = false;
-    for _ in 0..64 {
-        let Some(first) = tokens.first() else { break };
-        let f = first.as_str();
+    // `start` is the index of the first token that is still part of the command: the loop is linear and has no cap, so
+    // a thousand leading `!` or `if` cannot push the real command out of sight.
+    let mut start = 0usize;
+    let is_name = |t: &str| {
+        !t.is_empty()
+            && t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | ':'))
+    };
+    while start < tokens.len() {
+        let f = tokens[start].clone();
+        let f = f.as_str();
+        let next = tokens.get(start + 1).map(String::as_str);
         if SYNTAX_WORDS.contains(&f) {
             if f == "{" {
                 braced = true;
             }
-            tokens.remove(0);
+            start += 1;
+            continue;
+        }
+        if f == "function" {
+            // `function name { ...` / `function name() { ...`: the definition head is not a command
+            start += 2;
+            if tokens.get(start).map(String::as_str) == Some("()") {
+                start += 1;
+            }
+            continue;
+        }
+        if f.len() > 2 && f.ends_with("()") && is_name(&f[..f.len() - 2]) {
+            // `name() { ...`
+            start += 1;
+            continue;
+        }
+        if next == Some("()") && is_name(f) {
+            // `name () { ...`
+            start += 2;
             continue;
         }
         if f == "case" {
             // `case WORD in PATTERN) command...`
-            let pattern_end = if tokens.get(2).map(String::as_str) == Some("in") {
+            let pattern_end = if tokens.get(start + 2).map(String::as_str) == Some("in") {
                 tokens
                     .iter()
                     .enumerate()
-                    .skip(3)
+                    .skip(start + 3)
                     .find(|(_, t)| t.ends_with(')'))
                     .map(|(i, _)| i)
             } else {
                 None
             };
-            match pattern_end {
-                Some(i) => {
-                    tokens.drain(..=i);
-                }
-                None => {
-                    tokens.remove(0);
-                }
-            }
+            start = pattern_end.map_or(start + 1, |i| i + 1);
             continue;
         }
         if f.len() > 1 && f.starts_with('(') {
-            tokens[0] = f.trim_start_matches('(').to_owned();
+            tokens[start] = f.trim_start_matches('(').to_owned();
             continue;
         }
         if f.len() > 1 && f.starts_with('{') && !is_brace_expansion(f) {
             braced = true;
-            tokens[0] = f[1..].to_owned();
+            tokens[start] = f[1..].to_owned();
             continue;
         }
         // the `PATTERN)` of a later `case` clause (`x) rm -rf /`, `*) ...`): a first word that closes a parenthesis nobody
         // opened and is followed by more words
-        if tokens.len() > 1
+        if start + 1 < tokens.len()
             && f.ends_with(')')
             && !f.contains('(')
             && !f.starts_with(['$', '<', '>'])
         {
-            tokens.remove(0);
+            start += 1;
             continue;
         }
         break;
     }
+    tokens.drain(..start.min(tokens.len()));
     // A closing parenthesis nobody opened in this segment (`(cd x && rm -rf /)` is split at `&&`): not part of the word.
     if let Some(last) = tokens.last_mut() {
-        let mut stripped = false;
-        while last.ends_with(')') && last.matches(')').count() > last.matches('(').count() {
+        let close = last.matches(')').count();
+        let open = last.matches('(').count();
+        let run = last.chars().rev().take_while(|c| *c == ')').count();
+        let strip = run.min(close.saturating_sub(open));
+        for _ in 0..strip {
             last.pop();
-            stripped = true;
         }
-        if stripped && last.is_empty() {
+        if strip > 0 && last.is_empty() {
             tokens.pop();
         }
     }
@@ -467,7 +577,7 @@ const ELEVATORS: &[&str] = &["sudo", "doas", "pkexec", "gsudo"];
 pub fn unwrap_command(tokens: &[String]) -> Unwrapped<'_> {
     let mut idx = 0usize;
     let mut elevated = false;
-    for _ in 0..8 {
+    for _ in 0..64 {
         while idx < tokens.len() && is_assignment(&tokens[idx]) {
             idx += 1;
         }
@@ -674,7 +784,8 @@ pub fn inner_payload(tokens: &[String]) -> Option<Inner> {
             let pos = rest
                 .iter()
                 .position(|t| matches!(t.to_lowercase().as_str(), "/c" | "/k" | "/r"))?;
-            Some(Inner::Command(rest[pos + 1..].join(" ")))
+            // `r^d /s /q C:\`: the caret is cmd.exe's escape character and vanishes from the word
+            Some(Inner::Command(rest[pos + 1..].join(" ").replace('^', "")))
         }
         "powershell" | "pwsh" => {
             let mut i = 0;
@@ -995,5 +1106,282 @@ mod tests {
         assert!(!is_assignment("--flag=x"));
         assert!(!is_assignment("plain"));
         assert!(is_flag("-r") && is_flag("--force") && !is_flag("-") && !is_flag("x"));
+    }
+
+    // -- review round 2 ----------------------------------------------------------------------------------------------
+
+    fn first_tokens(cmd: &str) -> Vec<Vec<String>> {
+        toks(cmd)
+    }
+
+    #[test]
+    fn shell_syntax_is_stripped_from_the_segments() {
+        assert_eq!(first_tokens("(rm -rf /)"), vec![v(&["rm", "-rf", "/"])]);
+        assert_eq!(first_tokens("((rm -rf /))"), vec![v(&["rm", "-rf", "/"])]);
+        assert_eq!(
+            first_tokens("{ rm -rf /; }"),
+            vec![v(&["rm", "-rf", "/"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("{rm -rf /; }"),
+            vec![v(&["rm", "-rf", "/"]), v(&[])]
+        );
+        assert_eq!(first_tokens("! rm -rf /"), vec![v(&["rm", "-rf", "/"])]);
+        assert_eq!(
+            first_tokens("if [ -d b ]; then rm -rf b; fi"),
+            vec![v(&["[", "-d", "b", "]"]), v(&["rm", "-rf", "b"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("while true; do rm x; done"),
+            vec![v(&["true"]), v(&["rm", "x"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("for d in */; do rm -rf \"$d\"; done"),
+            vec![v(&["d", "in", "*/"]), v(&["rm", "-rf", "$d"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("case x in x) rm -rf / ;; esac"),
+            vec![v(&["rm", "-rf", "/"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("case x in a) ls ;; b) rm x ;; esac"),
+            vec![v(&["ls"]), v(&["rm", "x"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("(cd x && rm -rf /)"),
+            vec![v(&["cd", "x"]), v(&["rm", "-rf", "/"])]
+        );
+        assert_eq!(first_tokens("f() { rm x; }"), vec![v(&["rm", "x"]), v(&[])]);
+        assert_eq!(
+            first_tokens("function f { rm x; }"),
+            vec![v(&["rm", "x"]), v(&[])]
+        );
+        assert_eq!(
+            first_tokens("function f() { rm x; }"),
+            vec![v(&["rm", "x"]), v(&[])]
+        );
+        // `iex(...)`: the word is what precedes the parenthesis
+        assert_eq!(
+            first_tokens("iex(New-Object X)"),
+            vec![v(&["iex", "(New-Object", "X"])]
+        );
+        // what is not syntax stays: a balanced substitution, brace expansion, empty strings, plain words
+        assert_eq!(first_tokens("echo $(date)"), vec![v(&["echo", "$(date)"])]);
+        assert_eq!(first_tokens("{rm,-rf,/}"), vec![v(&["{rm,-rf,/}"])]);
+        assert_eq!(first_tokens("echo ''"), vec![v(&["echo", ""])]);
+        assert_eq!(
+            first_tokens("make) x"),
+            vec![v(&["x"])],
+            "a word that closes a parenthesis with more words after it is a case pattern"
+        );
+        assert_eq!(first_tokens("ls)"), vec![v(&["ls"])]);
+        assert_eq!(first_tokens("echo (a)"), vec![v(&["echo", "(a)"])]);
+        assert_eq!(first_tokens("done"), vec![v(&[])]);
+    }
+
+    #[test]
+    fn typographic_dashes_and_quotes_are_read_like_powershell_does() {
+        let ps = |c: &str| {
+            split_segments(c, Shell::PowerShell)
+                .into_iter()
+                .map(|s| s.tokens)
+                .collect::<Vec<_>>()
+        };
+        for dash in ['\u{2013}', '\u{2014}', '\u{2015}'] {
+            let t = ps(&format!("Remove-Item {dash}Recurse {dash}Force x"));
+            assert_eq!(t, vec![v(&["Remove-Item", "-Recurse", "-Force", "x"])]);
+            assert!(is_flag(&t[0][1]));
+        }
+        assert_eq!(
+            ps("Remove-Item \u{201c}C:\\Program Files\u{201d} \u{2018}a b\u{2019}"),
+            vec![v(&["Remove-Item", "C:\\Program Files", "a b"])]
+        );
+        // POSIX mode: dashes are normalised too (a harmless over-detection), quotes are ordinary characters
+        assert_eq!(toks("rm \u{2013}rf x"), vec![v(&["rm", "-rf", "x"])]);
+        assert_eq!(toks("echo \u{201c}a"), vec![v(&["echo", "\u{201c}a"])]);
+    }
+
+    #[test]
+    fn ansi_c_and_locale_quoting_lose_their_dollar() {
+        assert_eq!(toks("$'rm' -rf /"), vec![v(&["rm", "-rf", "/"])]);
+        assert_eq!(toks("$\"rm\" -rf /"), vec![v(&["rm", "-rf", "/"])]);
+        assert_eq!(toks("echo $'a b'"), vec![v(&["echo", "a b"])]);
+        // a `$` that is not followed by a quote is a variable
+        assert_eq!(toks("echo $HOME $"), vec![v(&["echo", "$HOME", "$"])]);
+    }
+
+    #[test]
+    fn substitution_spans_report_where_a_substitution_starts() {
+        let spans = substitution_spans("eval $(echo x | base64 -d) && ls `date`");
+        assert_eq!(
+            spans,
+            vec![
+                (5, "echo x | base64 -d".to_owned()),
+                (33, "date".to_owned())
+            ]
+        );
+        assert_eq!(
+            substitution_spans("bash <(curl x)"),
+            vec![(5, "curl x".to_owned())]
+        );
+        assert!(substitution_spans("echo '$(no)'").is_empty());
+    }
+
+    #[test]
+    fn wrappers_payloads_and_interpreters_of_the_coverage_review() {
+        assert_eq!(
+            unwrap_command(&v(&["busybox", "rm", "-rf", "/"])).tokens[0],
+            "rm"
+        );
+        assert_eq!(unwrap_command(&v(&["chronic", "ls"])).tokens[0], "ls");
+        // `env -S` carries a command line: `env` stays the command word and `inner_payload` reads the line
+        let t = v(&["env", "-S", "rm -rf /"]);
+        assert_eq!(unwrap_command(&t).tokens[0], "env");
+        assert_eq!(inner_payload(&t), Some(Inner::Command("rm -rf /".into())));
+        assert_eq!(
+            inner_payload(&v(&["env", "-Sa b", "c"])),
+            Some(Inner::Command("a b c".into()))
+        );
+        assert_eq!(
+            inner_payload(&v(&["env", "--split-string=x y"])),
+            Some(Inner::Command("x y".into()))
+        );
+        assert_eq!(inner_payload(&v(&["env", "FOO=1", "make"])), None);
+        assert_eq!(
+            unwrap_command(&v(&["env", "-u", "A", "make"])).tokens[0],
+            "make"
+        );
+        for t in [
+            v(&["su", "-c", "rm -rf /"]),
+            v(&["su", "-", "root", "-lc", "rm -rf /"]),
+            v(&["su", "--command", "rm -rf /"]),
+            v(&["runuser", "-l", "x", "-c", "rm -rf /"]),
+        ] {
+            assert_eq!(
+                inner_payload(&t),
+                Some(Inner::Command("rm -rf /".into())),
+                "{t:?}"
+            );
+        }
+        assert_eq!(
+            inner_payload(&v(&["su", "--command=rm -rf /"])),
+            Some(Inner::Command("rm -rf /".into()))
+        );
+        assert_eq!(inner_payload(&v(&["su", "-", "root"])), None);
+
+        for n in [
+            "python",
+            "python3",
+            "python3.12",
+            "pypy3",
+            "node",
+            "nodejs",
+            "deno",
+            "bun",
+            "perl",
+            "ruby",
+            "php",
+            "lua",
+            "Rscript".to_lowercase().as_str(),
+        ] {
+            assert!(is_script_interpreter(n), "{n}");
+        }
+        for n in ["pythonista", "nodemon", "git", "", ".", "perldoc", "bash"] {
+            assert!(!is_script_interpreter(n), "{n}");
+        }
+        // a program on standard input: no inline code, no script file (a lone `-` is stdin)
+        for (n, a) in [
+            ("python3", vec![]),
+            ("python3", v(&["-"])),
+            ("python3", v(&["-u"])),
+            ("node", vec![]),
+            ("perl", vec![]),
+            ("deno", v(&["run", "-"])),
+            ("bun", v(&["run", "-"])),
+            ("bash", v(&["-s", "--", "arg"])),
+            ("sh", v(&["script.sh"])),
+            ("powershell", v(&["-NoProfile"])),
+        ] {
+            assert!(reads_program_from_stdin(n, &a), "{n} {a:?}");
+        }
+        for (n, a) in [
+            ("python3", v(&["-c", "print(1)"])),
+            ("python3", v(&["-m", "json.tool"])),
+            ("python3", v(&["script.py"])),
+            ("python3", v(&["-uc", "x"])),
+            ("node", v(&["-e", "1"])),
+            ("node", v(&["--eval", "1"])),
+            ("node", v(&["-p", "1"])),
+            ("node", v(&["app.js"])),
+            ("perl", v(&["-ne", "print"])),
+            ("perl", v(&["-E", "say 1"])),
+            ("ruby", v(&["-e", "1"])),
+            ("php", v(&["-r", "echo 1;"])),
+            ("deno", v(&["run", "app.ts"])),
+            ("jq", vec![]),
+            ("cat", vec![]),
+        ] {
+            assert!(!reads_program_from_stdin(n, &a), "{n} {a:?}");
+        }
+    }
+
+    #[test]
+    fn tokenizer_is_total_on_shell_syntax_noise() {
+        let alphabet: Vec<char> = "ab rm-/ ${}()!;|&<>`'\"\\*?[]~.:=,@%^#\n\u{2013}\u{201c}é"
+            .chars()
+            .collect();
+        let mut state: u64 = 0x0123_4567_89ab_cdef;
+        for _ in 0..6000 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let len = (state >> 57) as usize + 1;
+            let mut st = state;
+            let s: String = (0..len)
+                .map(|_| {
+                    st = st.wrapping_mul(6364136223846793005).wrapping_add(5);
+                    alphabet[(st >> 33) as usize % alphabet.len()]
+                })
+                .collect();
+            for shell in [Shell::Posix, Shell::PowerShell] {
+                for seg in split_segments(&s, shell) {
+                    let u = unwrap_command(&seg.tokens);
+                    let _ = inner_payload(u.tokens);
+                    let _ = reads_program_from_stdin("python3", &seg.tokens);
+                    for t in &seg.tokens {
+                        let _ = base_command(t);
+                        let _ = is_flag(t);
+                    }
+                }
+            }
+            let _ = substitution_spans(&s);
+        }
+    }
+
+    #[test]
+    fn ansi_c_quoting_decodes_its_escapes() {
+        assert_eq!(toks("$'\\x72\\x6d'"), vec![v(&["rm"])]);
+        assert_eq!(toks("$'\\162\\155'"), vec![v(&["rm"])]);
+        assert_eq!(toks("$'\\u0072\\U0000006d'"), vec![v(&["rm"])]);
+        assert_eq!(toks("$'a\\tb\\nc'"), vec![v(&["a\tb\nc"])]);
+        assert_eq!(toks("$'it\\'s' x"), vec![v(&["it's", "x"])]);
+        assert_eq!(toks("$'\\cA'"), vec![v(&["\u{1}"])]);
+        // unknown / incomplete escapes keep their backslash; the quote is closed by the first unescaped `'`
+        assert_eq!(toks("$'\\q\\x'"), vec![v(&["\\q\\x"])]);
+        assert_eq!(toks("$'a' b"), vec![v(&["a", "b"])]);
+        // separators inside the quotes do not split
+        assert_eq!(toks("$'a;b|c' d"), vec![v(&["a;b|c", "d"])]);
+        // unterminated: the quote-less fallback still splits at the separator
+        assert!(toks("echo $'abc; rm -rf /")
+            .iter()
+            .any(|t| t.first().map(String::as_str) == Some("rm")));
+    }
+
+    #[test]
+    fn a_thousand_reserved_words_do_not_push_the_command_out() {
+        let cmd = format!("{}rm -rf /", "! ".repeat(1000));
+        assert_eq!(toks(&cmd), vec![v(&["rm", "-rf", "/"])]);
+        let cmd = format!("{}rm x", "if ".repeat(1000));
+        assert_eq!(toks(&cmd), vec![v(&["rm", "x"])]);
     }
 }

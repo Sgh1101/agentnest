@@ -155,7 +155,12 @@ export class ApprovalCard {
         h(
           "div",
           { class: "reconfirm", "data-reconfirm-block": "1" },
-          h("div", { class: "label" }, "전체 명령 다시 확인"),
+          // A cut card never shows the whole command, so the label must not claim it does: say so and send the user to the
+          // local prompt of the agent, which shows the real command.
+          h("div", { class: "label" }, d.truncated ? "표시된 내용 다시 확인 (일부만 보여요)" : "전체 명령 다시 확인"),
+          d.truncated
+            ? h("div", { class: "hint", "data-truncated-warning": "1" }, "명령이 길어서 전부 보여드릴 수 없어요. 뒷부분을 확인할 수 없으니 허용하지 말고 PC의 에이전트 화면에서 직접 확인하세요.")
+            : null,
           h("pre", { class: "code code-full", "data-command-full": "1" }, visualize(d.command ?? d.file_paths.join("\n"))),
           h("label", { class: "check-label" }, checkbox, " 내용을 확인했어요"),
         ),

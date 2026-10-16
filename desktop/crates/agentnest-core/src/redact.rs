@@ -1173,4 +1173,130 @@ mod tests {
         assert_eq!(HookToken::new("x").expose(), "x");
         assert!(SecretBytes::new(Vec::new()).is_empty());
     }
+
+    // -- review round 2: quoted values and per-command password flags ---------------------------------------------------
+
+    /// Every one of these left the secret in the card / event text before the quoted-value and short-flag rules.
+    #[test]
+    fn quoted_values_and_short_password_flags_are_masked_in_every_variant() {
+        let cases: [(&str, &str); 24] = [
+            ("tool --password \"hunter2\" run", "hunter2"),
+            ("tool --token \"fake-value-0000\" run", "fake-value-0000"),
+            ("tool --password 'a b hunter2' run", "hunter2"),
+            ("tool --password='a b hunter2' run", "hunter2"),
+            ("mysql -p\"hunter2\" db", "hunter2"),
+            ("mysql -u root -p'my hunter2' db", "hunter2"),
+            ("PASSWORD='a b hunter2' make", "hunter2"),
+            ("password=\"abc hunter2\" run", "hunter2"),
+            ("export MY_SECRET_KEY='a b hunter2'", "hunter2"),
+            ("{\"password\": \"abc hunter2\"}", "hunter2"),
+            (
+                "docker login -u me -p hunter2 registry.example.com",
+                "hunter2",
+            ),
+            (
+                "podman login --username me -p hunter2 r.example.com",
+                "hunter2",
+            ),
+            ("sshpass -p hunter2 ssh host", "hunter2"),
+            ("sshpass -p'a hunter2' ssh host", "hunter2"),
+            ("redis-cli -h h -a hunter2 ping", "hunter2"),
+            ("gpg --batch --passphrase hunter2 -d x.gpg", "hunter2"),
+            ("zip -P hunter2 a.zip dir", "hunter2"),
+            ("unzip -P hunter2 a.zip", "hunter2"),
+            ("7z a -phunter2 a.7z dir", "hunter2"),
+            (
+                "openssl enc -aes-256-cbc -k hunter2 -in a -out b",
+                "hunter2",
+            ),
+            ("openssl req -passin pass:hunter2 -key k", "hunter2"),
+            ("curl -uadmin:hunter2 https://x.example", "hunter2"),
+            (
+                "psql \"postgres://user:my hunter2@db.internal/app\"",
+                "hunter2",
+            ),
+            ("export URL='mysql://app:s3 hunter2@db/app'", "hunter2"),
+        ];
+        for (input, secret) in cases {
+            for (label, got) in [
+                ("mask", mask(input)),
+                ("cmd_preview", mask_cmd_preview(input)),
+                ("keep_long", mask_keep_long_tokens(input)),
+                ("display", mask_for_display(input, false)),
+            ] {
+                assert!(got.redacted, "{label}: {input}");
+                assert!(
+                    !got.text.contains(secret),
+                    "{label} leaked {secret:?}: {}",
+                    got.text
+                );
+            }
+        }
+        // the readable part of the command survives
+        assert_eq!(
+            mask("tool --password \"hunter2\" run").text,
+            "tool --password <redacted> run"
+        );
+        assert_eq!(
+            mask("docker login -u me -p hunter2 r.example.com").text,
+            "docker login -u me -p <redacted> r.example.com"
+        );
+        assert_eq!(
+            mask("7z a -phunter2 a.7z dir").text,
+            "7z a -p<redacted> a.7z dir"
+        );
+        // ordinary text is not over-masked
+        for ok in [
+            "docker run -p 80:80 nginx",
+            "docker login registry.example.com",
+            "unzip -p a.zip x",
+            "7z x a.7z -o./out",
+            "zip -r out.zip dir",
+            "sshpass -f pw.txt ssh host",
+            "redis-cli get a",
+            "gpg --passphrase-file pw.txt -d x.gpg",
+            "openssl enc -d -aes-256-cbc -in a -out b",
+            "curl -u admin https://x.example",
+            "curl -uadmin https://x.example",
+            "git commit -m \"see http://localhost:8080/path and more\"",
+            "echo \"the password is rotated\"",
+            "export MY_SECRET_KEY=\"\"",
+        ] {
+            assert_eq!(mask(ok).text, ok, "{ok}");
+            assert!(!mask(ok).redacted, "{ok}");
+        }
+    }
+
+    #[test]
+    fn a_quoted_keyword_value_never_swallows_what_follows_the_closing_quote() {
+        // the quote after `token=` closes an earlier string: the next command must stay readable on the card
+        let m = mask("echo \"token=\" && rm -rf build \"x\"");
+        assert!(m.text.contains("&& rm -rf build"), "{}", m.text);
+    }
+
+    #[test]
+    fn command_display_cut_follows_the_card() {
+        let at_limit = format!("echo {}a", "a ".repeat(997));
+        assert_eq!(at_limit.chars().count(), COMMAND_MAX_CHARS);
+        assert!(!command_display_is_cut(&at_limit));
+        assert!(command_display_is_cut(&format!("{at_limit}b")));
+        assert!(!command_display_is_cut(""));
+        assert!(!command_display_is_cut("ls"));
+        // the same text the card builds: masked, escaped, then counted
+        let shown = |c: &str| mask_for_display(c, false).text.chars().count();
+        for len in [100usize, 199, 200, 201, 1999, 2000, 2001, 5000] {
+            let cmd = "a ".repeat(len / 2) + &"b".repeat(len % 2);
+            assert_eq!(
+                command_display_is_cut(&cmd),
+                shown(&cmd) > COMMAND_MAX_CHARS,
+                "len {len}"
+            );
+        }
+        // escapes grow the text: 300 invisible characters are 2,400 on the card
+        let invisible = "\u{200b}".repeat(300);
+        assert!(command_display_is_cut(&invisible));
+        // masking shrinks it
+        let secret_run = "a".repeat(3000);
+        assert!(!command_display_is_cut(&secret_run));
+    }
 }

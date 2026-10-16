@@ -195,6 +195,8 @@ PC(데스크톱)                                                   폰
 | `expires_at` | `created_at + TTL`(기본 120초, 60~180) | PRD "만료 후 실행 금지" |
 | `decided_at` | 폰(skew 보정) | `created_at − 60s .. now + 60s` 창 |
 
+**해시 바인딩의 숫자 한계.** `tool_input_sha256` 의 canonical JSON(RFC 8785)은 모든 숫자를 IEEE-754 double 의 ECMAScript 표기로 쓴다. 2^53 을 넘는 정수는 서로 다른 입력이 같은 해시를 내므로(`protocol/vectors/tool_input_sha256.json` 의 `integer_above_2_53_becomes_double`), PreToolUse 와 PermissionRequest 사이에 큰 정수 인자만 바꿔 치는 교체를 해시가 막지 못한다. 폰(Kotlin)과 보관 벡터가 이 규칙을 쓰므로 알고리즘은 바꾸지 않고, **`|n| > 2^53 - 1` 정수가 들어 있는 `tool_input` 은 위험 분류에서 `critical`/`classifier_error`(검토 불가)로 올린다**(`risk::classify`, `integrations/claude-code.md` §7). 실수(float)는 double 로 정확히 표현되는 값이므로 대상이 아니다.
+
 ### 6.2 `apply_decision` 9단계 (순서 고정, 모두 **상태 변경 전**; 실패 사유는 `decision_result.reason`)
 
 1. 인증된 기기 연결에서 왔고 기기가 미폐기인가 (`DEVICE_REVOKED` / 연결 종료)
@@ -271,7 +273,7 @@ PC(데스크톱)                                                   폰
 | `permission_mode ∈ {bypassPermissions, dontAsk, auto}` | `remote_approval: unavailable` 배지, `PermissionDenied`는 이벤트로만 | `PermissionRequest` 미발생 가능 [검증] | — | 세션 카드 배지 |
 | 기기 폐기(보류 중) | 그 기기의 결정 무효; 다른 온라인 기기 없으면 `handed_off_local` | 로컬 다이얼로그 | 무응답 | `bye` 후 토큰 삭제 |
 | 원격 승인 일시정지 | 새 요청은 즉시 빈 2xx; 보류 결정은 `PAUSED` | 로컬 다이얼로그 | 무응답 | 배지 |
-| 위험 분류기 패닉/정규식 오류 | `critical`로 분류 후 정상 흐름 | — | — | 빨간 카드 + 재확인 시트 |
+| 위험 분류기 패닉/정규식 오류, **분류기가 이해하지 못한 입력**(카드가 2,000자에서 자르는 명령, 문자열·배열이 아닌 `command`, 2^53 을 넘는 정수, 분석 단계 예산 초과 — `command_truncated`·`classifier_error`; 정적으로 해석할 수 없는 명령 단어는 최소 `high`/`shell_unparsed`) | `critical`로 분류 후 정상 흐름 | — | — | 빨간 카드 + 재확인 시트(명령 전체 재표시) |
 | 알 수 없는 `decision` 값 | `E_BAD_MESSAGE`(스키마 거부) | 대기 지속 | 대기 지속 | — |
 | 데스크톱 "로컬로 처리" | 즉시 빈 2xx, `handed_off_local`(resolved_by=desktop) | 로컬 다이얼로그 | 무응답 | "PC에서 처리하기로 했어요" |
 | 데스크톱 허용/거부 | **동일 브로커 전이**(§6.2.1: 2·3·5(카드 해시 에코)·6·7 필수, 8은 `confirm_ack`, 1·4·9 해당 없음; `actor=desktop`, 감사 기록). 트레이는 `high`/`critical`에 허용을 제공하지 않는다 | allow/deny | accept/decline | `approval_resolved{resolved_by:desktop}` |
@@ -306,24 +308,26 @@ PC(데스크톱)                                                   폰
 | 이름 | 마스킹 대상 |
 | --- | --- |
 | `auth_header` | `Authorization: Bearer\|Basic\|Token\|Digest <값>` (`Proxy-` 포함)의 **값**(스킴·헤더 이름은 남김) |
-| `keyword_assignment` | `(?i)(api[_-]?key\|token\|secret\|password\|passwd\|authorization\|bearer)\s*[:=]\s*\S+` |
+| `keyword_assignment` | `(?i)(api[_-]?key\|token\|secret\|password\|passwd\|authorization\|bearer)\s*[:=]\s*(?:"…"\|'…'\|\S+)` — 따옴표 값(공백 포함, 첫 글자가 공백·`&\|;<>` 가 아닌 것)은 닫는 따옴표까지, 아니면 공백 전까지 |
 | `agentnest_token`, `aws_access_key`, `github_token`, `sk_token`, `vendor_token` | `an_hk_…`, `AKIA…`, `gh[pousr]_…`, `sk-…`, Slack `xox*-`, npm `npm_…`, `github_pat_`, `glpat-`, Google API 키, Stripe `sk_/rk_/pk_(live\|test)_`, SendGrid, `ya29.` |
 | `private_key_block`, `jwt` | PEM 개인키 블록, JWT |
 | `url_userinfo` | `scheme://user:<비밀번호>@host` 의 비밀번호 |
-| `credential_flag` | `--password\|--passwd\|--token\|--secret\|--api-key\|…` 뒤의 값(공백 또는 `=`). `--password-stdin` 같은 접미 플래그는 제외 |
-| `user_flag` | `--user\|--proxy-user a:<비밀번호>`, `curl\|wget … -u a:<비밀번호>` (`docker --user 1000:1000` 같은 숫자 쌍은 제외) |
-| `mysql_password_flag` | `mysql*\|mariadb* … -p<비밀번호>` (붙여 쓴 형태만; `-p`+공백은 프롬프트라 제외) |
+| `url_userinfo_quoted` | 따옴표 안의 URL 에서 **공백이 든** 비밀번호(`"postgres://u:my pass@db/app"`) |
+| `credential_flag` | `--password\|--passwd\|--passphrase\|--token\|--secret\|--api-key\|…` 뒤의 값(공백 또는 `=`; **따옴표 값 포함**). `--password-stdin`·`--passphrase-file` 같은 접미 플래그는 제외 |
+| `user_flag` | `--user\|--proxy-user a:<비밀번호>`, `curl\|wget … -u a:<비밀번호>`(`-uuser:pw` 붙여 쓴 형태와 따옴표 포함) (`docker --user 1000:1000` 같은 숫자 쌍은 제외) |
+| `mysql_password_flag` | `mysql*\|mariadb* … -p<비밀번호>` (붙여 쓴 형태만, `-p"x y"` 따옴표 포함; `-p`+공백은 프롬프트라 제외) |
+| `short_password_flag` | 명령별 짧은 플래그: `sshpass -p`, `redis-cli -a`, `zip\|unzip -P`, `7z -pXXX`(붙여 쓴 형태), `docker\|podman\|nerdctl\|buildah\|crane\|oras\|skopeo … login -p`, `openssl … -k\|-passin pass:\|-passout pass:`. `docker run -p 80:80`·`unzip -p`·`7z -o`·`sshpass -f` 는 제외 |
 | `npm_auth` | `_authToken`/`_auth`/`_authPassword` 뒤의 값 |
 | `query_secret` | URL 쿼리의 `?key=\|token=\|api_key=\|access_token=\|sig=\|signature=\|secret=\|password=…` 값 |
 | `aws_secret` | `aws_secret_access_key\|aws_session_token` 뒤의 값(공백/`=`/`:`) |
-| `env_secret` | `MY_SECRET_KEY=값`, `SSH_KEY=값` 같은 환경변수·복합 식별자(`secret\|password\|token\|credential\|…_key` 포함) + `=`/`:` |
+| `env_secret` | `MY_SECRET_KEY=값`, `SSH_KEY=값` 같은 환경변수·복합 식별자(`secret\|password\|token\|credential\|…_key` 포함) + `=`/`:`; 따옴표 값은 공백이 있어도 닫는 따옴표 앞까지(닫는 따옴표는 남긴다) |
 | `long_token_40` | 40자 이상 `[A-Za-z0-9+/_-]` 연속(hex/base64 토큰) |
 
-규칙 이름에 `pre`/`post` 그룹이 있는 패턴은 그 그룹을 **남기고** 나머지만 `<redacted>`로 바꾼다(`mysql -u root -p<redacted> db`, `https://user:<redacted>@host`). 마스킹된 이벤트는 `redacted: true`. 카드 표시 문자열은 마스킹 뒤 **보이는 이스케이프**(`\u{202e}`, `\r`, `\u{1b}`)로 바꾼다: 양방향 제어·제로폭·ESC·CR·기타 제어 문자(§8.4). 알려진 한계: 일반 단어와 겹치는 플래그·식별자 규칙(`--token-file=…` 등)은 과마스킹 쪽으로 기운다.
+규칙 이름에 `pre`/`post` 그룹이 있는 패턴은 그 그룹을 **남기고** 나머지만 `<redacted>`로 바꾼다(`mysql -u root -p<redacted> db`, `https://user:<redacted>@host`). 마스킹된 이벤트는 `redacted: true`. 카드 표시 문자열은 마스킹 뒤 **보이는 이스케이프**(`\u{202e}`, `\r`, `\u{1b}`)로 바꾼다: 양방향 제어·제로폭·ESC·CR·기타 제어 문자(§8.4). 알려진 한계: 일반 단어와 겹치는 플래그·식별자 규칙(`--token-file=…` 등)은 과마스킹 쪽으로 기운다. 따옴표 값 규칙은 키워드가 **닫는 따옴표 바로 앞**에 걸린 경우(`echo "token=" && echo "a b"`)에도 다음 문자열까지 가릴 수 있어, 값이 공백·`&\|;<>` 로 시작하면 따옴표 값으로 보지 않는다(카드에서 뒤따르는 명령이 가려지지 않게). 따옴표 없는 `password=a;rm` 은 예전처럼 공백 전까지(`;rm` 포함)를 가린다.
 
 ### 8.4 카드 표시 충실도
 
-카드(`approval_request.details`, DB `details_json`)에 들어가는 **모든** 문자열(명령, 경로, diff·내용 줄, 프로젝트 이름·브랜치·repo, 도구 이름, MCP 서버, MCP/알 수 없는 도구의 인자 요약, `purpose`·`reason`)은 `redact::mask_for_display`를 통과한다: 마스킹(제로폭 문자로 키워드를 쪼개 우회할 수 없도록 보이지 않는 문자를 제거한 사본에 적용) 후 제어·양방향·제로폭 문자를 **보이는 이스케이프**로 바꾼다(명령·diff는 `\n`·`\t` 유지, 이름·경로는 한 줄). 화면 표시만 바뀌며 바인딩 해시 `tool_input_sha256`은 **원본 `tool_input`** 에서 계산한다. 잘림이 있으면(diff·미리보기 줄 초과, `MultiEdit` 편집 5개 초과, 경로 50개 초과, 명령 2,000자 초과, 미리보기 삭제) `details.truncated = true`. MCP·알 수 없는 도구는 `details.command`에 상한 600자·키 12개의 마스킹된 인자 요약(`target="prod-db", force=true`)을 싣는다.
+카드(`approval_request.details`, DB `details_json`)에 들어가는 **모든** 문자열(명령, 경로, diff·내용 줄, 프로젝트 이름·브랜치·repo, 도구 이름, MCP 서버, MCP/알 수 없는 도구의 인자 요약, `purpose`·`reason`)은 `redact::mask_for_display`를 통과한다: 마스킹(제로폭 문자로 키워드를 쪼개 우회할 수 없도록 보이지 않는 문자를 제거한 사본에 적용) 후 제어·양방향·제로폭 문자를 **보이는 이스케이프**로 바꾼다(명령·diff는 `\n`·`\t` 유지, 이름·경로는 한 줄). 화면 표시만 바뀌며 바인딩 해시 `tool_input_sha256`은 **원본 `tool_input`** 에서 계산한다. 잘림이 있으면(diff·미리보기 줄 초과, `MultiEdit` 편집 5개 초과, 경로 50개 초과, 명령 2,000자 초과, 미리보기 삭제) `details.truncated = true`. **명령이 잘리는 경우(마스킹·이스케이프 뒤 2,000자 초과)에는 위험 등급이 `critical`/`command_truncated` 로 올라간다**(`redact::command_display_is_cut`, `integrations/claude-code.md` §7) — 사람이 읽지 못한 꼬리를 승인하지 않도록 재확인 시트에서 명령 전체를 다시 보여 줘야 한다. MCP·알 수 없는 도구는 `details.command`에 상한 600자·키 12개의 마스킹된 인자 요약(`target="prod-db", force=true`)을 싣는다.
 
 ---
 

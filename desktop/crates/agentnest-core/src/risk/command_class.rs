@@ -593,4 +593,23 @@ mod tests {
         assert_eq!(runner("cargo build", Shell::Posix), None);
         assert_eq!(runner("", Shell::Posix), None);
     }
+
+    #[test]
+    fn shell_syntax_around_a_command_does_not_change_its_class() {
+        for (cmd, want) in [
+            ("(cargo test)", CommandClass::Test),
+            ("(cd x && cargo build)", CommandClass::Build),
+            ("{ cargo test; }", CommandClass::Test),
+            ("if cargo test; then echo ok; fi", CommandClass::Test),
+            ("for d in a b; do npm test; done", CommandClass::Test),
+            ("while true; do pytest; done", CommandClass::Test),
+            ("! cargo build", CommandClass::Build),
+            ("f() { cargo test; }; f", CommandClass::Test),
+        ] {
+            assert_eq!(command_class(cmd), want, "{cmd}");
+        }
+        // closing words (`fi`, `done`, `}`) are neutral
+        assert_eq!(command_class("if true; then ls; fi"), CommandClass::Fs);
+        assert_eq!(command_class("fi"), CommandClass::Shell);
+    }
 }

@@ -215,7 +215,8 @@ pub fn is_absolute(normalized: &str) -> bool {
 }
 
 /// Replaces the shell spellings of the home directory (`$HOME`, `${HOME}`, `%USERPROFILE%`, `$env:USERPROFILE`, ...)
-/// at the start of `p` with `~`.
+/// at the start of `p` with `~`, and those of the Windows system locations (`%windir%`, `%SystemRoot%`, `$env:windir`,
+/// `%ProgramFiles%`, `%ProgramData%`, `%SystemDrive%`, ...) with the usual `C:/...` path.
 pub fn expand_home_alias(p: &str) -> String {
     let lower = p.to_ascii_lowercase();
     for alias in [
@@ -231,6 +232,26 @@ pub fn expand_home_alias(p: &str) -> String {
             let rest = &p[alias.len()..];
             if rest.is_empty() || rest.starts_with('/') || rest.starts_with('\\') {
                 return format!("~{rest}");
+            }
+        }
+    }
+    for (alias, target) in [
+        ("%systemroot%", "C:/Windows"),
+        ("%windir%", "C:/Windows"),
+        ("$env:systemroot", "C:/Windows"),
+        ("$env:windir", "C:/Windows"),
+        ("%programfiles(x86)%", "C:/Program Files (x86)"),
+        ("%programfiles%", "C:/Program Files"),
+        ("$env:programfiles", "C:/Program Files"),
+        ("%programdata%", "C:/ProgramData"),
+        ("$env:programdata", "C:/ProgramData"),
+        ("%systemdrive%", "C:"),
+        ("$env:systemdrive", "C:"),
+    ] {
+        if lower.starts_with(alias) {
+            let rest = &p[alias.len()..];
+            if rest.is_empty() || rest.starts_with('/') || rest.starts_with('\\') {
+                return format!("{target}{rest}");
             }
         }
     }
@@ -501,5 +522,138 @@ mod tests {
             let _ = path_hint(&s);
             let _ = is_within(&n, "/");
         }
+    }
+
+    // -- review round 2: Windows spellings ----------------------------------------------------------------------------
+
+    #[test]
+    fn windows_segment_quirks_are_removed_only_for_windows_style_paths() {
+        assert_eq!(
+            normalize("C:\\Windows.\\system32\\x"),
+            "C:/Windows/system32/x"
+        );
+        assert_eq!(
+            normalize("C:\\Windows \\system32\\x"),
+            "C:/Windows/system32/x"
+        );
+        assert_eq!(normalize("C:\\Windows. .\\x"), "C:/Windows/x");
+        assert_eq!(normalize("C:\\a\\...\\b"), "C:/a/b");
+        assert_eq!(normalize("C:\\a\\b.json::$DATA"), "C:/a/b.json");
+        assert_eq!(normalize("C:\\a\\b.json:stream:$DATA"), "C:/a/b.json");
+        assert_eq!(normalize("a\\b.\\c "), "a/b/c");
+        assert_eq!(normalize("C:\\a\\.. \\b"), "C:/a/b");
+        // POSIX names are what they are
+        assert_eq!(normalize("/a/b./c "), "/a/b./c ");
+        assert_eq!(normalize("a/b.json::$DATA"), "a/b.json::$DATA");
+        assert_eq!(win_segment("Windows. "), "Windows");
+        assert_eq!(win_segment("x.json::$DATA"), "x.json");
+        assert_eq!(win_segment("..."), "");
+        assert_eq!(win_segment(".."), "..");
+        assert_eq!(win_segment("."), ".");
+        assert_eq!(win_segment(".ssh."), ".ssh");
+        assert_eq!(win_segment(".env"), ".env");
+    }
+
+    #[test]
+    fn unc_and_device_prefixes() {
+        assert_eq!(normalize("\\\\localhost\\C$\\Windows\\x"), "C:/Windows/x");
+        assert_eq!(normalize("\\\\LocalHost\\c$"), "C:/");
+        assert_eq!(normalize("\\\\127.0.0.1\\d$\\a\\..\\b"), "D:/b");
+        assert_eq!(normalize("//localhost/C$/x"), "C:/x");
+        assert_eq!(normalize("\\\\srv\\C$\\Windows"), "//srv/C$/Windows");
+        assert_eq!(normalize("\\\\localhost\\share\\x"), "//localhost/share/x");
+        assert_eq!(normalize("\\\\?\\UNC\\srv\\share\\x"), "//srv/share/x");
+        assert_eq!(normalize("\\\\?\\unc\\localhost\\C$\\x"), "C:/x");
+        assert_eq!(normalize("\\\\?\\C:\\x"), "C:/x");
+        assert_eq!(normalize("\\\\.\\C:\\x"), "C:/x");
+        // devices keep a marker instead of becoming a relative path
+        assert_eq!(normalize("\\\\.\\PhysicalDrive0"), "//./PhysicalDrive0");
+        assert_eq!(normalize("\\\\?\\Volume{1234}\\x"), "//./Volume{1234}/x");
+        assert_eq!(normalize("\\\\.\\pipe\\p"), "//./pipe/p");
+        assert_eq!(normalize("//./"), "//./");
+        assert!(is_absolute("//./PhysicalDrive0"));
+        // POSIX double and triple root keep the UNC marker (the predicates read it both ways)
+        assert_eq!(normalize("//etc/x"), "//etc/x");
+        assert_eq!(normalize("///etc/x"), "//etc/x");
+    }
+
+    #[test]
+    fn short_names_match_their_long_names() {
+        for seg in [
+            "PROGRA~1",
+            "progra~2",
+            "WINDOW~1",
+            "PACKAGE~1.JSO",
+            "PACKAG~1.JSO",
+            "A~1",
+            "SSH~1",
+            "WORKFL~1",
+            "CARGO~1.TOM",
+        ] {
+            assert!(is_short_name(seg), "{seg}");
+        }
+        for seg in [
+            "Program Files",
+            "package.json",
+            "a~",
+            "~1",
+            "a~b",
+            "README~1.markdown",
+            "x~1.toolong",
+            "",
+            "~",
+        ] {
+            assert!(!is_short_name(seg), "{seg}");
+        }
+        for (seg, long) in [
+            ("PROGRA~1", "Program Files"),
+            ("PROGRA~2", "Program Files (x86)"),
+            ("PROGRA~1", "ProgramData"),
+            ("WINDOW~1", "Windows"),
+            ("PACKAGE~1.JSO", "package.json"),
+            ("PACKAG~1.JSO", "package.json"),
+            ("CARGO~1.TOM", "Cargo.toml"),
+            ("SSH~1", ".ssh"),
+            ("GITHUB~1", ".github"),
+            ("WORKFL~1", "workflows"),
+        ] {
+            assert!(short_name_matches(seg, long), "{seg} {long}");
+        }
+        for (seg, long) in [
+            ("PROGRA~1", "Windows"),
+            ("WINDOW~1", "Program Files"),
+            ("PACKAGE~1.TXT", "package.json"),
+            ("SSHD~1", ".ssh"),
+            ("Windows", "Windows"),
+            ("package.json", "package.json"),
+        ] {
+            assert!(!short_name_matches(seg, long), "{seg} {long}");
+        }
+    }
+
+    #[test]
+    fn system_location_variables_expand() {
+        assert_eq!(
+            expand_home_alias("%windir%\\system32\\x"),
+            "C:/Windows\\system32\\x"
+        );
+        assert_eq!(expand_home_alias("%SystemRoot%"), "C:/Windows");
+        assert_eq!(expand_home_alias("$env:windir/x"), "C:/Windows/x");
+        assert_eq!(
+            expand_home_alias("%ProgramFiles%\\a"),
+            "C:/Program Files\\a"
+        );
+        assert_eq!(
+            expand_home_alias("%ProgramFiles(x86)%\\a"),
+            "C:/Program Files (x86)\\a"
+        );
+        assert_eq!(
+            expand_home_alias("$env:ProgramData\\a"),
+            "C:/ProgramData\\a"
+        );
+        assert_eq!(expand_home_alias("%SystemDrive%\\x"), "C:\\x");
+        assert_eq!(expand_home_alias("%windirx%\\x"), "%windirx%\\x");
+        assert_eq!(expand_home_alias("%USERPROFILE%\\x"), "~\\x");
+        assert_eq!(resolve("%windir%\\x", Some("C:\\dev")), "C:/Windows/x");
     }
 }

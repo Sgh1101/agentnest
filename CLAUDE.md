@@ -1,7 +1,7 @@
 # AgentNest — Claude Code 작업 지침
 
 이 저장소는 **AgentNest**(Windows PC의 AI 코딩 에이전트들을 Android 앱에서 통합 관제하는 플랫폼)의 모노레포다.
-역할 분담: **Claude Code = 구현**, **Codex = 리뷰**(`AGENTS.md` 참고), **GitHub Actions = 자동 검증**, **사용자 = 최종 승인**.
+역할 분담: **Claude Code = 구현과 독립 리뷰**(구현자와 분리된 리뷰어 에이전트가 P0/P1 중심으로 검토하고 Claude Code 가 검증 후 수정, `AGENTS.md` 의 기준을 그대로 쓴다), **GitHub Actions = 자동 검증**, **사용자 = 최종 승인**. 외부 Codex 리뷰는 필수가 아니다.
 
 ## 먼저 읽을 문서
 
@@ -61,6 +61,6 @@ cd android && ./gradlew :app:assembleDebug
 
 ## PR 규칙
 
-- 브랜치 → PR → Codex 리뷰(P0/P1 지적) → Claude Code 수정 → CI 녹색 → 사용자 머지.
+- 브랜치 → PR → Claude 독립 리뷰(P0/P1 지적, 지적은 코드로 사실 확인 후 수정) → CI 녹색 → 사용자 머지.
 - PR 설명에 "변경 요약 / 보안 영향 / 테스트 방법 / 문서 변경" 네 항목을 쓴다.
 - 커밋 메시지에 모델 식별자를 넣지 않는다.

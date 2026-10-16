@@ -78,6 +78,20 @@ describe("approval card layout and wording", () => {
     expect(q(card, "[data-command-expanded]").textContent).toBe(long);
   });
 
+  it("critical with a cut command does not claim to show the whole command and warns that the tail is hidden", async () => {
+    const a = sampleApproval({ id: "ar_t", level: "critical", created_at: created() });
+    a.details.truncated = true;
+    const card = await open(a);
+    expect(q(card, "[data-reconfirm-block] .label").textContent).toContain("일부만");
+    expect(q(card, "[data-truncated-warning]").textContent).toContain("허용하지 말고");
+    // an untruncated critical card keeps the plain wording and shows no warning
+    h.destroy();
+    const b = sampleApproval({ id: "ar_u", level: "critical", created_at: created() });
+    const card2 = await open(b);
+    expect(q(card2, "[data-reconfirm-block] .label").textContent).toBe("전체 명령 다시 확인");
+    expect(card2.querySelector("[data-truncated-warning]")).toBeNull();
+  });
+
   it("more than five target files: the rest is reachable, not just counted", async () => {
     const a = sampleApproval({ id: "ar_p", level: "medium", created_at: created() });
     a.details.file_paths = ["a", "b", "c", "d", "e", "f", "g"];

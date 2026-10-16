@@ -332,12 +332,12 @@ pub fn is_system_path(path: &str) -> bool {
     if p.starts_with("//./") {
         return true;
     }
-    if p.starts_with("//") {
+    if let Some(unc) = p.strip_prefix("//") {
         // `//etc/x` is `/etc/x` on POSIX; `//host/c$/windows` is a drive of another machine
         if is_system_path(&p[1..]) {
             return true;
         }
-        let mut parts = p[2..].splitn(3, '/');
+        let mut parts = unc.splitn(3, '/');
         let _host = parts.next();
         let share = parts.next().unwrap_or("");
         let rest = parts.next().unwrap_or("");
@@ -780,5 +780,150 @@ mod tests {
         );
         assert!(apply_patch_paths(&serde_json::json!(42)).is_empty());
         assert!(apply_patch_paths(&serde_json::json!("garbage")).is_empty());
+    }
+
+    // -- review round 2 -----------------------------------------------------------------------------------------------
+
+    #[test]
+    fn new_rules_have_the_documented_levels() {
+        assert_eq!(Rule::CommandTruncated.level(), Level::Critical);
+        assert_eq!(Rule::ShellUnparsed.level(), Level::High);
+        assert_eq!(Rule::CommandTruncated.code(), "command_truncated");
+        assert_eq!(Rule::ShellUnparsed.code(), "shell_unparsed");
+        assert_eq!(Rule::ALL.len(), 33);
+    }
+
+    #[test]
+    fn system_path_spellings() {
+        for p in [
+            "C:/Windows./system32/x",
+            "C:/PROGRA~1/x",
+            "c:/progra~2/x",
+            "C:/WINDOW~1/x",
+            "//etc/x",
+            "//usr/bin/x",
+            "//localhost/C$/Windows/x",
+            "//srv/c$/program files/x",
+            "//srv/C$/PROGRA~1/x",
+            "//./PhysicalDrive0",
+            "/mnt/c/Windows./x",
+            "/mnt/c/PROGRA~1/x",
+        ] {
+            assert!(is_system_path(p), "{p}");
+        }
+        for p in [
+            "//srv/share/windows/x",
+            "//srv/C$/dev/x",
+            "//srv/c$",
+            "C:/dev/PROGRA~1/x",
+            "//etcetera/x",
+            "C:/windowsx/x",
+            "//",
+        ] {
+            assert!(!is_system_path(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn secret_read_spellings_and_directories() {
+        for p in [
+            "~/.git-credentials",
+            "~/.pgpass",
+            "~/.docker/config.json",
+            "~/.kube/config",
+            "~/.config/gh/hosts.yml",
+            "/x/server.pem",
+            "/x/a.jks",
+            "/x/a.keystore",
+            "/proc/self/environ",
+            "/proc/1234/environ",
+            "/proc/*/environ",
+            "~/.ssh/id_*",
+            "x/.env*",
+            "x/.env.local",
+            "C:/u/.ssh./id_rsa",
+        ] {
+            assert!(is_secret_read_path(p), "{p}");
+        }
+        for p in [
+            "~/.docker/daemon.json",
+            "~/.kube/cache/x",
+            "/x/hosts.yml",
+            "/x/environ",
+            "/proc/self/status",
+            "~/.ssh/known_hosts",
+            "x/.envrc",
+            "x/.env.example",
+            "x/id_notes.md",
+        ] {
+            assert!(!is_secret_read_path(p), "{p}");
+        }
+        for p in [
+            "~/.ssh",
+            "~/.ssh/x",
+            "~/.aws",
+            "~/.aws/*",
+            "/home/u/.gnupg",
+            "C:/Users/u/.ssh./x",
+            "C:/Users/u/SSH~1",
+        ] {
+            assert!(is_secret_dir_path(p), "{p}");
+        }
+        for p in [
+            "~/.ssh_notes",
+            "~/.azure",
+            "~/.kube",
+            "~/aws",
+            "src/ssh.rs",
+            "~",
+        ] {
+            assert!(!is_secret_dir_path(p), "{p}");
+        }
+    }
+
+    #[test]
+    fn policy_file_spellings() {
+        for p in [
+            "x/.git/hooks/pre-commit",
+            "x/.git/hooks/sub/x",
+            ".git/hooks/pre-push",
+            ".mcp.json",
+            "x/.husky/pre-commit",
+            ".husky/_/h.sh",
+            "x/.vscode/tasks.json",
+            "x/.vscode/launch.json",
+            "x/.claude/hooks/a.sh",
+            "x/.claude/settings.local.json",
+            "x/Makefile",
+            "GNUmakefile",
+            "x/setup.py",
+            "x/conftest.py",
+            "x/.envrc",
+            "x/.git/config",
+            "x/.cargo/config.toml",
+            "x/build.rs",
+            "package.json.",
+            "package.json::$DATA",
+            "PACKAGE~1.JSO",
+            "x/.github/WORKFL~1/ci.yml",
+            "x/GITHUB~1/workflows/ci.yml",
+            "C:/dev/GIT~1/hooks/x",
+        ] {
+            assert!(is_build_or_policy_file(p), "{p}");
+        }
+        for p in [
+            "x/.git/hooks",
+            "x/.git/info/exclude",
+            "x/.husky",
+            "x/hooks/a.sh",
+            "x/.claude/commands/a.md",
+            "x/.claude/hooks",
+            "x/.vscode/extensions.json",
+            "x/docs/Makefile.md",
+            "x/package-lock.json",
+            "x/setup.cfg",
+        ] {
+            assert!(!is_build_or_policy_file(p), "{p}");
+        }
     }
 }
