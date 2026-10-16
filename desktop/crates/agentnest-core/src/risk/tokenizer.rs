@@ -244,17 +244,13 @@ fn is_brace_expansion(token: &str) -> bool {
 ///
 /// Nothing else is changed. The function is total.
 fn lower_syntax(mut tokens: Vec<String>) -> Vec<String> {
-    let mut opened = 0usize;
     let mut braced = false;
     for _ in 0..64 {
         let Some(first) = tokens.first() else { break };
         let f = first.as_str();
         if SYNTAX_WORDS.contains(&f) {
-            match f {
-                "{" => braced = true,
-                "(" => opened += 1,
-                "((" => opened += 2,
-                _ => {}
+            if f == "{" {
+                braced = true;
             }
             tokens.remove(0);
             continue;
@@ -282,9 +278,7 @@ fn lower_syntax(mut tokens: Vec<String>) -> Vec<String> {
             continue;
         }
         if f.len() > 1 && f.starts_with('(') {
-            let stripped = f.trim_start_matches('(').to_owned();
-            opened += f.len() - stripped.len();
-            tokens[0] = stripped;
+            tokens[0] = f.trim_start_matches('(').to_owned();
             continue;
         }
         if f.len() > 1 && f.starts_with('{') && !is_brace_expansion(f) {
@@ -292,23 +286,27 @@ fn lower_syntax(mut tokens: Vec<String>) -> Vec<String> {
             tokens[0] = f[1..].to_owned();
             continue;
         }
-        // the `PATTERN)` of a later `case` clause (`x)`, `*)`, `)`)
-        if f.ends_with(')') && !f.contains('(') && !f.starts_with(['$', '<', '>']) {
+        // the `PATTERN)` of a later `case` clause (`x) rm -rf /`, `*) ...`): a first word that closes a parenthesis nobody
+        // opened and is followed by more words
+        if tokens.len() > 1
+            && f.ends_with(')')
+            && !f.contains('(')
+            && !f.starts_with(['$', '<', '>'])
+        {
             tokens.remove(0);
             continue;
         }
         break;
     }
-    if opened > 0 {
-        if let Some(last) = tokens.last_mut() {
-            let mut n = 0usize;
-            while n < opened && last.ends_with(')') {
-                last.pop();
-                n += 1;
-            }
-            if last.is_empty() {
-                tokens.pop();
-            }
+    // A closing parenthesis nobody opened in this segment (`(cd x && rm -rf /)` is split at `&&`): not part of the word.
+    if let Some(last) = tokens.last_mut() {
+        let mut stripped = false;
+        while last.ends_with(')') && last.matches(')').count() > last.matches('(').count() {
+            last.pop();
+            stripped = true;
+        }
+        if stripped && last.is_empty() {
+            tokens.pop();
         }
     }
     if braced && tokens.last().map(String::as_str) == Some("}") {
@@ -332,6 +330,15 @@ fn lower_syntax(mut tokens: Vec<String>) -> Vec<String> {
 /// The bodies of command substitutions in `text`: `$(...)`, `` `...` `` and `<(...)` / `>(...)` (top level only; the
 /// caller recurses). Single-quoted regions are skipped (no substitution there). Never panics.
 pub fn substitutions(text: &str) -> Vec<String> {
+    substitution_spans(text)
+        .into_iter()
+        .map(|(_, body)| body)
+        .collect()
+}
+
+/// Like [`substitutions`], with the character index of the opening `$` / `<` / `>` / `` ` `` of every body in `text`
+/// (so the caller can look at the command that precedes the substitution).
+pub fn substitution_spans(text: &str) -> Vec<(usize, String)> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -354,7 +361,7 @@ pub fn substitutions(text: &str) -> Vec<String> {
                     && (c == '$' || is_proc_subst_start(&chars, i)) =>
             {
                 let (body, end) = paren_body(&chars, i + 2);
-                out.push(body);
+                out.push((i, body));
                 i = end;
                 continue;
             }
@@ -366,7 +373,7 @@ pub fn substitutions(text: &str) -> Vec<String> {
                     j += 1;
                 }
                 if j < chars.len() {
-                    out.push(body);
+                    out.push((i, body));
                     i = j + 1;
                     continue;
                 }

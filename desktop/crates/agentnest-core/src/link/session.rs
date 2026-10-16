@@ -450,7 +450,7 @@ impl Conn {
         };
         match verdict {
             Verdict::Approve => match self.ctx.pairing.finalize(pending).await {
-                Ok(issued) => Some(self.complete_pairing(issued).await),
+                Ok(issued) => self.complete_pairing(issued).await,
                 Err(_) => {
                     self.pair_fail(ErrorCode::PairFailed, false).await;
                     None
@@ -474,28 +474,59 @@ impl Conn {
         }
     }
 
-    async fn complete_pairing(&mut self, issued: IssuedDevice) -> EntryInfo {
+    /// Sends the one-time `pair_result` with the device token. If it cannot be written, nobody will ever hold that token:
+    /// the freshly created device is revoked again (`pairing_result_not_delivered`) so that no active device without an
+    /// owner stays behind, and the connection ends.
+    async fn complete_pairing(&mut self, issued: IssuedDevice) -> Option<EntryInfo> {
         let pc = self.ctx.pc_info();
-        self.send(Message::PairResult(PairResultPayload {
-            ok: true,
-            device_id: Some(issued.device_id.clone()),
-            // the only time the token travels
-            device_token: Some(agentnest_protocol::Secret::new(issued.token.expose())),
-            pc: Some(PcInfo {
-                pc_id: pc.pc_id,
-                name: pc.name,
-                app_version: env!("CARGO_PKG_VERSION").to_owned(),
-                os: None,
-            }),
-            error_code: None,
-        }))
-        .await;
-        EntryInfo {
+        let delivered = self
+            .send(Message::PairResult(PairResultPayload {
+                ok: true,
+                device_id: Some(issued.device_id.clone()),
+                // the only time the token travels
+                device_token: Some(agentnest_protocol::Secret::new(issued.token.expose())),
+                pc: Some(PcInfo {
+                    pc_id: pc.pc_id,
+                    name: pc.name,
+                    app_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    os: None,
+                }),
+                error_code: None,
+            }))
+            .await;
+        if !delivered {
+            let devices = self.ctx.devices.clone();
+            let id = issued.device_id.clone();
+            let revoked = tokio::task::spawn_blocking(move || {
+                devices.revoke(&id, "pairing_result_not_delivered")
+            })
+            .await;
+            tracing::warn!(
+                revoked = matches!(revoked, Ok(Ok(true))),
+                "pair_result could not be delivered; the new device was revoked"
+            );
+            self.ctx
+                .audit
+                .log(
+                    crate::audit::ACTOR_SYSTEM,
+                    actions::DEVICE_REVOKED,
+                    Some(issued.device_id.clone()),
+                    Some(json!({"reason": "pairing_result_not_delivered"})),
+                )
+                .await;
+            self.ctx
+                .bus
+                .emit(DaemonEvent::Device(DeviceUiEvent::Revoked {
+                    device_id: issued.device_id,
+                }));
+            return None;
+        }
+        Some(EntryInfo {
             device_id: issued.device_id,
             last_seq: 0,
             wants_snapshot: true,
             from_pairing: true,
-        }
+        })
     }
 
     // -----------------------------------------------------------------------------------------------------------------
@@ -850,7 +881,10 @@ impl Conn {
                 }
                 (t, _) => {
                     if t == "approval_resolved" {
-                        Self::forget_card(st, row.payload.get("request_id").and_then(Value::as_str));
+                        Self::forget_card(
+                            st,
+                            row.payload.get("request_id").and_then(Value::as_str),
+                        );
                     }
                     let text = self.stream_text(row.seq, t, &row.payload);
                     if !self.send_text(text).await {

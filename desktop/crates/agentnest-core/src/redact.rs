@@ -233,47 +233,55 @@ struct Pattern {
 
 /// The masking patterns of security.md 8.3, in fixture order (order matters: the generic keyword rule runs second, so
 /// the header rule before it can still see `Authorization: Bearer <value>` as a whole).
-const PATTERN_SOURCES: [(&str, &str); 18] = [
+const PATTERN_SOURCES: [(&str, &str); 20] = [
     (
         "auth_header",
         r#"(?i)(?<pre>\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token|digest|negotiate)\s+)[^\s"']+"#,
     ),
     (
         "keyword_assignment",
-        r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\s*[:=]\s*\S+",
+        r#"(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\s*[:=]\s*(?:"[^"\s&|;<>][^"\n]{0,255}"|'[^'\s&|;<>][^'\n]{0,255}'|\S+)"#,
     ),
     // AgentNest's own prefixed tokens (hook token `an_hk_...`): never in a log or on a card, whatever they sit next to
-    ("agentnest_token", r"\ban_hk_[A-Za-z0-9_-]{16,}"),
-    ("aws_access_key", r"AKIA[0-9A-Z]{16}"),
-    ("github_token", r"gh[pousr]_[A-Za-z0-9]{36,}"),
-    ("sk_token", r"sk-[A-Za-z0-9]{20,}"),
+    ("agentnest_token", r#"\ban_hk_[A-Za-z0-9_-]{16,}"#),
+    ("aws_access_key", r#"AKIA[0-9A-Z]{16}"#),
+    ("github_token", r#"gh[pousr]_[A-Za-z0-9]{36,}"#),
+    ("sk_token", r#"sk-[A-Za-z0-9]{20,}"#),
     (
         "vendor_token",
-        r"\b(?:xox[abprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,})",
+        r#"\b(?:xox[abprs]-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|ya29\.[A-Za-z0-9_-]{20,})"#,
     ),
     (
         "private_key_block",
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+        r#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"#,
     ),
     (
         "jwt",
-        r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",
+        r#"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#,
     ),
     (
         "url_userinfo",
         r#"(?i)(?<pre>\b[a-z][a-z0-9+.-]*://[^\s/@:"']+:)[^\s/@"']+(?<post>@)"#,
     ),
     (
+        "url_userinfo_quoted",
+        r#"(?i)(?<pre>["'][^"'\n]*?\b[a-z][a-z0-9+.-]*://[^\s/@:"']+:)[^"'/@\n]{1,256}(?<post>@)"#,
+    ),
+    (
         "credential_flag",
-        r#"(?i)(?<pre>\B--?(?:password|passwd|pass|token|secret|api-?key|apikey|access-?token|auth-?token|client-?secret|oauth2-bearer)(?:\s+|=))[^\s"'-][^\s"']*"#,
+        r#"(?i)(?<pre>\B--?(?:password|passwd|pass|passphrase|token|secret|api-?key|apikey|access-?token|auth-?token|client-?secret|oauth2-bearer)(?:\s+|=))(?:"[^"\n]{1,256}"|'[^'\n]{1,256}'|[^\s"'-][^\s"']*)"#,
     ),
     (
         "user_flag",
-        r#"(?i)(?<pre>(?:\B--(?:proxy-)?user|\b(?:curl|wget)\b[^\n|;&]*?\s-u)\s+[^\s:@"']+:)[^\s"']*[^\s"'\d][^\s"']*"#,
+        r#"(?i)(?<pre>(?:\B--(?:proxy-)?user(?:\s+|=)|\b(?:curl|wget)\b[^\n|;&]*?\s-u\s*)["']?[^\s:@"']+:)[^\s"']*[^\s"'\d][^\s"']*"#,
     ),
     (
         "mysql_password_flag",
-        r#"(?i)(?<pre>\b(?:mysql(?:dump|admin|import|check|pump|show|slap)?|mariadb(?:-dump|-admin|-import|-check|-show)?)\b[^\n|;&]*?\s(?-i:-p))[^\s"'-]\S*"#,
+        r#"(?i)(?<pre>\b(?:mysql(?:dump|admin|import|check|pump|show|slap)?|mariadb(?:-dump|-admin|-import|-check|-show)?)\b[^\n|;&]*?\s(?-i:-p))(?:"[^"\n]{1,256}"|'[^'\n]{1,256}'|[^\s"'-]\S*)"#,
+    ),
+    (
+        "short_password_flag",
+        r#"(?i)(?<pre>\bsshpass\b[^\n|;&]*?\s-p\s*|\bredis-cli\b[^\n|;&]*?\s-a\s+|\b(?:zip|zipcloak|unzip)\b[^\n|;&]*?\s(?-i:-P)\s*|\b7z[a-z]?\b[^\n|;&]*?\s-p|\b(?:docker|podman|nerdctl|buildah|crane|oras|skopeo)\b[^\n|;&]*?\slogin\b[^\n|;&]*?\s-p(?:\s+|=)|\bopenssl\b[^\n|;&]*?\s(?:-k\s+|-pass(?:in|out)?\s+pass:|-passwd\s+))(?:"[^"\n]{1,256}"|'[^'\n]{1,256}'|[^\s"']+)"#,
     ),
     (
         "npm_auth",
@@ -289,9 +297,9 @@ const PATTERN_SOURCES: [(&str, &str); 18] = [
     ),
     (
         "env_secret",
-        r#"(?i)\b[a-z0-9_.-]*(?:secret|passw(?:or)?d|token|credentials?|(?:api|private|access|auth|signing|encryption|ssh|master)[_-]?key|_key)[a-z0-9_.-]*["']?\s*[=:]\s*["']?[^\s"',;&]+"#,
+        r#"(?i)\b[a-z0-9_.-]*(?:secret|passw(?:or)?d|token|credentials?|(?:api|private|access|auth|signing|encryption|ssh|master)[_-]?key|_key)[a-z0-9_.-]*["']?\s*[=:]\s*(?:"[^"\s&|;<>][^"\n]{0,255}|'[^'\s&|;<>][^'\n]{0,255}|[^\s"',;&]+)"#,
     ),
-    ("long_token_40", r"[A-Za-z0-9+/_-]{40,}={0,2}"),
+    ("long_token_40", r#"[A-Za-z0-9+/_-]{40,}={0,2}"#),
 ];
 
 /// Patterns that are safe to apply to **file paths**: everything except the keyword-ish rules (a path such as
@@ -452,6 +460,19 @@ pub fn tail_bytes(s: &str, max: usize) -> (String, bool) {
         start += 1;
     }
     (s[start..].to_owned(), true)
+}
+
+/// `true` if the approval card cannot show `command` in full: after [`mask_for_display`] (the text the card really
+/// shows) it is longer than [`COMMAND_MAX_CHARS`]. The risk classifier raises such a command to `critical` / `command_truncated`
+/// (a person must not approve text they cannot read); both sides use [`COMMAND_MAX_CHARS`] and this function, so the card's
+/// cut and the classifier's rule cannot drift apart.
+pub fn command_display_is_cut(command: &str) -> bool {
+    // Masking only replaces text by `<redacted>` and escaping turns one character into at most 9: a command of at most
+    // COMMAND_MAX_CHARS / 10 characters cannot reach the limit, so the regexes need not run for it.
+    if command.chars().count() <= COMMAND_MAX_CHARS / 10 {
+        return false;
+    }
+    mask_for_display(command, false).text.chars().count() > COMMAND_MAX_CHARS
 }
 
 /// Masks `input` and then clips it to `max_chars` characters.

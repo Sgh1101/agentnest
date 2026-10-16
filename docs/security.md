@@ -31,9 +31,10 @@ Phase 1 범위 밖(명시적 비목표): 루팅된 폰, PC 관리자 권한 탈�
 | 방어 | 효과 | 한계 |
 | --- | --- | --- |
 | 포트를 **배타적으로** 바인드하고 폴백 시 즉시 알림 | 데몬이 먼저 떠 있으면 후발 프로세스는 같은 포트를 열 수 없다(Unix: 리스닝 소켓 중복 불가). 데몬이 기본 포트를 못 얻으면 `DaemonEvent::Error("hook_port_unavailable: …")`, 감사 `hook_port_unavailable`, `DaemonHandle::hook_port_problem()`, `HooksReport` 경고 | **Windows**: `SO_EXCLUSIVEADDRUSE`를 쓰지 못한다 — `agentnest-core`가 `#![forbid(unsafe_code)]`이고 `socket2`에 해당 옵션이 없다. 데몬이 이미 떠 있는 동안 `SO_REUSEADDR`로 같은 포트를 뺏는 프로세스는 막지 못한다(Phase 3: 별도 크레이트에서 `SO_EXCLUSIVEADDRUSE` 적용). 데몬 시작 전에 선점된 경우는 바인드 실패로 탐지된다 |
-| 설치된 HTTP 훅이 가리키는 포트 ≠ 수집기 포트이면 **HTTP 채널 `PermissionRequest`에 응답하지 않는다**(`HttpSettings::http_approvals_enabled`, 항상 204) | 설정에 없는 포트로 온 승인 요청에 `allow`를 만들지 않는다 | 선점된 포트로 가는 Claude Code 요청은 데몬에 도달하지 않으므로 이 차단은 *데몬 쪽 불일치*만 막는다 |
+| 설치된 HTTP 훅이 가리키는 포트 ≠ 수집기 포트이면 **HTTP 채널 `PermissionRequest`에 응답하지 않는다**(`HttpSettings::http_approvals_enabled`, 항상 204; 데몬은 이 게이트를 **닫힌 채로 시작해** 서빙을 시작하기 *전에* 설치된 포트를 확인한 뒤에만 연다 — 바인드와 검증 사이의 창이 없다) | 설정에 없는 포트로 온 승인 요청에 `allow`를 만들지 않는다 | 선점된 포트로 가는 Claude Code 요청은 데몬에 도달하지 않으므로 이 차단은 *데몬 쪽 불일치*만 막는다 |
 | 옵트인 `hooks.auto_reinstall_on_port_change` | 폴백 포트로 HTTP 훅을 자동 재설치(감사 `hooks_repointed`). 기본 off — 사용자 동의 없이 `settings.json`을 바꾸지 않는다 | 재설치 전까지 이전 포트의 훅은 선점자에게 간다 |
-| **명령(CLI) 훅 사용 권장** (`agentnest-hook claude-code`) | CLI는 토큰을 **보내지 않고**(일회용 증명 `X-AgentNest-Proof`, 데몬은 nonce를 한 번만 받는다) 데몬의 응답에 붙은 `X-AgentNest-Sig = HMAC-SHA256(키(토큰), "resp"‖nonce‖status‖body)`가 검증될 때만 출력한다. 서명 없는/틀린 응답은 아무것도 출력하지 않고 exit 0(= 결정 없음). 선점자는 토큰을 모르므로 위조할 수 없다(`agentnest-protocol::hook_auth`) | 훅 프로세스 기동 비용, Windows 경로·`allowedHttpHookUrls` 정책 대응 필요. HTTP 훅과 달리 **settings.json에 토큰이 없다** |
+| **명령(CLI) 훅 사용 권장** (`agentnest-hook claude-code`) | CLI는 토큰을 **보내지 않는다**. 대신 요청마다 일회용 증명 `X-AgentNest-Proof = HMAC-SHA256(키(토큰), "req"‖method‖path‖ts‖nonce‖via‖SHA-256(요청 본문))`을 보내고(데몬은 nonce를 한 번만 받는다), 데몬은 **자기가 받은 본문의 해시로 증명을 다시 계산**한다. 데몬의 응답에는 `X-AgentNest-Sig = HMAC-SHA256(키(토큰), "resp"‖nonce‖SHA-256(요청 본문)‖status‖body)`가 붙고, CLI는 **자기가 보낸 본문의 해시**로 검증되는 응답만 출력한다. 서명 없는/틀린/다른 요청(nonce 또는 본문이 다름)의 응답은 아무것도 출력하지 않고 exit 0(= 결정 없음). 선점자는 토큰을 모르므로 **증명이나 서명을 위조할 수 없고**, 본문 해시가 양쪽에 묶여 있어 **중계(relay)도 통하지 않는다**: 선점자가 CLI의 (nonce, 증명)에 무해한 본문을 붙여 진짜 데몬에 전달해도 본문이 달라 증명이 검증되지 않고(401), 진짜 데몬이 다른 본문에 대해 서명한 허용 응답을 CLI에 중계해도 CLI가 계산한 본문 해시와 달라 출력되지 않는다(`agentnest-protocol::hook_auth`, 회귀 테스트: 본문 바꿔치기·서명 중계). 채널(CLI/HTTP) 구분도 헤더가 아니라 **증명 성공 여부**로만 정한다(`X-AgentNest-Via`는 증명 입력에 묶일 뿐 자체로는 신뢰하지 않는다: 토큰만 아는 요청이 `via: cli`를 붙여도 HTTP 채널이다) | 훅 프로세스 기동 비용, Windows 경로·`allowedHttpHookUrls` 정책 대응 필요. HTTP 훅과 달리 **settings.json에 토큰이 없다**. command 훅은 **절대 경로로 존재하는 `agentnest-hook`만** 설치한다(아래 "맨 이름" 행). 선점자가 진짜 데몬에 도달해 **자신이 만든 요청**을 처리하게 하는 것(가짜 카드)은 토큰이 없으면 불가능하다(401) |
+| 훅 프로그램은 **절대 경로 + 실제 파일**일 때만 command 훅으로 설치 | `hooks_install`은 `hook_cli`가 절대 경로가 아니거나 파일이 없으면 command 훅(`SessionStart`·`statusLine`·명령 모드)을 **설치하지 않는다**(HTTP 훅만 설치하고 경고 `hook_cli_not_found`, 명령 모드는 오류로 아무것도 쓰지 않음). 맨 이름은 `PATH`(Windows는 현재 디렉터리=프로젝트가 먼저)에서 찾으므로 악성 리포의 `agentnest-hook.exe`가 모든 훅에서 실행돼 **서명 검증 없이 `allow`를 출력**할 수 있다. 훅 상태(`HooksReport.warnings`)에 "사이드카 없음"이 보인다 | 이전 버전이 설치한 맨 이름 훅은 재설치(훅 다시 설치) 때 제거된다. 사이드카 없이 HTTP 훅만 쓰면 `SessionStart`가 없어 세션은 첫 `UserPromptSubmit`부터 채택된다 |
 
 따라서 **선점 위험을 감수할 수 없는 사용자는 명령(CLI) 훅을 설치해야 한다**(데스크톱 설정 → 훅 → '명령 훅'). HTTP 훅은 편의 경로이며 같은 PC의 악의적 프로세스(A3)에 대한 승인 위조 방어를 제공하지 않는다. 데스크톱은 `hook_port_unavailable` 이벤트와 훅 상태 경고(`HooksReport.warnings`)로 이 상태를 알린다.
 
@@ -58,8 +59,8 @@ R1은 **문서화만으로 수용되지 않는다.** 데스크톱 첫 실행 체
 | I5 | 만료·끊김·폰 미응답·데몬 오류·재시작·검증 실패·알 수 없는 상태의 결과는 항상 **"결정 없음"**(Claude: 빈 2xx / Codex: 무응답). 허용 응답은 **불투명 타입**으로만 만들 수 있다 — `ApprovalReply`는 내부 enum이 비공개인 구조체이고 허용 값은 `ApprovalReply::allow(ApplyProof)`로만 생성되며, `ApplyProof::mint()`는 `apply_decision` 성공 분기 **한 곳**에서만 호출된다(데스크톱 로컬 결정도 같은 분기를 지난다). 응답자는 `ReplyKind` 읽기 전용 뷰(`as_wire()`)만 본다 | `approvals::Broker`, `agentnest-adapter-api` | `compile_fail` doctest(공개 허용 생성자·내부 enum 리터럴 불가) + **`ApplyProof::mint` 호출 위치 1곳 grep** + fail-closed 매트릭스 | 1 |
 | I6 | 기기 폐기는 즉시 효력: 활성 연결에 `bye{device_revoked}` 후 4003, 그 기기의 진행 중 결정 무효, 이후 `hello` 거부. **되돌리기 없음** | `devices.revoked_at`, `link::Registry::kick` | 폐기 3종 | 8 |
 | I7 | 페어링은 (1) QR 비밀 소지 증명(HMAC) **그리고** (2) **PC 화면에서 사용자의 명시적 승인(SAS 표시)** 두 가지가 모두 있어야 완료. QR은 120초·1회용·3회 실패 시 소각 | `auth::pairing` | HMAC/SAS/거절/만료 | 3 |
-| I8 | 훅 수집 HTTP는 `127.0.0.1`(+`[::1]`)에만 바인드(설정으로도 변경 불가), `Origin`/`Sec-Fetch-Site` 헤더가 있으면 403(`Host`는 포트만 허용 — `127.0.0.1:1@evil.com` 같은 userinfo 형태 403), 토큰 상수시간 비교 **또는 CLI 일회용 증명(nonce 1회·시계 오차 ±120초)** 실패 401, 본문 1 MiB 초과 413. 증명된 요청의 응답은 `X-AgentNest-Sig`로 서명(§1.2) | `http::guard` | hooks_http 5종 | 4 |
-| I9 | 로그·감사·DB·폰 전송 어디에도 토큰/키/nonce/서명/파일 본문/stdout 전체/프롬프트 원문을 남기지 않는다. 원시 훅 본문은 **디스크에 쓰지 않는다** | `redact` 뉴타입 + 3-싱크 정책 | 로그 grep 테스트, `payload ≤ 8 KiB` | 5 |
+| I8 | 훅 수집 HTTP는 `127.0.0.1`(+`[::1]`)에만 바인드(설정으로도 변경 불가), `Origin`/`Sec-Fetch-Site` 헤더가 있으면 403(`Host`는 포트만 허용 — `127.0.0.1:1@evil.com` 같은 userinfo 형태 403), 토큰 상수시간 비교 **또는 CLI 일회용 증명(nonce 1회·시계 오차 ±120초, 요청 본문 해시·`via` 바인딩)** 실패 401, 본문 1 MiB 초과 413. 증명된 요청의 응답은 요청 nonce와 요청 본문 해시를 함께 묶어 `X-AgentNest-Sig`로 서명(§1.2). 채널(CLI/HTTP)은 헤더 값이 아니라 증명 성공 여부로 정한다 | `http::guard` | hooks_http 5종 | 4 |
+| I9 | 로그·감사·DB·폰 전송 어디에도 토큰/키/서명/파일 본문/stdout 전체/프롬프트 원문을 남기지 않는다(`Debug`·`Display`는 `"<redacted>"`). **카드 `nonce`는 예외로 명시한다**: 자격 증명이 아니라 요청별 1회성 **결정 바인딩 값**(§6.1)이라 폰이 `decision`에 되돌려 줘야 하므로 카드(`approval_request.nonce_b64`)에 실려 폰으로 가고, 따라서 `approvals.nonce`(BLOB)와 재연결 재생용 `stream.payload_json`(`approval_request` 행, 48시간·1만 행 보존)에 남는다. 그 외 DB 테이블·로그·감사에는 남지 않는다(테스트가 모든 테이블을 훑어 검증). nonce만으로는 아무것도 할 수 없다 — 결정은 핀 TLS + 디바이스 토큰으로 인증된 연결에서만 받고, 요청이 종결·만료되면 nonce는 무효다(§6.2 3·6단계). 원시 훅 본문은 **디스크에 쓰지 않는다** | `redact` 뉴타입 + 3-싱크 정책 | 로그 grep 테스트, `payload ≤ 8 KiB` | 5 |
 | I10 | 위험 규칙은 코드 상수이며 설정으로 **완화할 수 없고 강화만** 가능. 설정 스키마에 §9의 금지 필드가 존재하지 않는다. 분류 실패 → `critical` | `risk`, `config.rs` | 규칙 테이블, 금지 필드 컴파일 테스트 | 6 |
 | I11 | 범위 확장 결정(`allow_for_session`, Claude `updatedPermissions`/`updatedInput`, Codex `acceptForSession`/`acceptWithExecpolicyAmendment`/`applyNetworkPolicyAmendment`)은 v1 스키마·어댑터 응답·설정 어디에도 **존재하지 않는다**("예약·거부"도 금지) | `protocol` enum, 어댑터 응답 생성기 | 스키마 invalid 예제, 응답 JSON 골든 | 1, 7 |
 | I12 | Claude `PermissionRequest` 훅의 `onFailure`는 기본 `continue`. `block`은 "데몬 다운 시 거부" **옵트인 설정**으로만 존재 | `hooks_install` | 설치 JSON 골든 | 7 |
@@ -174,9 +175,9 @@ PC(데스크톱)                                                   폰
 | `pairing_secret` | 페어링 시작 | 메모리 + 해시 | 메모리(종료 시 0 채움) | 없음 | 120초 / 1회 / 3회 실패 / 취소 |
 | `device_token`(32B) | `pair` 성공 | `devices.token_hash`(SHA-256) | Keystore AES-256-GCM 래핑(인증 **비바인딩**, `setUnlockedDeviceRequired` 금지 — FGS 잠금 중 재연결) → DataStore | 없음 | 데스크톱 폐기 / 폰 `unpair` / 90일 미접속 자동 폐기(설정) |
 | 폰 EC P-256 키쌍 | 첫 페어링 전 | `devices.pubkey_spki_der`(공개키만) | Keystore 비추출 | 없음 | `unpair` 시 `deleteEntry`; `KeyPermanentlyInvalidatedException` → 재페어링 |
-| `nonce`(16B) | 승인 요청마다 | `approvals.nonce` | 카드 메모리 | — | 요청 종결 |
+| `nonce`(16B) | 승인 요청마다 | `approvals.nonce`(BLOB) + 재생용 `stream.payload_json`(`approval_request` 행; I9) | 카드 메모리(결정에 되돌려 보냄) | — | 요청 종결·만료로 무효(비밀 아님: 결정 바인딩 값) |
 
-- `hello` 검증: `devices` 조회 → `revoked_at IS NULL` → `subtle::ConstantTimeEq`로 해시 비교 → 챌린지 일치 → `last_seen_at` 갱신. 실패 **5회/분**(IP당) → 해당 IP 60초 차단(§11과 같은 값 — 레이트리밋 테스트의 기준). 실패는 원인을 구분하지 않고 `E_AUTH_FAILED`(폐기만 `E_DEVICE_REVOKED`).
+- `hello` 검증: `devices` 조회 → `revoked_at IS NULL` → `subtle::ConstantTimeEq`로 해시 비교 → 챌린지 일치 → `last_seen_at` 갱신. 실패 **5회/분**(IP당; IPv6 출처는 **/64 단위**, IPv4 매핑 주소는 그 IPv4) → 해당 IP 60초 차단(§11과 같은 값 — 레이트리밋 테스트의 기준). 실패는 원인을 구분하지 않고 `E_AUTH_FAILED`(폐기만 `E_DEVICE_REVOKED`).
 - 폰: `KeyPermanentlyInvalidatedException`/`AEADBadTagException` → 토큰 폐기 + 재페어링 유도. 로그에 토큰·핀 값 출력 금지.
 
 ---
@@ -206,7 +207,7 @@ PC(데스크톱)                                                   폰
 8. `decision ∈ auth_required_for`이면 `auth.method ∈ {biometric, device_credential}`(`AUTH_REQUIRED`) **그리고 인증 신선도**: `authenticated_at ≥ created_at − 5s`(요청 이전의 인증 재사용 금지)·`authenticated_at ≤ decided_at + 5s`(미래 시각 금지) 위반은 `CLOCK_SKEW`, `decided_at − authenticated_at ≤ 60s` 위반은 `AUTH_REQUIRED`(재인증 필요). 시각은 `decided_at`과 같은 skew 보정값. `risk.extra_confirmation != none`이면 **`auth_required_for`에 속한 결정(allow 계열)에 한해** `extra_confirmation.completed && method ≥ 요구`(`EXTRA_CONFIRMATION_REQUIRED`). 단순 `deny`는 안전한 방향이므로 위험 등급과 무관하게 추가 확인·길게 누르기를 요구하지 않는다(`deny_requires_auth` 설정이 켜진 경우의 인증만 예외). **이 신선도 검사도 폰의 주장에 대한 것이며 Phase 3 서명 전까지 암호학적 증명이 아니다**(§6.4)
 9. 원격 승인 일시정지 아님 (`PAUSED`)
 
-10. 적용: **단일 트랜잭션**에서 `UPDATE approvals SET status=…, resolved_by=…, … WHERE request_id=? AND status='pending' AND expires_at > ?`(영향 행 0이면 `ALREADY_RESOLVED`) → `decisions` INSERT → `approval_audit` INSERT → 커밋 → 그 **다음에야** `responder.respond(…)`. 허용이면 이 성공 분기에서 `ApplyProof::mint()`로 만든 증명으로 `ApprovalReply::allow(proof)`를, 거부면 `ApprovalReply::deny(message, interrupt)`를 만든다(다른 어느 곳도 `ApplyProof::mint`를 호출하지 않는다). `decision_result{APPLIED}` + `approval_resolved{seq}`.
+10. 적용: **단일 트랜잭션**에서 `UPDATE approvals SET status=…, resolved_by=…, … WHERE request_id=? AND status='pending' AND expires_at > ?`(영향 행 0이면 `ALREADY_RESOLVED`; 이 `?`(=`now`)는 **Writer 스레드가 UPDATE를 실행하는 순간** 시계에서 읽는다 — 앞선 작업(보존 정리 등)을 기다린 큐 지연만큼 낡은 시각으로 만료 후 결정이 적용되지 않게) → `decisions` INSERT → `approval_audit` INSERT → 커밋 → 그 **다음에야** `responder.respond(…)`. 허용이면 이 성공 분기에서 `ApplyProof::mint()`로 만든 증명으로 `ApprovalReply::allow(proof)`를, 거부면 `ApprovalReply::deny(message, interrupt)`를 만든다(다른 어느 곳도 `ApplyProof::mint`를 호출하지 않는다). `decision_result{APPLIED}` + `approval_resolved{seq}`.
 
 #### 6.2.1 데스크톱(`actor=desktop`) 경로의 검증
 
@@ -233,7 +234,7 @@ PC(데스크톱)                                                   폰
 
 | 공격 | 멈추는 단계 |
 | --- | --- |
-| 같은 `decision` 재전송 | 3 (또는 같은 `decision.id`·같은 `request_id`·같은 기기로 **이미 `APPLIED`** 된 결정 → 멱등 `APPLIED` 응답, 재적용 없음. 거부된 시도의 id는 재사용 시 다시 평가하고, 다른 요청에 적용된 id·폐기된 기기의 재전송은 멱등 응답을 받지 못한다(폐기 검사가 먼저, `DEVICE_REVOKED`)) |
+| 같은 `decision` 재전송 | 3 (또는 같은 `decision.id`·같은 `request_id`·같은 기기로 **이미 `APPLIED`** 된 결정 → 멱등 `APPLIED` 응답, 재적용 없음 — 응답은 **저장된 결정**을 기준으로 만든다: 같은 id로 **다른 결정**(예: 적용된 Deny를 `allow`로 재전송)이 오면 멱등 응답이 아니라 `ALREADY_RESOLVED`로 거부하고 시도로 기록한다. 거부된 시도의 id는 재사용 시 다시 평가하고, 다른 요청에 적용된 id·폐기된 기기의 재전송은 멱등 응답을 받지 못한다(폐기 검사가 먼저, `DEVICE_REVOKED`)) |
 | 다른 요청에 붙이기 | 4·5(nonce·해시가 요청별) |
 | 만료 후 전송 | 6 |
 | 데몬 재시작 후 과거 결정 | 2 또는 3(상태는 SQLite에 영속). **재시작 시 `pending` 전부 `expired`로 전이**(HTTP 핸들이 사라졌으므로 적용할 곳이 없음) |
@@ -364,7 +365,7 @@ PC(데스크톱)                                                   폰
 
 ## 11. 인증 전 방어·레이트리밋
 
-- **인증 전 제한은 TCP accept 시점에 적용**된다(WebSocket 업그레이드 이후가 아니라): 소스 IP 사설 대역 필터(`link.private_sources_only`), 전체 동시 연결 16, IP당 동시 인증 전 연결 4, 차단된 IP — 위반하면 TLS 핸드셰이크 없이 **즉시 TCP를 닫는다**(바이트 0, CPU 소모 없음; 이전의 "1013 close 프레임"은 핸드셰이크 뒤에만 보낼 수 있어 폐기). TLS 핸드셰이크 5초, 업그레이드 전에는 **accept로부터 5초** 안에 요청이 끝나야 하며(유휴 TLS 연결·절반만 쓴 HTTP 요청은 그 시점에 닫힘), 세션의 `PreAuth` 5초(유효한 `pair`/`hello` 수신까지)도 같은 accept 시각부터 센다. `PairPending`은 60초. **IP당 인증 실패 5회/분** 초과 시 60초 차단(§5와 같은 값 — 레이트리밋 테스트의 기준).
+- **인증 전 제한은 TCP accept 시점에 적용**된다(WebSocket 업그레이드 이후가 아니라): 소스 IP 사설 대역 필터(`link.private_sources_only`), 전체 동시 연결 16, IP당 동시 인증 전 연결 4(IPv6는 /64 단위로 센다 — 한 호스트·링크로컬 이웃이 /64 안의 새 주소로 한도를 우회하지 못하게), 차단된 IP — 위반하면 TLS 핸드셰이크 없이 **즉시 TCP를 닫는다**(바이트 0, CPU 소모 없음; 이전의 "1013 close 프레임"은 핸드셰이크 뒤에만 보낼 수 있어 폐기). TLS 핸드셰이크 5초, 업그레이드 전에는 **accept로부터 5초** 안에 요청이 끝나야 하며(유휴 TLS 연결·절반만 쓴 HTTP 요청은 그 시점에 닫힘), 세션의 `PreAuth` 5초(유효한 `pair`/`hello` 수신까지)도 같은 accept 시각부터 센다. `PairPending`은 60초. **IP당 인증 실패 5회/분**(IPv6는 /64 단위) 초과 시 60초 차단(§5와 같은 값 — 레이트리밋 테스트의 기준).
 - 인증 실패는 1초 지연 후 닫는다. 어떤 실패도 "기기 없음"과 "토큰 오류"를 구분하지 않는다.
 - 인증 후: 기기당 `decision` 10건/분, `ping` 6건/분, `snapshot_request` 6건/분, `events_request` 12건/분 초과 시 `E_RATE_LIMITED`(10분 안에 3회 누적 시 4005). **한도와 strike는 연결이 아니라 `device_id` 단위**라 재접속해도 초기화되지 않는다. `ack`는 거부하지 않지만 `last_acked_seq` DB 쓰기는 단조 증가일 때만, 기기당 60회/분까지 한다. 동시에 보류할 수 있는 승인은 64건(초과 요청은 DB에 쓰지 않고 "결정 없음"), 한 카드에 붙는 HTTP 핸들은 8개.
 - 훅 HTTP: 관찰 이벤트 초당 200건 초과 시 429(`PermissionRequest`는 제외).

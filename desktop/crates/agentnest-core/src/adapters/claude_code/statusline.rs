@@ -12,6 +12,21 @@ use crate::normalize::hook::str_field;
 
 /// Minimum time between two applied statusLine updates of one session.
 pub const THROTTLE_MS: i64 = 10_000;
+/// Longest pull request URL kept (bytes). A longer one is dropped, not cut: a cut URL points somewhere else.
+pub const PR_URL_MAX_BYTES: usize = 512;
+
+/// A pull request URL worth keeping: `https://`, at most [`PR_URL_MAX_BYTES`], no whitespace or control character
+/// (so it cannot fake a second line in a card or a log), and masked like every free text (a token in the query string
+/// never reaches the database or the phone).
+fn pr_url(raw: &str) -> Option<String> {
+    if !raw.starts_with("https://")
+        || raw.len() > PR_URL_MAX_BYTES
+        || raw.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return None;
+    }
+    Some(crate::redact::mask(raw).text)
+}
 
 /// Extracts `(session_key, patch)` from a statusLine document. `None` if it has no `session_id`.
 pub fn parse(doc: &Value) -> Option<(String, SessionMetaPatch)> {
@@ -40,8 +55,7 @@ pub fn parse(doc: &Value) -> Option<(String, SessionMetaPatch)> {
         pr_url: pr
             .and_then(|p| p.get("url"))
             .and_then(Value::as_str)
-            .filter(|u| u.starts_with("https://"))
-            .map(str::to_owned),
+            .and_then(pr_url),
         ..SessionMetaPatch::default()
     };
     Some((format!("claude_code:{session_id}"), patch))
@@ -90,5 +104,50 @@ mod tests {
         assert_eq!(p.pr_number, None);
         assert_eq!(p.pr_url, None);
         assert_eq!(p.model, None);
+    }
+
+    #[test]
+    fn the_pr_url_is_bounded_single_line_and_masked() {
+        let url = |u: &str| {
+            parse(&json!({"session_id": "s", "pr": {"number": 1, "url": u}}))
+                .unwrap()
+                .1
+                .pr_url
+        };
+        assert_eq!(
+            url("https://github.com/o/r/pull/7").as_deref(),
+            Some("https://github.com/o/r/pull/7")
+        );
+        // longer than 512 bytes: dropped (not cut)
+        let long = format!("https://github.com/{}", "a/".repeat(PR_URL_MAX_BYTES));
+        assert_eq!(url(&long), None);
+        let mut at_limit = String::from("https://github.com/");
+        while at_limit.len() < PR_URL_MAX_BYTES {
+            at_limit.push_str("a.b/");
+        }
+        at_limit.truncate(PR_URL_MAX_BYTES);
+        assert_eq!(at_limit.len(), PR_URL_MAX_BYTES);
+        assert_eq!(url(&at_limit).as_deref(), Some(at_limit.as_str()));
+        // control / whitespace / bidirectional characters
+        for bad in [
+            "https://github.com/o/r\npull/7",
+            "https://github.com/o/r pull/7",
+            "https://github.com/o/r\u{1b}[31m",
+            "https://github.com/\u{202e}7/llup",
+        ] {
+            let got = url(bad);
+            assert!(
+                got.as_deref()
+                    .is_none_or(|g| !g.chars().any(|c| c.is_control() && c != '\u{202e}')),
+                "{bad:?} -> {got:?}"
+            );
+        }
+        assert_eq!(url("https://github.com/o/r\npull/7"), None);
+        assert_eq!(url("https://github.com/o/r pull/7"), None);
+        assert_eq!(url("https://github.com/o/r\u{1b}[31m"), None);
+        // a secret in the query string is masked
+        let masked = url("https://example.test/pull/7?access_token=abcdef123456&x=1").unwrap();
+        assert!(!masked.contains("abcdef123456"), "{masked}");
+        assert!(masked.contains("redacted"), "{masked}");
     }
 }

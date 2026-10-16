@@ -71,8 +71,10 @@ pub enum Rule {
     SystemPathWrite,
     /// Writes to `.ssh/`, `.gnupg/`, `id_rsa`, `*.pem`, `*.pfx`, `*.key`.
     SecretPathWrite,
-    /// `tool_input` larger than 64 KiB (cannot be reviewed).
+    /// `tool_input` larger than 64 KiB, a string field of 32 KiB or more, a relay cut or an unsafe number (cannot be reviewed).
     InputTooLarge,
+    /// The command is longer than the approval card can show: the person would approve text they cannot read.
+    CommandTruncated,
     /// The classifier failed or panicked.
     ClassifierError,
     /// `rm -r`, `rmdir /s`, `Remove-Item -Recurse`.
@@ -93,6 +95,9 @@ pub enum Rule {
     SecretPathRead,
     /// Write outside the session working directory.
     WriteOutsideProject,
+    /// A shell construct the classifier cannot resolve statically (a variable or glob as the command word, `eval`
+    /// of a variable, an unresolvable escape, a LOLBin): fail closed.
+    ShellUnparsed,
     /// `git push`, `git commit --amend`, `git rebase`.
     GitHistory,
     /// `npm install`, `pip install`, `cargo install`, `winget install`.
@@ -123,7 +128,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule.
-    pub const ALL: [Rule; 31] = [
+    pub const ALL: [Rule; 33] = [
         Rule::DeleteRoot,
         Rule::DiskFormat,
         Rule::RemoteCodeExec,
@@ -132,6 +137,7 @@ impl Rule {
         Rule::SystemPathWrite,
         Rule::SecretPathWrite,
         Rule::InputTooLarge,
+        Rule::CommandTruncated,
         Rule::ClassifierError,
         Rule::RecursiveDelete,
         Rule::GitForcePush,
@@ -142,6 +148,7 @@ impl Rule {
         Rule::InfraDestructive,
         Rule::SecretPathRead,
         Rule::WriteOutsideProject,
+        Rule::ShellUnparsed,
         Rule::GitHistory,
         Rule::InstallsDeps,
         Rule::NetworkTool,
@@ -168,6 +175,7 @@ impl Rule {
             Rule::SystemPathWrite => "system_path_write",
             Rule::SecretPathWrite => "secret_path_write",
             Rule::InputTooLarge => "input_too_large",
+            Rule::CommandTruncated => "command_truncated",
             Rule::ClassifierError => "classifier_error",
             Rule::RecursiveDelete => "recursive_delete",
             Rule::GitForcePush => "git_force_push",
@@ -178,6 +186,7 @@ impl Rule {
             Rule::InfraDestructive => "infra_destructive",
             Rule::SecretPathRead => "secret_path_read",
             Rule::WriteOutsideProject => "write_outside_project",
+            Rule::ShellUnparsed => "shell_unparsed",
             Rule::GitHistory => "git_history",
             Rule::InstallsDeps => "installs_deps",
             Rule::NetworkTool => "network_tool",
@@ -205,6 +214,7 @@ impl Rule {
             | Rule::SystemPathWrite
             | Rule::SecretPathWrite
             | Rule::InputTooLarge
+            | Rule::CommandTruncated
             | Rule::ClassifierError => Level::Critical,
             Rule::RecursiveDelete
             | Rule::GitForcePush
@@ -214,7 +224,8 @@ impl Rule {
             | Rule::PermissionsWideOpen
             | Rule::InfraDestructive
             | Rule::SecretPathRead
-            | Rule::WriteOutsideProject => Level::High,
+            | Rule::WriteOutsideProject
+            | Rule::ShellUnparsed => Level::High,
             Rule::GitHistory
             | Rule::InstallsDeps
             | Rule::NetworkTool
@@ -242,6 +253,7 @@ impl Rule {
             Rule::SystemPathWrite => "시스템 폴더에 파일을 쓰려고 해요",
             Rule::SecretPathWrite => "키나 인증서 파일을 쓰려고 해요",
             Rule::InputTooLarge => "내용이 너무 커서 검토할 수 없어요",
+            Rule::CommandTruncated => "명령이 길어서 카드에 다 보이지 않아요. 전체를 확인해야 해요",
             Rule::ClassifierError => "위험도를 판단하지 못해서 가장 높은 단계로 처리해요",
             Rule::RecursiveDelete => "폴더를 통째로 지우는 명령이에요",
             Rule::GitForcePush => "원격 저장소에 강제로 푸시하는 명령이에요",
@@ -252,6 +264,7 @@ impl Rule {
             Rule::InfraDestructive => "서버나 인프라를 삭제하거나 바꿀 수 있어요",
             Rule::SecretPathRead => "비밀 정보가 담긴 파일을 읽으려고 해요",
             Rule::WriteOutsideProject => "프로젝트 밖에 파일을 쓰려고 해요",
+            Rule::ShellUnparsed => "명령을 정확히 해석할 수 없어요(변수·이스케이프·우회 실행)",
             Rule::GitHistory => "Git 기록을 바꾸거나 원격에 올리는 명령이에요",
             Rule::InstallsDeps => "패키지를 설치해요",
             Rule::NetworkTool => "네트워크로 연결하는 도구예요",

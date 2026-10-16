@@ -42,10 +42,10 @@ fn risk_cases_cover_every_rule_with_two_positive_and_two_negative_cases() {
     };
     assert_eq!(
         levels.len(),
-        31,
-        "reason code list of integrations/claude-code.md 7 (9 critical, 9 high, 8 medium, 5 low)"
+        33,
+        "reason code list of integrations/claude-code.md 7 (10 critical, 10 high, 8 medium, 5 low)"
     );
-    for want in [("critical", 9), ("high", 9), ("medium", 8), ("low", 5)] {
+    for want in [("critical", 10), ("high", 10), ("medium", 8), ("low", 5)] {
         assert_eq!(
             levels
                 .values()
@@ -161,7 +161,7 @@ fn apply_patterns(v: &Value, input: &str, replacement: &str) -> String {
 fn redact_cases_agree_with_the_rust_regex_engine() {
     let v = fixture("redact_cases.json");
     unique_names(&v);
-    assert_eq!(v["patterns"].as_array().unwrap().len(), 18);
+    assert_eq!(v["patterns"].as_array().unwrap().len(), 20);
     let repl = v["_format"]["replacement"].as_str().unwrap();
     let mut by_rule: BTreeMap<(String, String), usize> = BTreeMap::new();
     for c in cases(&v) {

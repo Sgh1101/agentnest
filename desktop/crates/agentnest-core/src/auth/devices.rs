@@ -36,6 +36,9 @@ pub enum DeviceError {
     /// Another active device already registered this public key.
     #[error("a device with this public key is already registered")]
     DuplicateKey,
+    /// The pairing ended (cancelled, expired or burned) before the device could be registered; nothing was created.
+    #[error("the pairing ended before the device was registered")]
+    PairingEnded,
 }
 
 /// A device row (no secrets: neither the token nor its hash).

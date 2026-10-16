@@ -17,7 +17,7 @@
     },
     {
       "name": "keyword_assignment",
-      "regex": "(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\\s*[:=]\\s*\\S+"
+      "regex": "(?i)(api[_-]?key|token|secret|password|passwd|authorization|bearer)\\s*[:=]\\s*(?:\"[^\"\\s&|;<>][^\"\\n]{0,255}\"|'[^'\\s&|;<>][^'\\n]{0,255}'|\\S+)"
     },
     {
       "name": "agentnest_token",
@@ -52,16 +52,24 @@
       "regex": "(?i)(?<pre>\\b[a-z][a-z0-9+.-]*://[^\\s/@:\"']+:)[^\\s/@\"']+(?<post>@)"
     },
     {
+      "name": "url_userinfo_quoted",
+      "regex": "(?i)(?<pre>[\"'][^\"'\\n]*?\\b[a-z][a-z0-9+.-]*://[^\\s/@:\"']+:)[^\"'/@\\n]{1,256}(?<post>@)"
+    },
+    {
       "name": "credential_flag",
-      "regex": "(?i)(?<pre>\\B--?(?:password|passwd|pass|token|secret|api-?key|apikey|access-?token|auth-?token|client-?secret|oauth2-bearer)(?:\\s+|=))[^\\s\"'-][^\\s\"']*"
+      "regex": "(?i)(?<pre>\\B--?(?:password|passwd|pass|passphrase|token|secret|api-?key|apikey|access-?token|auth-?token|client-?secret|oauth2-bearer)(?:\\s+|=))(?:\"[^\"\\n]{1,256}\"|'[^'\\n]{1,256}'|[^\\s\"'-][^\\s\"']*)"
     },
     {
       "name": "user_flag",
-      "regex": "(?i)(?<pre>(?:\\B--(?:proxy-)?user|\\b(?:curl|wget)\\b[^\\n|;&]*?\\s-u)\\s+[^\\s:@\"']+:)[^\\s\"']*[^\\s\"'\\d][^\\s\"']*"
+      "regex": "(?i)(?<pre>(?:\\B--(?:proxy-)?user(?:\\s+|=)|\\b(?:curl|wget)\\b[^\\n|;&]*?\\s-u\\s*)[\"']?[^\\s:@\"']+:)[^\\s\"']*[^\\s\"'\\d][^\\s\"']*"
     },
     {
       "name": "mysql_password_flag",
-      "regex": "(?i)(?<pre>\\b(?:mysql(?:dump|admin|import|check|pump|show|slap)?|mariadb(?:-dump|-admin|-import|-check|-show)?)\\b[^\\n|;&]*?\\s(?-i:-p))[^\\s\"'-]\\S*"
+      "regex": "(?i)(?<pre>\\b(?:mysql(?:dump|admin|import|check|pump|show|slap)?|mariadb(?:-dump|-admin|-import|-check|-show)?)\\b[^\\n|;&]*?\\s(?-i:-p))(?:\"[^\"\\n]{1,256}\"|'[^'\\n]{1,256}'|[^\\s\"'-]\\S*)"
+    },
+    {
+      "name": "short_password_flag",
+      "regex": "(?i)(?<pre>\\bsshpass\\b[^\\n|;&]*?\\s-p\\s*|\\bredis-cli\\b[^\\n|;&]*?\\s-a\\s+|\\b(?:zip|zipcloak|unzip)\\b[^\\n|;&]*?\\s(?-i:-P)\\s*|\\b7z[a-z]?\\b[^\\n|;&]*?\\s-p|\\b(?:docker|podman|nerdctl|buildah|crane|oras|skopeo)\\b[^\\n|;&]*?\\slogin\\b[^\\n|;&]*?\\s-p(?:\\s+|=)|\\bopenssl\\b[^\\n|;&]*?\\s(?:-k\\s+|-pass(?:in|out)?\\s+pass:|-passwd\\s+))(?:\"[^\"\\n]{1,256}\"|'[^'\\n]{1,256}'|[^\\s\"']+)"
     },
     {
       "name": "npm_auth",
@@ -77,7 +85,7 @@
     },
     {
       "name": "env_secret",
-      "regex": "(?i)\\b[a-z0-9_.-]*(?:secret|passw(?:or)?d|token|credentials?|(?:api|private|access|auth|signing|encryption|ssh|master)[_-]?key|_key)[a-z0-9_.-]*[\"']?\\s*[=:]\\s*[\"']?[^\\s\"',;&]+"
+      "regex": "(?i)\\b[a-z0-9_.-]*(?:secret|passw(?:or)?d|token|credentials?|(?:api|private|access|auth|signing|encryption|ssh|master)[_-]?key|_key)[a-z0-9_.-]*[\"']?\\s*[=:]\\s*(?:\"[^\"\\s&|;<>][^\"\\n]{0,255}|'[^'\\s&|;<>][^'\\n]{0,255}|[^\\s\"',;&]+)"
     },
     {
       "name": "long_token_40",
@@ -722,6 +730,316 @@
       "input": "the an_hk_ prefix and an_hk_short are not tokens",
       "expect": {
         "output": "the an_hk_ prefix and an_hk_short are not tokens",
+        "redacted": false
+      }
+    },
+    {
+      "name": "credential_flag_double_quoted_value",
+      "rule": "credential_flag",
+      "polarity": "positive",
+      "input": "tool --password \"hunter2\" run",
+      "expect": {
+        "output": "tool --password <redacted> run",
+        "redacted": true
+      }
+    },
+    {
+      "name": "credential_flag_single_quoted_value_with_space",
+      "rule": "credential_flag",
+      "polarity": "positive",
+      "input": "tool --token 'fake value 0000' run",
+      "expect": {
+        "output": "tool --token <redacted> run",
+        "redacted": true
+      }
+    },
+    {
+      "name": "credential_flag_passphrase",
+      "rule": "credential_flag",
+      "polarity": "positive",
+      "input": "gpg --batch --passphrase hunter2 -d x.gpg",
+      "expect": {
+        "output": "gpg --batch --passphrase <redacted> -d x.gpg",
+        "redacted": true
+      }
+    },
+    {
+      "name": "credential_flag_passphrase_file_is_not_a_secret",
+      "rule": "credential_flag",
+      "polarity": "negative",
+      "input": "gpg --passphrase-file pw.txt -d x.gpg",
+      "expect": {
+        "output": "gpg --passphrase-file pw.txt -d x.gpg",
+        "redacted": false
+      }
+    },
+    {
+      "name": "keyword_assignment_single_quoted_value_with_spaces",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "PASSWORD='a b c' make",
+      "expect": {
+        "output": "<redacted> make",
+        "redacted": true
+      }
+    },
+    {
+      "name": "keyword_assignment_double_quoted_value_with_spaces",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "password=\"abc def\" run",
+      "expect": {
+        "output": "<redacted> run",
+        "redacted": true
+      }
+    },
+    {
+      "name": "keyword_assignment_quote_that_closes_an_earlier_string",
+      "rule": "keyword_assignment",
+      "polarity": "positive",
+      "input": "echo \"token=\" && echo \"foo bar\"",
+      "expect": {
+        "output": "echo \"<redacted> && echo \"foo bar\"",
+        "redacted": true
+      }
+    },
+    {
+      "name": "keyword_assignment_plain_words_are_kept",
+      "rule": "keyword_assignment",
+      "polarity": "negative",
+      "input": "echo \"the password is rotated\" && ls",
+      "expect": {
+        "output": "echo \"the password is rotated\" && ls",
+        "redacted": false
+      }
+    },
+    {
+      "name": "mysql_password_flag_double_quoted",
+      "rule": "mysql_password_flag",
+      "polarity": "positive",
+      "input": "mysql -u root -p\"hunter2\" db",
+      "expect": {
+        "output": "mysql -u root -p<redacted> db",
+        "redacted": true
+      }
+    },
+    {
+      "name": "mysql_password_flag_single_quoted_with_space",
+      "rule": "mysql_password_flag",
+      "polarity": "positive",
+      "input": "mysql -u root -p'my pass' db",
+      "expect": {
+        "output": "mysql -u root -p<redacted> db",
+        "redacted": true
+      }
+    },
+    {
+      "name": "user_flag_attached_value",
+      "rule": "user_flag",
+      "polarity": "positive",
+      "input": "curl -uadmin:hunter2 https://x.example",
+      "expect": {
+        "output": "curl -uadmin:<redacted> https://x.example",
+        "redacted": true
+      }
+    },
+    {
+      "name": "user_flag_quoted_value",
+      "rule": "user_flag",
+      "polarity": "positive",
+      "input": "curl -u 'admin:hunter2' https://x.example",
+      "expect": {
+        "output": "curl -u 'admin:<redacted>' https://x.example",
+        "redacted": true
+      }
+    },
+    {
+      "name": "user_flag_user_only_is_kept",
+      "rule": "user_flag",
+      "polarity": "negative",
+      "input": "curl -uadmin https://x.example",
+      "expect": {
+        "output": "curl -uadmin https://x.example",
+        "redacted": false
+      }
+    },
+    {
+      "name": "env_secret_json_value_with_space",
+      "rule": "env_secret",
+      "polarity": "positive",
+      "input": "{\"password\": \"abc def\"}",
+      "expect": {
+        "output": "{\"<redacted>\"}",
+        "redacted": true
+      }
+    },
+    {
+      "name": "env_secret_single_quoted_value_with_space",
+      "rule": "env_secret",
+      "polarity": "positive",
+      "input": "export DB_PASSWORD='a b c' && ls",
+      "expect": {
+        "output": "export <redacted>' && ls",
+        "redacted": true
+      }
+    },
+    {
+      "name": "env_secret_empty_value_is_kept",
+      "rule": "env_secret",
+      "polarity": "negative",
+      "input": "export DB_PASSWORD=\"\" && ls",
+      "expect": {
+        "output": "export DB_PASSWORD=\"\" && ls",
+        "redacted": false
+      }
+    },
+    {
+      "name": "url_userinfo_quoted_password_with_space",
+      "rule": "url_userinfo_quoted",
+      "polarity": "positive",
+      "input": "psql \"postgres://user:my pass@db.internal/app\"",
+      "expect": {
+        "output": "psql \"postgres://user:<redacted>@db.internal/app\"",
+        "redacted": true
+      }
+    },
+    {
+      "name": "url_userinfo_quoted_assignment",
+      "rule": "url_userinfo_quoted",
+      "polarity": "positive",
+      "input": "export DATABASE_URL=\"mysql://app:s3 cr3t@db/app\"",
+      "expect": {
+        "output": "export DATABASE_URL=\"mysql://app:<redacted>@db/app\"",
+        "redacted": true
+      }
+    },
+    {
+      "name": "url_userinfo_quoted_plain_url_is_kept",
+      "rule": "url_userinfo_quoted",
+      "polarity": "negative",
+      "input": "git commit -m \"see http://localhost:8080/path and more\"",
+      "expect": {
+        "output": "git commit -m \"see http://localhost:8080/path and more\"",
+        "redacted": false
+      }
+    },
+    {
+      "name": "short_password_flag_docker_login",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "docker login -u me -p hunter2 registry.example.com",
+      "expect": {
+        "output": "docker login -u me -p <redacted> registry.example.com",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_sshpass",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "sshpass -p hunter2 ssh host",
+      "expect": {
+        "output": "sshpass -p <redacted> ssh host",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_sshpass_quoted",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "sshpass -p 'a b' ssh host",
+      "expect": {
+        "output": "sshpass -p <redacted> ssh host",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_redis_cli",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "redis-cli -a hunter2 ping",
+      "expect": {
+        "output": "redis-cli -a <redacted> ping",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_zip",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "zip -P hunter2 a.zip dir",
+      "expect": {
+        "output": "zip -P <redacted> a.zip dir",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_7z_attached",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "7z a -phunter2 a.7z dir",
+      "expect": {
+        "output": "7z a -p<redacted> a.7z dir",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_openssl_k",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "openssl enc -aes-256-cbc -k hunter2 -in a -out b",
+      "expect": {
+        "output": "openssl enc -aes-256-cbc -k <redacted> -in a -out b",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_openssl_passout",
+      "rule": "short_password_flag",
+      "polarity": "positive",
+      "input": "openssl req -passout pass:hunter2 -new",
+      "expect": {
+        "output": "openssl req -passout pass:<redacted> -new",
+        "redacted": true
+      }
+    },
+    {
+      "name": "short_password_flag_docker_port_flag_is_kept",
+      "rule": "short_password_flag",
+      "polarity": "negative",
+      "input": "docker run -p 80:80 nginx",
+      "expect": {
+        "output": "docker run -p 80:80 nginx",
+        "redacted": false
+      }
+    },
+    {
+      "name": "short_password_flag_unzip_pipe_flag_is_kept",
+      "rule": "short_password_flag",
+      "polarity": "negative",
+      "input": "unzip -p a.zip x",
+      "expect": {
+        "output": "unzip -p a.zip x",
+        "redacted": false
+      }
+    },
+    {
+      "name": "short_password_flag_7z_output_flag_is_kept",
+      "rule": "short_password_flag",
+      "polarity": "negative",
+      "input": "7z x a.7z -o./out",
+      "expect": {
+        "output": "7z x a.7z -o./out",
+        "redacted": false
+      }
+    },
+    {
+      "name": "short_password_flag_sshpass_file_is_kept",
+      "rule": "short_password_flag",
+      "polarity": "negative",
+      "input": "sshpass -f pw.txt ssh host",
+      "expect": {
+        "output": "sshpass -f pw.txt ssh host",
         "redacted": false
       }
     }

@@ -168,8 +168,9 @@ fn collect_classes(command: &str, shell: Shell, depth: u8, out: &mut Vec<Command
 pub fn is_neutral_segment(seg: &Segment) -> bool {
     let u = unwrap_command(&seg.tokens);
     let Some(first) = u.tokens.first() else {
-        // nothing but assignments / wrappers
-        return !seg.tokens.is_empty() && seg.tokens.iter().all(|t| is_assignment(t));
+        // nothing but assignments, or nothing at all once shell syntax (`fi`, `done`, `}`) was removed; a bare wrapper
+        // (`sudo`) is not neutral
+        return seg.tokens.iter().all(|t| is_assignment(t));
     };
     let name = base_command(first);
     if seg.piped && PIPE_FILTERS.contains(&name.as_str()) {

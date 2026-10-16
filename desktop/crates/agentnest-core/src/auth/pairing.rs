@@ -98,7 +98,10 @@ pub struct PairingStartInfo {
 }
 
 /// A started pairing: the QR content and its rendering.
-#[derive(Clone, Debug)]
+///
+/// `Debug` is written by hand: `uri` carries the pairing secret in clear and `qr_svg` is the same data drawn as a QR
+/// code, so neither may appear in a log line or a panic message (security.md I9).
+#[derive(Clone)]
 pub struct PairingStarted {
     /// `p_...`.
     pub pairing_id: String,
@@ -110,6 +113,18 @@ pub struct PairingStarted {
     pub qr_svg: String,
     /// Expiry (RFC 3339).
     pub expires_at: String,
+}
+
+impl std::fmt::Debug for PairingStarted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingStarted")
+            .field("pairing_id", &self.pairing_id)
+            .field("payload", &self.payload)
+            .field("uri", &"[redacted]")
+            .field("qr_svg", &"[redacted]")
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 /// The PC user's answer.
@@ -492,7 +507,7 @@ impl PairingManager {
                 epoch,
                 tx: Some(tx),
                 sas: sas_text.clone(),
-                device_name: pair.device.name.clone(),
+                device_name: display_text(&pair.device.name),
             };
             st.next_epoch += 1;
             (sas_text, epoch, rx, expired)
@@ -505,20 +520,23 @@ impl PairingManager {
             .emit(DaemonEvent::Pairing(PairingUiEvent::ConfirmRequested {
                 pairing_id: pair.pairing_id.clone(),
                 sas: sas_text.clone(),
-                device_name: pair.device.name.clone(),
-                device_model: pair.device.model.clone(),
+                device_name: display_text(&pair.device.name),
+                device_model: pair.device.model.as_deref().map(display_text),
                 timeout_ms: CONFIRM_TIMEOUT_MS,
             }));
         Ok(PendingConfirmation {
             manager: self.clone(),
             pairing_id: pair.pairing_id.clone(),
             sas: sas_text,
+            // The strings of the phone are attacker-controlled and end up in the confirmation modal, the device list and the
+            // audit trail: control, bidirectional and zero-width characters are made visible first (the proof above was
+            // checked against the raw name; only what is shown and stored is sanitised).
             device: NewDevice {
-                name: pair.device.name.clone(),
-                platform: pair.device.platform.clone(),
-                model: pair.device.model.clone(),
-                os_version: pair.device.os_version.clone(),
-                app_version: pair.device.app_version.clone(),
+                name: display_text(&pair.device.name),
+                platform: display_text(&pair.device.platform),
+                model: pair.device.model.as_deref().map(display_text),
+                os_version: pair.device.os_version.as_deref().map(display_text),
+                app_version: pair.device.app_version.as_deref().map(display_text),
                 pubkey_spki_der: if spki.is_empty() { None } else { Some(spki) },
             },
             decision: Some(rx),
@@ -645,10 +663,16 @@ impl PairingManager {
                     Ok(i) => i,
                     Err(e) => return Ok(Err(e)),
                 };
-                tx.execute(
+                let marked = tx.execute(
                     "UPDATE pairings SET used_at=?1, outcome='paired', device_id=?2 WHERE pairing_id=?3 AND used_at IS NULL",
                     params![now_tx, issued.device_id, id_tx],
                 )?;
+                if marked != 1 {
+                    // The pairing was cancelled, expired or burned after the PC user approved (its row already has
+                    // `used_at`): no device may come out of it. The transaction is dropped, i.e. rolled back, so the
+                    // device row is never committed.
+                    return Ok(Err(DeviceError::PairingEnded));
+                }
                 tx.commit()?;
                 Ok(Ok(issued))
             })
@@ -702,6 +726,18 @@ impl PairingManager {
         }));
         Ok(issued)
     }
+}
+
+/// Longest sanitised device string kept (the raw name is at most 64 bytes, but escapes make characters longer).
+const DISPLAY_TEXT_MAX_CHARS: usize = 100;
+
+/// A string chosen by the phone, made safe to show to the PC user and to store: secrets masked, control, bidirectional
+/// and zero-width characters turned into visible escapes (`\u{202e}`), one line, bounded.
+fn display_text(raw: &str) -> String {
+    crate::redact::clip(
+        &crate::redact::mask_for_display(raw, true).text,
+        DISPLAY_TEXT_MAX_CHARS,
+    )
 }
 
 fn render_qr_svg(content: &str) -> Result<String, PairingError> {
@@ -844,6 +880,16 @@ mod tests {
             !format!("{started:?}").contains(&secret),
             "the secret is redacted in Debug"
         );
+        // `uri` holds the secret (base64url inside the `d=` JSON) and `qr_svg` draws the same data: neither is printed
+        let shown = format!("{started:?}");
+        assert!(!shown.contains(&started.uri), "{shown}");
+        assert!(!shown.contains("agentnest://pair"), "{shown}");
+        assert!(!shown.contains("<svg"), "{shown}");
+        assert!(
+            !shown.contains(started.uri.split("d=").nth(1).unwrap_or("x")),
+            "{shown}"
+        );
+        assert!(shown.contains("redacted"), "{shown}");
     }
 
     #[test]
@@ -962,6 +1008,95 @@ mod tests {
             .collect();
         assert!(actions.contains(&"pairing_confirmed".to_owned()));
         assert!(actions.contains(&"device_paired".to_owned()));
+    }
+
+    /// Review item 11: approve, then the desktop cancels before the session finalizes. The pairing row is `cancelled`
+    /// (used), so no device may come out of it; the device row must not be committed either.
+    #[tokio::test]
+    async fn a_cancel_after_the_approval_creates_no_device() {
+        let f = fixture();
+        let started = f.mgr.start(&info()).unwrap();
+        let ch = Challenge::generate().unwrap();
+        let frame = pair_frame(&started, &ch, "Galaxy S25", &[7, 7, 7], None);
+        let mut pending = f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap();
+        let rx = pending.decision.take().unwrap();
+        f.mgr.confirm(&started.pairing_id, true).unwrap();
+        assert_eq!(rx.await.unwrap(), ConfirmDecision::Approve);
+        // the cancel arrives after the approval, before the session runs `finalize`
+        assert!(f.mgr.cancel(&started.pairing_id));
+        let err = f.mgr.finalize(pending).await.unwrap_err();
+        assert!(matches!(err, DeviceError::PairingEnded), "{err:?}");
+        let devices: i64 = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(devices, 0, "no device without a paired pairing row");
+        let outcome: String = f
+            .store
+            .read(|c| Ok(c.query_row("SELECT outcome FROM pairings", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(outcome, "cancelled");
+        assert!(!f
+            .store
+            .list_audit_log(20)
+            .unwrap()
+            .iter()
+            .any(|r| r.action == "device_paired"));
+    }
+
+    /// Review item 11: the phone's strings are attacker-controlled. The modal event, the stored device and the audit
+    /// trail get visible escapes instead of control / bidirectional characters; the proof still covers the raw name.
+    #[tokio::test]
+    async fn the_device_name_is_sanitised_before_it_reaches_the_modal_the_list_and_the_audit_trail()
+    {
+        let f = fixture();
+        let started = f.mgr.start(&info()).unwrap();
+        let ch = Challenge::generate().unwrap();
+        let raw = "Pixel\u{202e}gnp.exe\r\nAPPROVE\u{200b}";
+        let frame = pair_frame(&started, &ch, raw, &[], None);
+        let mut events = f.bus.subscribe();
+        let mut pending = f.mgr.begin(&started.payload.pc_id, &frame, &ch).unwrap();
+        for bad in ['\u{202e}', '\r', '\n', '\u{200b}'] {
+            assert!(
+                !pending.device.name.contains(bad),
+                "{:?}",
+                pending.device.name
+            );
+        }
+        assert!(
+            pending.device.name.contains("\\u{202e}"),
+            "{:?}",
+            pending.device.name
+        );
+        let mut shown = None;
+        while let Ok(ev) = events.try_recv() {
+            if let DaemonEvent::Pairing(PairingUiEvent::ConfirmRequested { device_name, .. }) = ev {
+                shown = Some(device_name);
+            }
+        }
+        let shown = shown.expect("the confirmation event");
+        assert_eq!(shown, pending.device.name);
+        assert_eq!(f.mgr.awaiting_info().unwrap().2, shown);
+        let rx = pending.decision.take().unwrap();
+        f.mgr.confirm(&started.pairing_id, true).unwrap();
+        assert_eq!(rx.await.unwrap(), ConfirmDecision::Approve);
+        let issued = f.mgr.finalize(pending).await.unwrap();
+        let stored: String = f
+            .store
+            .read(move |c| {
+                Ok(c.query_row(
+                    "SELECT name FROM devices WHERE device_id=?1",
+                    [issued.device_id],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(stored, shown);
+        let audit = format!("{:?}", f.store.list_audit_log(20).unwrap());
+        assert!(
+            !audit.contains('\u{202e}') && !audit.contains('\u{200b}'),
+            "{audit}"
+        );
     }
 
     #[tokio::test]

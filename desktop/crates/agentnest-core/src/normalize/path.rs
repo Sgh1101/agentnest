@@ -41,8 +41,9 @@ pub fn win_segment(seg: &str) -> String {
     trimmed.to_owned()
 }
 
-/// `true` for a 8.3 short name such as `PROGRA~1`, `WINDOW~1` or `PACKAGE~1.JSO`: up to six name characters, `~`, digits,
-/// and an optional extension of up to three characters.
+/// `true` for a 8.3 short name such as `PROGRA~1`, `WINDOW~1` or `PACKAGE~1.JSO`: a name stem, `~`, digits, and an optional
+/// extension of up to three characters. The stem is allowed up to eight characters (Windows itself uses six) so that
+/// hand-written spellings like `PACKAGE~1.JSO` are caught too.
 pub fn is_short_name(seg: &str) -> bool {
     let (name, ext) = match seg.rsplit_once('.') {
         Some((n, e)) if !n.is_empty() => (n, Some(e)),
@@ -57,7 +58,7 @@ pub fn is_short_name(seg: &str) -> bool {
         return false;
     };
     !stem.is_empty()
-        && stem.chars().count() <= 6
+        && stem.chars().count() <= 8
         && !digits.is_empty()
         && digits.chars().all(|c| c.is_ascii_digit())
 }
@@ -117,7 +118,10 @@ pub fn normalize(p: &str) -> String {
             let rest = rest.to_owned();
             if has_drive(&rest) {
                 s = rest;
-            } else if rest.len() >= 4 && rest[..4].eq_ignore_ascii_case("unc/") {
+            } else if rest
+                .get(..4)
+                .is_some_and(|h| h.eq_ignore_ascii_case("unc/"))
+            {
                 s = format!("//{}", &rest[4..]);
             } else {
                 // `\\.\PhysicalDrive0`, `\\?\Volume{...}`, `\\.\pipe\x`: a device, never a project file

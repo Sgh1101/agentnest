@@ -7,8 +7,15 @@
 //! * **Segments.** Shell commands are split on `&&`, `||`, `;`, `|`, `&` and line breaks; every segment is classified
 //!   and wrappers / `bash -c` payloads / `$(...)` bodies are classified recursively.
 //! * **Fail closed.** Anything that cannot be analysed (a panic anywhere inside the analysis, nesting deeper than the
-//!   limit, a `tool_input` over 64 KiB, a string field of 32 KiB or more, or the CLI relay's `_agentnest_truncated` marker)
-//!   is `critical`. The panic boundary is `std::panic::catch_unwind`.
+//!   limit, more analysis steps than the budget, a `tool_input` over 64 KiB, a string field of 32 KiB or more, an
+//!   integer beyond the IEEE-754 safe range, a `command` that is neither a string nor an array of strings, or the CLI
+//!   relay's `_agentnest_truncated` marker) is `critical`; a command the approval card cuts at 2,000 characters is
+//!   `critical` / `command_truncated`. A shell construct that cannot be resolved statically (a variable or glob as the
+//!   command word, `eval` of a variable, a LOLBin) is at least `high` / `shell_unparsed`. The panic boundary is
+//!   `std::panic::catch_unwind`.
+//! * **Shell syntax is looked through.** `(cmd)`, `{ cmd; }`, `! cmd`, `if/then/do/while/case` bodies, `$(...)`,
+//!   `${IFS}` splitting, `{a,b}` brace words, `$'..'` quoting, backslash escapes and `find -exec`/`busybox`/unknown
+//!   wrappers are classified as the command they really run.
 //! * `permission_mode == "plan"` raises *write tools* (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`, Codex
 //!   `fileChange`, patches) by one level, capped at `critical`; the reasons stay those of the level before the raise.
 //! * Codex: `commandExecution.command` gets the shell rules and `fileChange.changes[].path` the edit rules. The
@@ -16,6 +23,7 @@
 //!   verified to be exposed (UNVERIFIED (Phase 0 C8)) and is therefore the caller's job (see [`Risk`] levels in the
 //!   broker), not part of this function.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -25,15 +33,17 @@ use serde_json::Value;
 
 use super::command_class::{is_neutral_segment, segment_class, FETCH_TOOLS};
 use super::rules::{
-    apply_patch_paths, is_build_or_policy_file, is_read_sensitive_path, is_secret_read_path,
-    is_secret_write_path, is_system_path, Level, Rule,
+    apply_patch_paths, is_build_or_policy_file, is_read_sensitive_path, is_secret_dir_path,
+    is_secret_read_path, is_secret_write_path, is_system_path, Level, Rule,
 };
 use super::tokenizer::{
-    base_command, inner_payload, is_flag, is_shell_interpreter, split_segments, substitutions,
-    unwrap_command, Inner, Segment, Shell,
+    base_command, inner_payload, is_flag, is_script_interpreter, is_shell_interpreter,
+    reads_program_from_stdin, split_segments, substitution_spans, substitutions, unwrap_command,
+    Inner, Segment, Shell,
 };
 use crate::normalize::hook::TRUNCATED_MARKER_KEY;
 use crate::normalize::path;
+use crate::redact::command_display_is_cut;
 
 /// A string field of this many bytes (32 KiB, less 4 for a cut in the middle of a character) is treated as a cut or
 /// uninspectable input: the hook CLI relay cuts every string at 32 KiB (claude-code.md 3), so a field of this size is
@@ -56,6 +66,35 @@ fn has_oversized_string(v: &Value) -> bool {
 
 /// Maximum nesting of `bash -c` / `$(...)` that is analysed; deeper input is classified `critical`.
 const MAX_DEPTH: u8 = 4;
+
+/// Analysis steps (one per command and per segment, counted over the whole tool input) before the input is classified
+/// `critical` / `classifier_error`: a 32 KiB command made of thousands of tiny segments must not cost unbounded time.
+const MAX_ANALYSIS_STEPS: u32 = 8192;
+
+/// Integers whose magnitude exceeds this (2^53 - 1) are not exactly representable as the IEEE-754 double that the
+/// canonical JSON (RFC 8785) hashes: two different inputs would share a `tool_input_sha256`.
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+/// `true` if `v` contains an integer outside the safe range anywhere. Iterative.
+fn has_unsafe_number(v: &Value) -> bool {
+    let mut stack = vec![v];
+    while let Some(v) = stack.pop() {
+        match v {
+            Value::Number(n) => {
+                if n.as_u64().is_some_and(|u| u > MAX_SAFE_INTEGER)
+                    || n.as_i64()
+                        .is_some_and(|i| i.unsigned_abs() > MAX_SAFE_INTEGER)
+                {
+                    return true;
+                }
+            }
+            Value::Array(a) => stack.extend(a.iter()),
+            Value::Object(m) => stack.extend(m.values()),
+            _ => {}
+        }
+    }
+    false
+}
 
 /// Everything the classifier looks at.
 #[derive(Clone, Copy, Debug)]
@@ -174,9 +213,8 @@ fn tool_kind(name: &str) -> ToolKind {
         "bash" => ToolKind::Shell(Shell::Posix),
         "powershell" => ToolKind::Shell(Shell::PowerShell),
         // UNVERIFIED (Phase 0 C10): Codex hooks shell tool names; `commandExecution` is the app-server item type.
-        "commandexecution" | "shell" | "local_shell" | "exec_command" | "container.exec" => {
-            ToolKind::Shell(Shell::Posix)
-        }
+        "commandexecution" | "shell" | "local_shell" | "exec_command" | "shell_command"
+        | "container.exec" => ToolKind::Shell(Shell::Posix),
         "write" | "edit" | "multiedit" | "notebookedit" => ToolKind::Write,
         // UNVERIFIED (Phase 0 C10): `apply_patch` is the Codex hooks patch tool name candidate.
         "apply_patch" | "filechange" => ToolKind::FileChange,
@@ -190,9 +228,22 @@ fn tool_kind(name: &str) -> ToolKind {
 struct Ctx<'a> {
     cwd: Option<&'a str>,
     extra_dirs: &'a [String],
+    /// Remaining analysis steps ([`MAX_ANALYSIS_STEPS`]).
+    budget: Cell<u32>,
 }
 
 impl Ctx<'_> {
+    /// Spends one analysis step; `false` once the budget is used up.
+    fn spend(&self) -> bool {
+        match self.budget.get() {
+            0 => false,
+            n => {
+                self.budget.set(n - 1);
+                true
+            }
+        }
+    }
+
     fn resolve(&self, p: &str) -> String {
         path::resolve(p, self.cwd)
     }
@@ -230,17 +281,37 @@ fn analyze(input: &RiskInput<'_>) -> Analysis {
             plan_raise: false,
         };
     }
+    if has_unsafe_number(input.tool_input) {
+        // The bound hash would not tell two different integers apart (RFC 8785 numbers are doubles): unreviewable.
+        rules.insert(Rule::ClassifierError);
+        return Analysis {
+            rules,
+            plan_raise: false,
+        };
+    }
     let ctx = Ctx {
         cwd: input.cwd,
         extra_dirs: input.extra_dirs,
+        budget: Cell::new(MAX_ANALYSIS_STEPS),
     };
     let kind = tool_kind(input.tool_name);
     let ti = input.tool_input;
     let mut plan_raise = false;
     match kind {
         ToolKind::Shell(shell) => {
-            let command = command_text(ti);
-            analyze_command(&command, shell, &ctx, 0, &mut rules);
+            match command_input(ti) {
+                CommandInput::Text(command) => {
+                    if command_display_is_cut(&command) {
+                        // The card shows the first 2,000 characters only: the person cannot read what is approved.
+                        rules.insert(Rule::CommandTruncated);
+                    }
+                    analyze_command(&command, shell, &ctx, 0, &mut rules);
+                }
+                // no command at all, or a shape that is neither a string nor an array of strings: unreadable
+                CommandInput::Missing | CommandInput::Malformed => {
+                    rules.insert(Rule::ClassifierError);
+                }
+            }
             if ti
                 .get("networkApprovalContext")
                 .is_some_and(|v| !v.is_null())
@@ -265,7 +336,8 @@ fn analyze(input: &RiskInput<'_>) -> Analysis {
                 Some(p) => ctx.resolve(&p),
                 None => ctx.resolve("."),
             };
-            if is_secret_read_path(&resolved) {
+            let searches_dir = matches!(input.tool_name.to_lowercase().as_str(), "grep" | "glob");
+            if is_secret_read_path(&resolved) || (searches_dir && is_secret_dir_path(&resolved)) {
                 rules.insert(Rule::SecretPathRead);
             } else if is_read_sensitive_path(&resolved) || !ctx.is_inside(&resolved) {
                 rules.insert(Rule::ReadSensitive);
@@ -281,12 +353,43 @@ fn analyze(input: &RiskInput<'_>) -> Analysis {
         }
         ToolKind::Mcp | ToolKind::Unknown => {
             rules.insert(Rule::McpUnknown);
+            // An unknown tool may still be a shell in disguise (`{"command": "rm -rf /"}`): analyse that string too.
+            match command_input(ti) {
+                CommandInput::Text(command) => {
+                    analyze_command(&command, Shell::Posix, &ctx, 0, &mut rules);
+                }
+                CommandInput::Malformed => {
+                    rules.insert(Rule::ClassifierError);
+                }
+                CommandInput::Missing => {}
+            }
         }
     }
     if rules.is_empty() {
         rules.insert(Rule::ShellGeneric);
     }
     Analysis { rules, plan_raise }
+}
+
+/// What the `command` (or `cmd`) field of a tool input holds.
+enum CommandInput {
+    /// A string, or an array of strings (joined like [`command_text`]).
+    Text(String),
+    /// Neither field exists.
+    Missing,
+    /// The field exists but is not a string or an array of strings (`5`, an object, `null`, an array with a non-string).
+    Malformed,
+}
+
+fn command_input(ti: &Value) -> CommandInput {
+    match ti.get("command").or_else(|| ti.get("cmd")) {
+        None => CommandInput::Missing,
+        Some(Value::String(_)) => CommandInput::Text(command_text(ti)),
+        Some(Value::Array(a)) if a.iter().all(Value::is_string) => {
+            CommandInput::Text(command_text(ti))
+        }
+        Some(_) => CommandInput::Malformed,
+    }
 }
 
 /// The command line of a shell tool input (`command` string, or a Codex argv array).
@@ -390,39 +493,274 @@ fn analyze_command(
     depth: u8,
     rules: &mut BTreeSet<Rule>,
 ) {
-    if depth > MAX_DEPTH {
+    if depth > MAX_DEPTH || !ctx.spend() {
         rules.insert(Rule::ClassifierError);
         return;
     }
     let segments = split_segments(command, shell);
 
-    // `fetch | shell` inside one pipeline
-    let mut fetch_in_pipeline = false;
-    for seg in &segments {
-        if !seg.piped {
-            fetch_in_pipeline = false;
-        }
-        let u = unwrap_command(&seg.tokens);
-        if let Some(first) = u.tokens.first() {
-            let name = base_command(first);
-            if seg.piped && fetch_in_pipeline && is_shell_interpreter(&name) {
-                rules.insert(Rule::RemoteCodeExec);
-            }
-            if FETCH_TOOLS.contains(&name.as_str()) {
-                fetch_in_pipeline = true;
-            }
-        }
-    }
-
+    scan_pipelines(&segments, shell, ctx, depth, rules);
     for seg in &segments {
         analyze_segment(seg, shell, ctx, depth, rules);
     }
-    for body in substitutions(command) {
+    let chars: Vec<char> = command.chars().collect();
+    for (at, body) in substitution_spans(command) {
         analyze_command(&body, shell, ctx, depth + 1, rules);
+        // `eval $(echo ... | base64 -d)`, `bash -c "$(curl ...)"`: a substitution that fetches or decodes, fed to an
+        // interpreter. The segment splitter cuts a `|` inside `$( )` in two, so the command in front of the
+        // substitution is looked up here instead of in the segment.
+        if body_fetches_or_decodes(&body, shell) {
+            let prefix: String = chars[..at.min(chars.len())].iter().collect();
+            let feeds_interpreter = split_segments(&prefix, shell).last().is_some_and(|s| {
+                let u = unwrap_command(&s.tokens);
+                u.tokens.first().is_some_and(|t| {
+                    let n = base_command(t);
+                    is_shell_interpreter(&n)
+                        || is_script_interpreter(&n)
+                        || matches!(n.as_str(), "eval" | "source" | ".")
+                        || inner_payload(u.tokens).is_some()
+                })
+            });
+            if feeds_interpreter {
+                rules.insert(Rule::RemoteCodeExec);
+            }
+        }
     }
     if depth == 0 && rules.is_empty() {
         // Only neutral segments (`echo`, `cd`, assignments): the default for any command.
         rules.insert(Rule::ShellGeneric);
+    }
+}
+
+/// Decoders and decompressors: whatever they print is hidden from the reader, so feeding it to a shell is obfuscated
+/// execution (`echo ... | base64 -d | sh`).
+fn is_decoder(name: &str, args: &[String]) -> bool {
+    let short = |c: char| {
+        args.iter().any(|a| {
+            a.starts_with('-') && !a.starts_with("--") && a.chars().skip(1).any(|x| x == c)
+        })
+    };
+    let has = |f: &str| args.iter().any(|a| a.eq_ignore_ascii_case(f));
+    match name {
+        "base64" => has("--decode") || short('d') || short('D'),
+        "xxd" => short('r'),
+        "openssl" => {
+            short('d')
+                && args.iter().any(|a| {
+                    matches!(
+                        a.to_lowercase().as_str(),
+                        "enc" | "base64" | "-base64" | "-a"
+                    )
+                })
+        }
+        "certutil" => has("-decode") || has("-decodehex"),
+        "gunzip" | "zcat" | "bzcat" | "xzcat" | "unxz" | "bunzip2" | "uncompress" | "unzstd"
+        | "zstdcat" => true,
+        "gzip" | "bzip2" | "xz" | "zstd" => short('d') || has("--decompress"),
+        // PowerShell: `[Convert]::FromBase64String(...)`
+        _ => {
+            name.contains("frombase64string")
+                || args
+                    .iter()
+                    .any(|a| a.to_lowercase().contains("frombase64string"))
+        }
+    }
+}
+
+/// `true` if a command-substitution body fetches from the network or decodes something: `sh -c "$(curl ...)"`,
+/// `eval $(echo ... | base64 -d)`.
+fn body_fetches_or_decodes(body: &str, shell: Shell) -> bool {
+    split_segments(body, shell).iter().any(|s| {
+        let u = unwrap_command(&s.tokens);
+        u.tokens.first().is_some_and(|t| {
+            let n = base_command(t);
+            FETCH_TOOLS.contains(&n.as_str()) || is_decoder(&n, &u.tokens[1..])
+        })
+    })
+}
+
+/// `true` if any command substitution of `text` fetches or decodes.
+fn substitution_fetches_or_decodes(text: &str, shell: Shell) -> bool {
+    substitutions(text)
+        .iter()
+        .any(|b| body_fetches_or_decodes(b, shell))
+}
+
+/// The file names (lower-cased base names) that a fetch segment writes: `-o FILE`, `-O`, `--output`, `-OutFile`,
+/// the URL's own name for `curl -O` / `wget`, and redirection targets.
+fn download_targets(name: &str, args: &[String], seg: &Segment) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let base_of = |p: &str| path::basename(&path::normalize(p)).to_lowercase();
+    let url_name = |u: &str| {
+        let no_query = u.split(['?', '#']).next().unwrap_or("");
+        no_query.rsplit('/').next().unwrap_or("").to_lowercase()
+    };
+    let mut implicit = name == "wget";
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let lower = a.to_lowercase();
+        match name {
+            "curl" => {
+                if a == "-o" || a == "--output" {
+                    if let Some(v) = args.get(i + 1) {
+                        out.push(base_of(v));
+                    }
+                    i += 1;
+                } else if let Some(v) = a.strip_prefix("--output=") {
+                    out.push(base_of(v));
+                } else if a.starts_with("-o") && !a.starts_with("--") && a.len() > 2 {
+                    out.push(base_of(&a[2..]));
+                } else if a == "--remote-name"
+                    || a == "--remote-name-all"
+                    || (a.starts_with('-') && !a.starts_with("--") && a[1..].contains('O'))
+                {
+                    implicit = true;
+                }
+            }
+            "wget" => {
+                if a == "-O" || a == "--output-document" {
+                    if let Some(v) = args.get(i + 1) {
+                        out.push(base_of(v));
+                    }
+                    i += 1;
+                } else if let Some(v) = a.strip_prefix("--output-document=") {
+                    out.push(base_of(v));
+                } else if a.starts_with("-O") && a.len() > 2 {
+                    out.push(base_of(&a[2..]));
+                }
+            }
+            _ => {
+                // PowerShell `Invoke-WebRequest -OutFile x` (any unambiguous prefix of the parameter name)
+                if lower.starts_with("-out") && "-outfile".starts_with(lower.as_str()) {
+                    if let Some(v) = args.get(i + 1) {
+                        out.push(base_of(v));
+                    }
+                    i += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    if implicit {
+        for a in args {
+            if a.contains("://") {
+                out.push(url_name(a));
+            }
+        }
+    }
+    out.extend(
+        write_targets(&seg.tokens, name, args)
+            .iter()
+            .map(|t| base_of(t)),
+    );
+    out.retain(|n| !n.is_empty());
+    out
+}
+
+/// The file a segment executes: the command word itself, or the script an interpreter / `source` / `.` is given.
+fn executed_files(first: &str, name: &str, args: &[String]) -> Vec<String> {
+    let base_of = |p: &str| path::basename(&path::normalize(p)).to_lowercase();
+    let mut out = vec![base_of(first)];
+    if is_shell_interpreter(name) || is_script_interpreter(name) || matches!(name, "source" | ".") {
+        // the first positional argument is the script (later ones are its arguments, often data files)
+        let mut i = 0usize;
+        while i < args.len() {
+            let a = args[i].as_str();
+            if matches!(a.to_lowercase().as_str(), "-file" | "-f") {
+                if let Some(v) = args.get(i + 1) {
+                    out.push(base_of(v));
+                }
+                break;
+            }
+            if !is_flag(a) {
+                out.push(base_of(a));
+                break;
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Tools whose standard input / text is typed or printed, not run: their arguments are what a later shell may execute
+/// (`echo 'rm -rf /' | sh`).
+fn printed_text(name: &str, args: &[String]) -> Option<String> {
+    if !matches!(
+        name,
+        "echo" | "printf" | "write-output" | "write-host" | "cat"
+    ) {
+        return None;
+    }
+    let words: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| !matches!(*a, "-n" | "-e" | "-E" | "-ne" | "-en" | "--"))
+        .collect();
+    Some(words.join(" "))
+}
+
+/// Pipeline-level patterns that no single segment shows:
+///
+/// * `fetch | shell`, `decode | shell`, `fetch | python` (a program read from standard input);
+/// * `echo '<command>' | sh` (the printed text is the program);
+/// * `curl -o x.sh ... && bash x.sh` (a file that was just downloaded is executed).
+fn scan_pipelines(
+    segments: &[Segment],
+    shell: Shell,
+    ctx: &Ctx<'_>,
+    depth: u8,
+    rules: &mut BTreeSet<Rule>,
+) {
+    let mut tainted = false; // an earlier part of this pipeline fetches or decodes
+    let mut printed: Option<(String, String)> = None; // (text, raw) of the previous segment when it only prints
+    let mut downloaded: Vec<String> = Vec::new();
+    for seg in segments {
+        if !seg.piped {
+            tainted = false;
+            printed = None;
+        }
+        let u = unwrap_command(&seg.tokens);
+        let Some(first) = u.tokens.first() else {
+            printed = None;
+            continue;
+        };
+        let name = base_command(first);
+        let args = &u.tokens[1..];
+        if seg.piped && reads_program_from_stdin(&name, args) {
+            if tainted {
+                rules.insert(Rule::RemoteCodeExec);
+            }
+            if let Some((text, raw)) = &printed {
+                analyze_command(text, shell, ctx, depth + 1, rules);
+                if substitution_fetches_or_decodes(raw, shell) {
+                    rules.insert(Rule::RemoteCodeExec);
+                }
+            }
+        }
+        if seg.piped && is_sql_client(&name) {
+            if let Some((text, _)) = &printed {
+                if sql_destructive(text) {
+                    rules.insert(Rule::InfraDestructive);
+                }
+            }
+        }
+        let fetches = FETCH_TOOLS.contains(&name.as_str());
+        if fetches || is_decoder(&name, args) {
+            tainted = true;
+        }
+        printed = printed_text(&name, args).map(|t| (t, seg.raw.clone()));
+
+        // download, then execute the downloaded file
+        if fetches {
+            downloaded.extend(download_targets(&name, args, seg));
+        } else if !downloaded.is_empty()
+            && executed_files(first, &name, args)
+                .iter()
+                .any(|f| downloaded.contains(f))
+        {
+            rules.insert(Rule::RemoteCodeExec);
+        }
     }
 }
 
@@ -434,13 +772,98 @@ fn shell_for(name: &str) -> Shell {
     }
 }
 
-fn first_command_is_fetch(body: &str, shell: Shell) -> bool {
-    split_segments(body, shell).first().is_some_and(|s| {
-        let u = unwrap_command(&s.tokens);
-        u.tokens
-            .first()
-            .is_some_and(|t| FETCH_TOOLS.contains(&base_command(t).as_str()))
-    })
+/// Characters that make the *name* of a command (the part after the last path separator) impossible to read
+/// statically: a variable, a substitution, a glob, a brace word.
+const DYNAMIC_NAME_CHARS: [char; 8] = ['$', '`', '*', '?', '[', ']', '{', '}'];
+
+/// `true` if the command word cannot be resolved statically (`$cmd`, `$(which x)`, `/bin/r?`, `{rm,-rf,/}`,
+/// `r\u{0}m`): what runs is decided at run time, so the classifier cannot vouch for it.
+///
+/// A variable or substitution in the *directory* part (`$HOME/bin/tool`, `"$(pwd)/node_modules/.bin/jest"`) is fine: the
+/// program name is still visible. In PowerShell only a bare variable that is not being assigned counts.
+fn command_word_is_dynamic(word: &str, next: Option<&String>, shell: Shell) -> bool {
+    if matches!(word, "[" | "[[" | "]]" | "]") {
+        return false;
+    }
+    if shell == Shell::PowerShell {
+        let bare_variable = word.strip_prefix('$').is_some_and(|v| {
+            let v = v.trim_start_matches('{').trim_end_matches('}');
+            !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+        let assigns = next.is_some_and(|n| {
+            matches!(
+                n.as_str(),
+                "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "++" | "--"
+            )
+        });
+        return bare_variable && !assigns;
+    }
+    let base = word.rsplit(['/', '\\']).next().unwrap_or("");
+    base.contains(DYNAMIC_NAME_CHARS)
+}
+
+/// `rm${IFS}-rf${IFS}/` -> `rm -rf /`: replaces `$IFS` / `${IFS...}` by a space and returns the rebuilt command line.
+fn expand_ifs(tokens: &[String]) -> Option<String> {
+    if !tokens
+        .iter()
+        .any(|t| t.contains("$IFS") || t.contains("${IFS"))
+    {
+        return None;
+    }
+    let mut out = String::new();
+    for (i, t) in tokens.iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let chars: Vec<char> = t.chars().collect();
+        let mut j = 0usize;
+        while j < chars.len() {
+            if chars[j] == '$'
+                && chars.get(j + 1) == Some(&'{')
+                && t[char_offset(t, j)..].starts_with("${IFS")
+            {
+                // up to the closing brace
+                let close = chars[j..].iter().position(|c| *c == '}').map(|p| j + p + 1);
+                out.push(' ');
+                j = close.unwrap_or(chars.len());
+            } else if chars[j] == '$' && t[char_offset(t, j)..].starts_with("$IFS") {
+                out.push(' ');
+                j += 4;
+            } else {
+                out.push(chars[j]);
+                j += 1;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Byte offset of the `n`-th character of `s`.
+fn char_offset(s: &str, n: usize) -> usize {
+    s.char_indices().nth(n).map(|(i, _)| i).unwrap_or(s.len())
+}
+
+/// `{rm,-rf,/}` -> `rm -rf /` (the first word is a brace expansion): the command line the shell would build.
+fn brace_word_command(tokens: &[String]) -> Option<String> {
+    let first = tokens.first()?;
+    if first.len() > 2 && first.starts_with('{') && first.ends_with('}') && first.contains(',') {
+        let mut line = first[1..first.len() - 1].replace(',', " ");
+        for t in &tokens[1..] {
+            line.push(' ');
+            line.push_str(t);
+        }
+        return Some(line);
+    }
+    None
+}
+
+/// Windows-looking tokens keep their backslashes in the POSIX alternative reading of a segment.
+fn looks_like_windows_path(t: &str) -> bool {
+    let b = t.as_bytes();
+    (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
+        || t.starts_with("\\\\")
+        || t.starts_with(".\\")
+        || t.starts_with("..\\")
 }
 
 fn analyze_segment(
@@ -450,18 +873,192 @@ fn analyze_segment(
     depth: u8,
     rules: &mut BTreeSet<Rule>,
 ) {
+    if !ctx.spend() {
+        rules.insert(Rule::ClassifierError);
+        return;
+    }
+    analyze_segment_once(seg, shell, ctx, depth, true, rules);
+    // A second reading for the escape character of the shell: in POSIX shells `r\m -r\f /` is `rm -rf /`, while the same
+    // text may be a Windows path; in PowerShell the escape is the backtick. The result is the union of both readings.
+    let strip = |t: &String, c: char| -> String {
+        if c == '\\' && looks_like_windows_path(t) {
+            t.clone()
+        } else {
+            t.replace(c, "")
+        }
+    };
+    let escape = match shell {
+        Shell::Posix => '\\',
+        Shell::PowerShell => '`',
+    };
+    if seg.tokens.iter().any(|t| t.contains(escape)) {
+        let alt: Vec<String> = seg.tokens.iter().map(|t| strip(t, escape)).collect();
+        if alt != seg.tokens && ctx.spend() {
+            let second = Segment {
+                raw: seg.raw.clone(),
+                tokens: alt,
+                piped: seg.piped,
+            };
+            analyze_segment_once(&second, shell, ctx, depth, true, rules);
+        }
+    }
+}
+
+/// Names whose arguments `analyze_embedded` looks for behind an unknown command word (`flock x rm -rf /`).
+const EMBEDDABLE: &[&str] = &[
+    "rm",
+    "rmdir",
+    "del",
+    "erase",
+    "rd",
+    "rimraf",
+    "remove-item",
+    "ri",
+    "shred",
+    "dd",
+    "format",
+    "diskpart",
+    "shutdown",
+    "reboot",
+    "poweroff",
+    "halt",
+    "git",
+    "docker",
+    "podman",
+    "kubectl",
+    "oc",
+    "helm",
+    "terraform",
+    "tofu",
+    "pulumi",
+    "npm",
+    "pnpm",
+    "yarn",
+    "cargo",
+    "twine",
+    "gem",
+    "gh",
+    "chmod",
+    "chown",
+    "icacls",
+    "reg",
+    "netsh",
+    "schtasks",
+    "sc",
+    "bcdedit",
+    "iex",
+    "invoke-expression",
+    "sudo",
+    "doas",
+    "su",
+    "runas",
+    "find",
+    "aws",
+    "gcloud",
+    "az",
+    "gsutil",
+    "psql",
+    "mysql",
+    "redis-cli",
+    "eval",
+    "bash",
+    "sh",
+    "zsh",
+    "powershell",
+    "pwsh",
+    "cmd",
+    "mshta",
+    "regsvr32",
+    "rundll32",
+    "certutil",
+];
+
+/// Analyses `tokens` as a command of its own (an exec'd or embedded command line). With `high_only` only the rules of
+/// level `high` and above are kept: an unknown wrapper must not turn every mention of a command name into noise.
+fn analyze_embedded(
+    tokens: &[String],
+    shell: Shell,
+    ctx: &Ctx<'_>,
+    depth: u8,
+    high_only: bool,
+    rules: &mut BTreeSet<Rule>,
+) {
+    if tokens.is_empty() {
+        return;
+    }
+    if depth > MAX_DEPTH || !ctx.spend() {
+        rules.insert(Rule::ClassifierError);
+        return;
+    }
+    let seg = Segment {
+        raw: tokens.join(" "),
+        tokens: tokens.to_vec(),
+        piped: false,
+    };
+    let mut sub = BTreeSet::new();
+    analyze_segment_once(&seg, shell, ctx, depth + 1, false, &mut sub);
+    for r in sub {
+        if !high_only || r.level() >= Level::High {
+            rules.insert(r);
+        }
+    }
+}
+
+fn analyze_segment_once(
+    seg: &Segment,
+    shell: Shell,
+    ctx: &Ctx<'_>,
+    depth: u8,
+    embed: bool,
+    rules: &mut BTreeSet<Rule>,
+) {
     let u = unwrap_command(&seg.tokens);
     if u.elevated {
         rules.insert(Rule::Elevation);
     }
     let toks = u.tokens;
-    let Some(first) = toks.first() else { return };
+    let Some(first) = toks.first() else {
+        // `env`, `env -i`, `FOO=1 env`: prints the whole environment (tokens, API keys)
+        if seg.tokens.iter().any(|t| base_command(t) == "env") {
+            rules.insert(Rule::SecretPathRead);
+        }
+        return;
+    };
     let name = base_command(first);
     let n = name.as_str();
+
+    if matches!(n, "su" | "runuser") {
+        rules.insert(Rule::Elevation);
+    }
+    // What runs is decided at run time (`$cmd`, `/bin/r?`, `{rm,-rf,/}`): fail closed.
+    if command_word_is_dynamic(first, toks.get(1), shell) {
+        rules.insert(Rule::ShellUnparsed);
+    }
+    // `rm${IFS}-rf${IFS}/` and `{rm,-rf,/}`: classify the command line the shell would build.
+    for rebuilt in [expand_ifs(toks), brace_word_command(toks)]
+        .into_iter()
+        .flatten()
+    {
+        analyze_command(&rebuilt, shell, ctx, depth + 1, rules);
+    }
 
     // Redirection and `tee` style write targets are checked for every segment (also neutral ones such as `echo`).
     for target in write_targets(&seg.tokens, n, &toks[1..]) {
         write_rules(&target, ctx, false, rules);
+    }
+
+    // `sh <<< "command"`: the here-string is the program.
+    if reads_program_from_stdin(n, &toks[1..]) {
+        if let Some(text) = toks[1..]
+            .iter()
+            .position(|a| a == "<<<")
+            .and_then(|p| toks.get(p + 2))
+        {
+            analyze_command(text, shell, ctx, depth + 1, rules);
+            if substitution_fetches_or_decodes(text, shell) {
+                rules.insert(Rule::RemoteCodeExec);
+            }
+        }
     }
 
     // Interpreter payloads are classified as commands of their own.
@@ -472,18 +1069,13 @@ fn analyze_segment(
                 rules.insert(Rule::RemoteCodeExec);
             }
         }
-        if substitutions(&seg.raw)
-            .iter()
-            .any(|b| first_command_is_fetch(b, shell))
-        {
+        if substitution_fetches_or_decodes(&seg.raw, shell) {
             rules.insert(Rule::RemoteCodeExec);
         }
         return;
     }
-    if (is_shell_interpreter(n) || matches!(n, "source" | "."))
-        && substitutions(&seg.raw)
-            .iter()
-            .any(|b| first_command_is_fetch(b, shell))
+    if (is_shell_interpreter(n) || is_script_interpreter(n) || matches!(n, "source" | "."))
+        && substitution_fetches_or_decodes(&seg.raw, shell)
     {
         rules.insert(Rule::RemoteCodeExec);
     }
@@ -558,6 +1150,12 @@ fn analyze_segment(
             }
             let prune = lc.iter().any(|a| a == "prune");
             let second = lc.iter().filter(|a| !is_flag(a)).nth(1).map(String::as_str);
+            let runs = matches!(sub, Some("run" | "create"))
+                || (matches!(sub, Some("container")) && matches!(second, Some("run" | "create")));
+            if runs && (is_privileged_container(&lc) || mounts_host_root(args, ctx)) {
+                // a privileged container or a bind mount of `/` is root on the host
+                add!(Rule::Elevation);
+            }
             if prune
                 || (matches!(sub, Some("rm" | "rmi")) && force)
                 || (matches!(sub, Some("volume" | "container" | "image" | "network"))
@@ -583,9 +1181,21 @@ fn analyze_segment(
                 add!(Rule::InfraDestructive);
             }
         }
-        "chmod" => {
-            if args.iter().any(|a| is_wide_open_mode(a)) {
+        "chmod" | "chown" | "chgrp" => {
+            if n == "chmod" && args.iter().any(|a| is_wide_open_mode(a)) {
                 add!(Rule::PermissionsWideOpen);
+            }
+            // `chmod -R` / `chown -R` of the root, the home directory or a system location
+            let recursive = args
+                .iter()
+                .any(|a| a == "--recursive" || (is_short_group(a) && a.contains('R')));
+            if recursive
+                && args
+                    .iter()
+                    .filter(|a| !is_flag(a))
+                    .any(|t| is_root_target(t) || is_system_path(&ctx.resolve(t)))
+            {
+                add!(Rule::SystemModify);
             }
         }
         "icacls" => {
@@ -654,6 +1264,139 @@ fn analyze_segment(
                 add!(Rule::Elevation);
             }
         }
+        "find" => {
+            let (roots, tail) = find_roots(args);
+            let root = roots.iter().any(|r| is_root_target(r));
+            let delete_rule = if root {
+                Rule::DeleteRoot
+            } else {
+                Rule::RecursiveDelete
+            };
+            if tail.iter().any(|a| a.eq_ignore_ascii_case("-delete")) {
+                add!(delete_rule);
+                if root {
+                    rules.insert(Rule::RecursiveDelete);
+                }
+            }
+            let mut i = 0usize;
+            while i < tail.len() {
+                if matches!(
+                    tail[i].to_lowercase().as_str(),
+                    "-exec" | "-execdir" | "-ok" | "-okdir"
+                ) {
+                    let cmd: Vec<String> = tail[i + 1..]
+                        .iter()
+                        .take_while(|t| !matches!(t.as_str(), ";" | "+" | "\\;"))
+                        .filter(|t| t.as_str() != "\\")
+                        .cloned()
+                        .collect();
+                    if let Some(c0) = cmd.first() {
+                        if DELETERS.contains(&base_command(c0).as_str()) {
+                            add!(delete_rule);
+                        }
+                        analyze_embedded(&cmd, shell, ctx, depth, false, rules);
+                    }
+                    i += 1 + cmd.len();
+                    continue;
+                }
+                i += 1;
+            }
+        }
+        "sed" | "perl" | "ruby" | "awk" | "gawk" => {
+            for file in in_place_files(n, args) {
+                write_rules(&file, ctx, false, rules);
+            }
+        }
+        "aws" | "gcloud" | "az" | "gsutil" | "doctl" | "heroku" | "flyctl" | "fly" => {
+            if lc
+                .iter()
+                .filter(|a| !is_flag(a))
+                .any(|a| is_cloud_destroy_verb(a))
+            {
+                add!(Rule::InfraDestructive);
+            }
+        }
+        _ if is_sql_client(n) => {
+            if sql_destructive(&lc.join(" ")) {
+                add!(Rule::InfraDestructive);
+            }
+        }
+        "redis-cli" => {
+            if lc
+                .iter()
+                .any(|a| matches!(a.as_str(), "flushall" | "flushdb" | "shutdown" | "debug"))
+            {
+                add!(Rule::InfraDestructive);
+            }
+        }
+        "printenv" => add!(Rule::SecretPathRead),
+        "export" => {
+            if args.is_empty() || lc.iter().any(|a| a == "-p") {
+                add!(Rule::SecretPathRead);
+            }
+        }
+        "set" => {
+            if args.is_empty() {
+                add!(Rule::SecretPathRead);
+            }
+        }
+        "declare" | "typeset" => {
+            if args.is_empty()
+                || lc
+                    .iter()
+                    .any(|a| matches!(a.as_str(), "-x" | "-p" | "-px" | "-xp"))
+            {
+                add!(Rule::SecretPathRead);
+            }
+        }
+        // Living-off-the-land binaries that download or run code without a shell pipe
+        "certutil" => {
+            if lc.iter().any(|a| {
+                a.starts_with("-urlcache")
+                    || a == "-url"
+                    || a.starts_with("-verifyctl")
+                    || a == "-decode"
+                    || a == "-decodehex"
+            }) {
+                add!(Rule::RemoteCodeExec);
+            }
+        }
+        "mshta" => add!(Rule::RemoteCodeExec),
+        "regsvr32" => {
+            if lc
+                .iter()
+                .any(|a| a.contains("http") || a.contains("scrobj"))
+            {
+                add!(Rule::RemoteCodeExec);
+            } else {
+                add!(Rule::SystemModify);
+            }
+        }
+        "rundll32" => {
+            if lc
+                .iter()
+                .any(|a| a.contains("javascript:") || a.contains("vbscript:") || a.contains("http"))
+            {
+                add!(Rule::RemoteCodeExec);
+            } else {
+                add!(Rule::ShellUnparsed);
+            }
+        }
+        "bitsadmin" => {
+            if lc.iter().any(|a| {
+                a.starts_with("/transfer")
+                    || a.starts_with("/addfile")
+                    || a.starts_with("/create")
+                    || a.starts_with("/resume")
+            }) {
+                add!(Rule::RemoteCodeExec);
+            }
+        }
+        "msiexec" => {
+            if lc.iter().any(|a| a.contains("http")) {
+                add!(Rule::RemoteCodeExec);
+            }
+        }
         "cp" | "mv" | "copy" | "move" | "xcopy" | "robocopy" | "ln" | "install" | "rsync"
         | "copy-item" | "move-item" => {
             // The destination is the last non-flag argument.
@@ -671,12 +1414,45 @@ fn analyze_segment(
         _ => {}
     }
 
-    // Secret reads: any argument that names a secret file (not for test/build runs: `--test credentials`).
-    let class = segment_class(toks);
-    if !matches!(class, CommandClass::Test | CommandClass::Build)
-        && args.iter().any(|a| names_secret_file(a))
+    // PowerShell environment drive / .NET environment dump: `Get-ChildItem Env:`, `[Environment]::GetEnvironmentVariables()`
+    if lc
+        .iter()
+        .any(|a| a.starts_with("env:") || a.contains("getenvironmentvariable"))
+        || n.contains("getenvironmentvariable")
     {
         add!(Rule::SecretPathRead);
+    }
+
+    // Secret reads: any argument that names a secret file (not for test/build runs: `--test credentials`). A secret
+    // directory (`~/.ssh`, `~/.aws`, `~/.gnupg`) counts for everything but listing and changing into it.
+    let class = segment_class(toks);
+    let lists_only = matches!(
+        n,
+        "ls" | "dir"
+            | "cd"
+            | "pushd"
+            | "chdir"
+            | "set-location"
+            | "sl"
+            | "stat"
+            | "tree"
+            | "test"
+            | "["
+    );
+    if !matches!(class, CommandClass::Test | CommandClass::Build)
+        && args.iter().any(|a| names_secret_file(a, !lists_only))
+    {
+        add!(Rule::SecretPathRead);
+    }
+
+    // An unknown command word may wrap another command (`flock x rm -rf /`, `parallel`, `watch`): look for command
+    // names behind it and keep what is `high` or worse.
+    if embed && !hit && class == CommandClass::Shell && !is_neutral_segment(seg) {
+        for (i, t) in toks.iter().enumerate().skip(1).take(64) {
+            if EMBEDDABLE.contains(&base_command(t).as_str()) {
+                analyze_embedded(&toks[i..], shell, ctx, depth, true, rules);
+            }
+        }
     }
 
     if hit {
@@ -692,6 +1468,231 @@ fn analyze_segment(
     if !hit && !is_neutral_segment(seg) {
         rules.insert(Rule::ShellGeneric);
     }
+}
+
+/// Commands that delete what they are given.
+const DELETERS: &[&str] = &[
+    "rm",
+    "rmdir",
+    "del",
+    "erase",
+    "rd",
+    "rimraf",
+    "remove-item",
+    "ri",
+    "shred",
+    "unlink",
+    "srm",
+];
+
+/// The search roots and the predicates of a `find` command line.
+fn find_roots(args: &[String]) -> (Vec<&String>, &[String]) {
+    let mut roots = Vec::new();
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if matches!(a, "-H" | "-L" | "-P") {
+            i += 1;
+        } else if a.starts_with('-') || a == "(" || a == "!" {
+            break;
+        } else {
+            roots.push(&args[i]);
+            i += 1;
+        }
+    }
+    (roots, &args[i..])
+}
+
+/// The files an in-place editor (`sed -i`, `perl -pi`, `ruby -i`, `awk -i inplace`) rewrites; empty if the command
+/// line is not an in-place edit.
+fn in_place_files(name: &str, args: &[String]) -> Vec<String> {
+    let in_place = match name {
+        "sed" => args.iter().any(|a| {
+            a.starts_with("--in-place")
+                || (a.starts_with('-') && !a.starts_with("--") && a[1..].contains('i'))
+        }),
+        "perl" | "ruby" => args.iter().any(|a| {
+            a.starts_with('-')
+                && !a.starts_with("--")
+                && !a.starts_with("-M")
+                && !a.starts_with("-I")
+                && a[1..].contains('i')
+        }),
+        _ => args
+            .windows(2)
+            .any(|w| w[0] == "-i" && w[1].eq_ignore_ascii_case("inplace")),
+    };
+    if !in_place {
+        return Vec::new();
+    }
+    // the script is `-e SCRIPT` / `-f FILE`, or the first plain argument
+    let mut has_script_flag = false;
+    let mut files: Vec<String> = Vec::new();
+    let mut plain: Vec<&String> = Vec::new();
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if matches!(a, "-e" | "--expression" | "-f" | "--file" | "-E") {
+            has_script_flag = true;
+            i += 2;
+            continue;
+        }
+        if a == "-i" && name == "awk" || a == "-i" && name == "gawk" {
+            i += 2;
+            continue;
+        }
+        // `-pi -e SCRIPT`: a short group that ends in `e` takes the next argument as the script
+        if a.starts_with('-')
+            && !a.starts_with("--")
+            && a.len() > 1
+            && a.ends_with('e')
+            && name != "sed"
+        {
+            has_script_flag = true;
+            i += 2;
+            continue;
+        }
+        if !is_flag(a) {
+            plain.push(&args[i]);
+        }
+        i += 1;
+    }
+    if has_script_flag {
+        files.extend(plain.iter().map(|s| (*s).clone()));
+    } else {
+        files.extend(plain.iter().skip(1).map(|s| (*s).clone()));
+    }
+    files.truncate(16);
+    files
+}
+
+/// Verbs of cloud CLIs that destroy resources (`aws s3 rm`, `gcloud ... delete`, `az group delete`,
+/// `heroku apps:destroy`).
+fn is_cloud_destroy_verb(a: &str) -> bool {
+    matches!(
+        a,
+        "rm" | "rb" | "delete" | "destroy" | "terminate" | "purge"
+    ) || a.starts_with("delete-")
+        || a.starts_with("terminate-")
+        || a.starts_with("remove-")
+        || a.starts_with("deregister-")
+        || a.ends_with(":destroy")
+}
+
+/// Database command line clients.
+fn is_sql_client(name: &str) -> bool {
+    matches!(
+        name,
+        "psql"
+            | "mysql"
+            | "mariadb"
+            | "sqlite3"
+            | "sqlcmd"
+            | "mongosh"
+            | "mongo"
+            | "clickhouse-client"
+            | "cockroach"
+            | "usql"
+            | "pgcli"
+            | "mycli"
+            | "duckdb"
+    )
+}
+
+/// `true` if lower-cased SQL / shell text drops or empties a database (`DROP DATABASE`, `TRUNCATE`, `DELETE FROM` without
+/// `WHERE`, MongoDB `dropDatabase`).
+fn sql_destructive(text: &str) -> bool {
+    let t = text.to_lowercase();
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    t.contains("drop database")
+        || t.contains("drop schema")
+        || t.contains("drop table")
+        || t.contains("drop user")
+        || t.contains("drop role")
+        || t.contains("drop collection")
+        || t.contains("dropdatabase")
+        || t.contains("truncate ")
+        || (t.contains("delete from") && !t.contains(" where "))
+}
+
+/// `docker run --privileged` and friends.
+fn is_privileged_container(lc: &[String]) -> bool {
+    lc.iter().any(|a| {
+        a == "--privileged"
+            || a.starts_with("--privileged=")
+            || a == "--pid=host"
+            || a == "--userns=host"
+            || a == "--cap-add=all"
+            || a == "--cap-add=sys_admin"
+    })
+}
+
+/// `true` if a `-v` / `--volume` / `--mount` argument binds the root, the home directory, a system location or the
+/// container runtime socket into the container.
+fn mounts_host_root(args: &[String], ctx: &Ctx<'_>) -> bool {
+    let sensitive = |src: &str| {
+        let src = src.trim();
+        if src.is_empty() {
+            return false;
+        }
+        if src.contains("docker.sock") || src.contains("containerd.sock") {
+            return true;
+        }
+        let host_path =
+            src.starts_with(['/', '~', '$']) || path::is_absolute(&path::normalize(src));
+        host_path && (is_root_target(src) || is_system_path(&ctx.resolve(src)))
+    };
+    let volume_source = |v: &str| -> String {
+        let b = v.as_bytes();
+        if b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && (b[2] == b'\\' || b[2] == b'/')
+        {
+            // `C:\x:/y`: the drive letter is part of the source
+            let rest = &v[2..];
+            let end = rest.find(':').map(|i| i + 2).unwrap_or(v.len());
+            v[..end].to_owned()
+        } else {
+            v.split(':').next().unwrap_or("").to_owned()
+        }
+    };
+    let mount_source = |v: &str| -> Option<String> {
+        v.split(',').find_map(|kv| {
+            kv.strip_prefix("source=")
+                .or_else(|| kv.strip_prefix("src="))
+                .map(str::to_owned)
+        })
+    };
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let value: Option<&str> = if a == "-v" || a == "--volume" || a == "--mount" {
+            i += 1;
+            args.get(i).map(String::as_str)
+        } else if let Some(v) = a
+            .strip_prefix("--volume=")
+            .or_else(|| a.strip_prefix("--mount="))
+        {
+            Some(v)
+        } else if a.starts_with("-v") && a.len() > 2 && !a.starts_with("--") {
+            Some(&a[2..])
+        } else {
+            None
+        };
+        if let Some(v) = value {
+            let src = if a == "--mount" || a.starts_with("--mount=") {
+                mount_source(v)
+            } else {
+                Some(volume_source(v))
+            };
+            if src.as_deref().is_some_and(sensitive) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 fn first_word(lc: &[String]) -> Option<&str> {
@@ -710,19 +1711,35 @@ fn is_cmd_switch(a: &str) -> bool {
     b.len() == 2 && b[0] == b'/' && (b[1].is_ascii_alphabetic() || b[1] == b'?')
 }
 
-fn names_secret_file(arg: &str) -> bool {
-    let value = if is_flag(arg) {
-        match arg.split_once('=') {
-            Some((_, v)) => v,
-            None => return false,
+/// The file names an argument can carry: itself, the value of `--flag=value` / `NAME=value`, and what follows `@` or
+/// `<` (`curl -d @.env`, `-d@.env`, `-F file=@.env`).
+fn path_candidates(arg: &str) -> Vec<&str> {
+    let mut raw: Vec<&str> = Vec::new();
+    if is_flag(arg) {
+        if let Some((_, v)) = arg.split_once('=') {
+            raw.push(v);
+        }
+        if let Some((_, v)) = arg.split_once('@') {
+            raw.push(v);
         }
     } else {
-        arg
-    };
-    if value.is_empty() || value.len() > 512 {
-        return false;
+        raw.push(arg);
+        if let Some((_, v)) = arg.split_once('=') {
+            raw.push(v);
+        }
     }
-    is_secret_read_path(&path::normalize(&path::expand_home_alias(value)))
+    raw.into_iter()
+        .map(|v| v.trim_start_matches(['@', '<']))
+        .filter(|v| !v.is_empty() && v.len() <= 512)
+        .collect()
+}
+
+/// `true` if an argument names a secret file, or (with `dirs`) a whole credential directory.
+fn names_secret_file(arg: &str, dirs: bool) -> bool {
+    path_candidates(arg).into_iter().any(|v| {
+        let n = path::normalize(&path::expand_home_alias(v));
+        is_secret_read_path(&n) || (dirs && is_secret_dir_path(&n))
+    })
 }
 
 fn is_wide_open_mode(arg: &str) -> bool {
@@ -1004,7 +2021,7 @@ mod tests {
     fn risk_cases_golden() {
         let f = fixture();
         let cases = f["cases"].as_array().unwrap();
-        assert_eq!(cases.len(), 210);
+        assert_eq!(cases.len(), 393);
         let mut failures = Vec::new();
         for c in cases {
             let name = c["name"].as_str().unwrap();

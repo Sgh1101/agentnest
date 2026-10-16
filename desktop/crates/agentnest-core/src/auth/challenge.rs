@@ -11,7 +11,7 @@
 //! and holds the returned [`Admission`] for the lifetime of the connection.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
 use agentnest_protocol::canonical::ct_eq;
@@ -92,7 +92,27 @@ struct IpState {
 
 struct Inner {
     total: usize,
+    /// Keyed by [`limit_key`], not by the raw address.
     ips: HashMap<IpAddr, IpState>,
+}
+
+/// The key the per-source limits (concurrent pre-auth connections, 5 failures a minute) are counted under.
+///
+/// An IPv4 address stands for itself, an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) for the IPv4 address it wraps. Any
+/// other IPv6 address stands for its **/64**: a host (or a link-local neighbour) owns a whole /64 and can take a fresh
+/// address inside it for every connection, which would make a per-address limit meaningless.
+pub fn limit_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => {
+                let mut octets = v6.octets();
+                octets[8..].fill(0);
+                IpAddr::V6(Ipv6Addr::from(octets))
+            }
+        },
+    }
 }
 
 /// Admission control shared by all connections.
@@ -112,7 +132,10 @@ impl std::fmt::Debug for AdmissionControl {
 /// A connection slot. Dropping it releases the slot (and the pre-auth slot if still held).
 pub struct Admission {
     control: AdmissionControl,
+    /// The peer address as seen (reported, masked, in diagnostics).
     ip: IpAddr,
+    /// What the limits are counted under ([`limit_key`]).
+    key: IpAddr,
     preauth_held: bool,
 }
 
@@ -128,7 +151,7 @@ impl Admission {
         if self.preauth_held {
             self.preauth_held = false;
             let mut g = self.control.lock();
-            if let Some(s) = g.ips.get_mut(&self.ip) {
+            if let Some(s) = g.ips.get_mut(&self.key) {
                 s.preauth = s.preauth.saturating_sub(1);
             }
         }
@@ -150,7 +173,7 @@ impl Drop for Admission {
         let now = self.control.clock.now_ms();
         let mut g = self.control.lock();
         g.total = g.total.saturating_sub(1);
-        if let Some(s) = g.ips.get_mut(&self.ip) {
+        if let Some(s) = g.ips.get_mut(&self.key) {
             if self.preauth_held {
                 s.preauth = s.preauth.saturating_sub(1);
             }
@@ -160,7 +183,7 @@ impl Drop for Admission {
                 && s.blocked_until <= now
                 && s.failures.as_mut().is_none_or(|w| w.count(now) == 0);
             if idle {
-                g.ips.remove(&self.ip);
+                g.ips.remove(&self.key);
             }
         }
     }
@@ -197,7 +220,8 @@ impl AdmissionControl {
         if g.total >= self.max_total {
             return Err(Rejection::ConnectionCap);
         }
-        let state = g.ips.entry(ip).or_default();
+        let key = limit_key(ip);
+        let state = g.ips.entry(key).or_default();
         if state.blocked_until > now {
             return Err(Rejection::IpBlocked);
         }
@@ -211,6 +235,7 @@ impl AdmissionControl {
         Ok(Admission {
             control: self.clone(),
             ip,
+            key,
             preauth_held: true,
         })
     }
@@ -219,7 +244,7 @@ impl AdmissionControl {
     pub fn record_failure(&self, ip: IpAddr) -> bool {
         let now = self.clock.now_ms();
         let mut g = self.lock();
-        let state = g.ips.entry(ip).or_default();
+        let state = g.ips.entry(limit_key(ip)).or_default();
         let w = state
             .failures
             .get_or_insert_with(|| SlidingWindow::new(FAILURE_LIMIT, FAILURE_WINDOW_MS));
@@ -237,7 +262,7 @@ impl AdmissionControl {
         let now = self.clock.now_ms();
         self.lock()
             .ips
-            .get(&ip)
+            .get(&limit_key(ip))
             .is_some_and(|s| s.blocked_until > now)
     }
 
@@ -326,6 +351,59 @@ mod tests {
             c.admit(ip("192.168.0.9")).unwrap_err(),
             Rejection::TooManyPreAuth
         );
+    }
+
+    #[test]
+    fn an_ipv6_source_is_counted_per_64_so_fresh_addresses_do_not_reset_the_limits() {
+        // the key: IPv4 as is, IPv4-mapped IPv6 as the IPv4 address, other IPv6 as its /64
+        assert_eq!(limit_key(ip("192.168.0.9")), ip("192.168.0.9"));
+        assert_eq!(limit_key(ip("::ffff:192.168.0.9")), ip("192.168.0.9"));
+        assert_eq!(limit_key(ip("fe80::1:2:3:4")), ip("fe80::"));
+        assert_eq!(
+            limit_key(ip("fd00:1:2:3:aaaa:bbbb:cccc:dddd")),
+            ip("fd00:1:2:3::")
+        );
+        assert_ne!(
+            limit_key(ip("fd00:1:2:3::1")),
+            limit_key(ip("fd00:1:2:4::1"))
+        );
+
+        // concurrent pre-auth connections: 4 per /64, however the addresses inside it differ
+        let (c, _clock) = control();
+        let held: Vec<_> = (1..=4)
+            .map(|i| c.admit(ip(&format!("fe80::{i}"))).unwrap())
+            .collect();
+        assert_eq!(
+            c.admit(ip("fe80::dead:beef")).unwrap_err(),
+            Rejection::TooManyPreAuth
+        );
+        // another /64 and an unrelated IPv4 host are not affected
+        assert!(c.admit(ip("fe80:0:0:1::1")).is_ok());
+        assert!(c.admit(ip("192.168.0.9")).is_ok());
+        drop(held);
+
+        // authentication failures: 5 a minute per /64, from five different addresses
+        let (c, _clock) = control();
+        for i in 1..=4 {
+            assert!(!c.record_failure(ip(&format!("fd00:1:2:3::{i}"))));
+        }
+        assert!(
+            c.record_failure(ip("fd00:1:2:3:9::9")),
+            "the fifth failure inside the /64 blocks it"
+        );
+        assert!(c.is_blocked(ip("fd00:1:2:3::77")));
+        assert_eq!(
+            c.admit(ip("fd00:1:2:3::1234")).unwrap_err(),
+            Rejection::IpBlocked
+        );
+        assert!(!c.is_blocked(ip("fd00:1:2:4::1")), "another /64");
+        // an IPv4-mapped address shares the IPv4 counters
+        let (c, _clock) = control();
+        for _ in 0..4 {
+            assert!(!c.record_failure(ip("10.0.0.5")));
+        }
+        assert!(c.record_failure(ip("::ffff:10.0.0.5")));
+        assert!(c.is_blocked(ip("10.0.0.5")));
     }
 
     #[test]
