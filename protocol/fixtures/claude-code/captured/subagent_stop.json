@@ -1,0 +1,27 @@
+{
+  "session_id": "cccccccc-0000-4000-8000-000000000003",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/cccccccc-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/cccccccc-0000-4000-8000-000000000003/scratchpad",
+  "prompt_id": "9a000003-0000-4000-8000-000000000000",
+  "permission_mode": "default",
+  "agent_id": "a00000000000fix01",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/home/user/.claude/projects/-home-user-demo/cccccccc-0000-4000-8000-000000000003/subagents/agent-a00000000000fix01.jsonl",
+  "last_assistant_message": "Step 1 failed as expected. The output was:\n\n```\nls: cannot access 'nonexistent_dir_xyz': No such file or directory\n```\n(exit code 2)\n\nStep 2 succeeded. `touch sub.txt` produced no output. I issued both commands in the same batch rather than waiting for step 1 to finish, though `touch` doesn't depend on `ls`.",
+  "background_tasks": [
+    {
+      "id": "a00000000000fix01",
+      "type": "subagent",
+      "status": "running",
+      "description": "Run two shell commands",
+      "agent_type": "general-purpose"
+    }
+  ],
+  "session_crons": []
+}

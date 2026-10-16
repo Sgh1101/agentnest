@@ -1,0 +1,18 @@
+{
+  "session_id": "dddddddd-0000-4000-8000-000000000011",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/dddddddd-0000-4000-8000-000000000011.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/dddddddd-0000-4000-8000-000000000011/scratchpad",
+  "prompt_id": "9a000005-0000-4000-8000-000000000000",
+  "permission_mode": "acceptEdits",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls -la /home/user/demo 2>&1 | head -50",
+    "description": "List the working directory contents"
+  },
+  "tool_use_id": "toolu_fixture0007"
+}

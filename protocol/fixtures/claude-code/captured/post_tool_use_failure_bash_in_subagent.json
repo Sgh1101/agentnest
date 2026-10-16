@@ -1,0 +1,23 @@
+{
+  "session_id": "cccccccc-0000-4000-8000-000000000003",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/cccccccc-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/cccccccc-0000-4000-8000-000000000003/scratchpad",
+  "prompt_id": "9a000003-0000-4000-8000-000000000000",
+  "permission_mode": "default",
+  "agent_id": "a00000000000fix01",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls nonexistent_dir_xyz",
+    "description": "List a nonexistent directory (expected to fail)"
+  },
+  "tool_use_id": "toolu_fixture0004",
+  "error": "Exit code 2\nls: cannot access 'nonexistent_dir_xyz': No such file or directory",
+  "is_interrupt": false,
+  "duration_ms": 78
+}

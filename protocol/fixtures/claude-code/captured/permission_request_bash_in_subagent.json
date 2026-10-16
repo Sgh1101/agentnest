@@ -1,0 +1,33 @@
+{
+  "session_id": "cccccccc-0000-4000-8000-000000000003",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/cccccccc-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/cccccccc-0000-4000-8000-000000000003/scratchpad",
+  "prompt_id": "9a000003-0000-4000-8000-000000000000",
+  "permission_mode": "default",
+  "agent_id": "a00000000000fix01",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "touch sub.txt",
+    "description": "Create empty file sub.txt"
+  },
+  "permission_suggestions": [
+    {
+      "type": "addDirectories",
+      "directories": [
+        "/home/user/demo"
+      ],
+      "destination": "session"
+    },
+    {
+      "type": "setMode",
+      "mode": "acceptEdits",
+      "destination": "session"
+    }
+  ]
+}

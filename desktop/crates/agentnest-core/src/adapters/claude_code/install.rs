@@ -8,6 +8,8 @@
 //!   command hooks that run `agentnest-hook claude-code` - are removed and re-added (install) or removed (uninstall).
 //! * A file with comments or any other non-JSON content is **not touched** ([`InstallError::NotPlainJson`]): installation
 //!   stops and the user is told.
+//! * `SessionStart` is **always a command hook** (`agentnest-hook claude-code`, exec form), even in [`HookMode::Http`]:
+//!   Claude Code ignores `type: "http"` hooks for that event ([`COMMAND_ONLY_EVENTS`]).
 //! * The token travels as a **literal** `X-AgentNest-Token` header (an environment variable would be replaced by an empty
 //!   string in processes that lack it and silently turn every hook into a 401).
 //! * `onFailure` is **absent** (= `continue`); it is written as `"block"` only on the `PermissionRequest` hook and only
@@ -224,10 +226,20 @@ fn timeout_for(event: &str, opts: &InstallOptions<'_>) -> u32 {
     }
 }
 
+/// Events for which Claude Code ignores `type: "http"` hooks (verified against `claude` 2.1.301: its hook resolver logs
+/// "HTTP hooks are not supported for SessionStart" and drops the entry). They are always installed as command hooks, in
+/// every [`HookMode`].
+pub const COMMAND_ONLY_EVENTS: [&str; 1] = ["SessionStart"];
+
 /// The hook object of one event.
 pub fn hook_entry(event: &str, opts: &InstallOptions<'_>) -> Value {
     let timeout = timeout_for(event, opts);
-    let mut hook = match opts.mode {
+    let mode = if COMMAND_ONLY_EVENTS.contains(&event) {
+        HookMode::Cli
+    } else {
+        opts.mode
+    };
+    let mut hook = match mode {
         HookMode::Http => json!({
             "type": "http",
             "url": hook_url(opts.hook_port),
@@ -725,6 +737,15 @@ mod tests {
         assert_eq!(hooks.len(), 16);
         for event in EVENTS {
             let entry = &hooks[event][0]["hooks"][0];
+            if event == "SessionStart" {
+                // Claude Code skips HTTP hooks for SessionStart: command hook (exec form) in every mode
+                assert_eq!(entry["type"], "command");
+                assert_eq!(entry["command"], "agentnest-hook");
+                assert_eq!(entry["args"], json!(["claude-code"]));
+                assert!(entry.get("headers").is_none());
+                assert_eq!(entry["timeout"], 5);
+                continue;
+            }
             assert_eq!(entry["type"], "http", "{event}");
             assert_eq!(entry["url"], "http://127.0.0.1:47831/v1/hooks/claude-code");
             assert_eq!(entry["headers"]["X-AgentNest-Token"], "an_hk_TESTTOKEN");

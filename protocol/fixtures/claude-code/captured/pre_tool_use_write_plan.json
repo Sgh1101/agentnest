@@ -1,0 +1,18 @@
+{
+  "session_id": "dddddddd-0000-4000-8000-000000000013",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/dddddddd-0000-4000-8000-000000000013.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/dddddddd-0000-4000-8000-000000000013/scratchpad",
+  "prompt_id": "9a000007-0000-4000-8000-000000000000",
+  "permission_mode": "plan",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/.claude/plans/use-the-write-tool-snug-gadget.md",
+    "content": "# Plan: create two files\n\n## Context\nThe user wants two trivial files created in the working directory (`/home/user/demo`). Plan mode is active, so nothing is executed until the plan is approved.\n\n## Steps\n1. Use the Write tool to create `mode_plan.txt` with the content `hi`.\n2. Use Bash to run `touch bash_plan.txt` (creates an empty file).\n3. Reply \"done\".\n\n## Verification\nRun `ls -l mode_plan.txt bash_plan.txt` and confirm `mode_plan.txt` contains `hi` and `bash_plan.txt` exists and is empty.\n"
+  },
+  "tool_use_id": "toolu_fixture0009"
+}

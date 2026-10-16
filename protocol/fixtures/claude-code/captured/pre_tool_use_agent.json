@@ -1,0 +1,19 @@
+{
+  "session_id": "cccccccc-0000-4000-8000-000000000003",
+  "transcript_path": "/home/user/.claude/projects/-home-user-demo/cccccccc-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/home/user/demo",
+  "scratchpad_dir": "/tmp/claude-1000/-home-user-demo/cccccccc-0000-4000-8000-000000000003/scratchpad",
+  "prompt_id": "9a000003-0000-4000-8000-000000000000",
+  "permission_mode": "default",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Run two shell commands",
+    "prompt": "Do exactly two things in order, using the Bash tool:\n1. Run: ls nonexistent_dir_xyz\n   This is expected to fail. Do not treat the failure as a problem and do not try to fix it.\n2. Run: touch sub.txt\nThen reply with a short report: the exact output/error of step 1, and whether step 2 succeeded (and any output). Do nothing else.",
+    "subagent_type": "general-purpose"
+  },
+  "tool_use_id": "toolu_fixture0003"
+}
