@@ -489,10 +489,12 @@ async fn an_auto_mode_session_is_marked_remote_approval_unavailable() {
     let sid = hook["session_id"].as_str().unwrap().to_owned();
     let (s, _) = t.post("/v1/hooks/claude-code", hook).await;
     assert_eq!(s, 204);
-    let rec = eventually("the session row", || {
+    // The row is created first and its mode is written right after, so wait for the mode, not just for the row.
+    let rec = eventually("the session row with its permission mode", || {
         t.h.store
             .get_session(&format!("claude_code:{sid}"))
             .unwrap()
+            .filter(|r| r.permission_mode.is_some())
     })
     .await;
     assert_eq!(rec.permission_mode.as_deref(), Some("auto"));
@@ -690,11 +692,13 @@ async fn a_real_claude_reaches_the_collector() {
     ] {
         assert!(kinds.iter().any(|x| x == k), "{k} missing in {kinds:?}");
     }
-    let rec =
+    let rec = eventually("the session row with its permission mode", || {
         t.h.store
             .get_session(&format!("claude_code:{sid}"))
             .unwrap()
-            .expect("session row");
+            .filter(|r| r.permission_mode.is_some())
+    })
+    .await;
     assert_eq!(rec.permission_mode.as_deref(), Some("default"));
 }
 
