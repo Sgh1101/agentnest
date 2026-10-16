@@ -16,10 +16,10 @@ export const devicesView = simpleView(
         "tr",
         { "data-device-id": d.device_id },
         h("td", null, h("strong", null, safeText(d.name, 64))),
-        h("td", null, safeText([d.model, d.platform].filter((x): x is string => !!x).join(" · "), 80)),
-        h("td", null, formatDateTime(d.paired_at)),
-        h("td", null, d.revoked_at === null ? relativeKo(d.last_seen_at, now) : "-"),
-        h("td", null, d.revoked_at !== null ? badge("폐기됨", "muted") : badge(d.online ? "온라인" : "오프라인", d.online ? "ok" : "muted")),
+        h("td", { "data-label": "모델" }, safeText([d.model, d.platform].filter((x): x is string => !!x).join(" · "), 80)),
+        h("td", { "data-label": "연결한 날" }, formatDateTime(d.paired_at)),
+        h("td", { "data-label": "마지막 접속" }, d.revoked_at === null ? relativeKo(d.last_seen_at, now) : "-"),
+        h("td", { "data-label": "상태" }, d.revoked_at !== null ? badge("폐기됨", "muted") : badge(d.online ? "온라인" : "오프라인", d.online ? "ok" : "muted")),
         h("td", null, d.revoked_at === null ? button("폐기", () => openRevokeDialog(ctx.modalRoot, d, ctx.controller), { kind: "danger", fid: `revoke-${d.device_id}` }) : null),
       );
     const table = (rows: typeof s.devices): HTMLElement =>

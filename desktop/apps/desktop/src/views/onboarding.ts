@@ -25,7 +25,7 @@ export const onboardingView = simpleView(
         "ol",
         { class: "checklist onboarding", "data-onboarding": "1" },
         checkRow(
-          r1,
+          r1 ? true : null,
           "1. 수용된 위험 확인 (R1)",
           h(
             "div",
@@ -45,7 +45,7 @@ export const onboardingView = simpleView(
           ),
         ),
         checkRow(
-          hooks && claudeSeen !== null,
+          hooks && claudeSeen !== null ? true : null,
           "3. Claude Code 훅 설치",
           h(
             "div",
@@ -55,7 +55,7 @@ export const onboardingView = simpleView(
             h("p", { class: "hint" }, "이 프로젝트에서 이벤트가 오지 않으면 Claude Code에서 폴더 신뢰(trust)를 수락해 주세요. 설치 후 Claude Code에서 아무 명령이나 실행하면 확인돼요."),
           ),
         ),
-        h("li", { class: "check check-info", "data-onboarding-codex": "1" }, h("div", { class: "check-body" }, h("strong", null, "4. Codex hooks (Codex를 쓸 때만, 수동)"), h("div", { class: "check-detail" }, codexChecklist(s, ctx)))),
+        h("li", { class: "check check-stack check-info", "data-onboarding-codex": "1" }, h("div", { class: "check-body" }, h("strong", null, "4. Codex hooks (Codex를 쓸 때만, 수동)"), h("div", { class: "check-detail" }, codexChecklist(s, ctx)))),
         checkRow(
           paired ? true : canPair ? null : false,
           "5. 기기 추가",

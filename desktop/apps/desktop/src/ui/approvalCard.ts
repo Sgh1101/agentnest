@@ -42,6 +42,7 @@ export class ApprovalCard {
   private deliveryEl!: HTMLElement;
   private expiredEl!: HTMLElement;
   private checkbox: HTMLInputElement | null = null;
+  private gateHintEl!: HTMLElement;
 
   constructor(
     approval: ApprovalPending,
@@ -107,15 +108,27 @@ export class ApprovalCard {
         h("div", { class: "label" }, "명령"),
         h("pre", { class: "code", "data-command-preview": "1" }, truncate(visualize(full), COMMAND_PREVIEW_CHARS)),
         full.length > COMMAND_PREVIEW_CHARS ? h("div", { class: "hint" }, `전체 ${full.length}자 중 일부만 보여요.`) : null,
+        // Critical requests re-show the whole command below; for the rest, make the hidden tail reachable.
+        full.length > COMMAND_PREVIEW_CHARS && gate !== "hold_and_reconfirm"
+          ? h("details", { "data-command-expanded-block": "1" }, h("summary", null, "전체 명령 보기"), h("pre", { class: "code code-full", "data-command-expanded": "1" }, visualize(full)))
+          : null,
       );
     }
-    if (d.cwd_hint) this.add(h("div", { class: "hint" }, `위치: ${safeText(d.cwd_hint, 120)}`));
+    if (d.cwd_hint) this.add(h("div", { class: "hint", title: visualize(d.cwd_hint) }, `위치: ${safeText(d.cwd_hint, 120)}`));
     if (d.mcp_server) this.add(h("div", { class: "hint" }, `MCP 서버: ${safeText(d.mcp_server, 80)}`));
     if (d.file_paths.length > 0) {
       const shown = d.file_paths.slice(0, MAX_PATHS_SHOWN);
+      const rest = d.file_paths.slice(MAX_PATHS_SHOWN);
+      // `title` carries the full path for hover; the visible text is length-limited and wraps.
+      const item = (p: string): HTMLElement => h("li", { title: visualize(p) }, safeText(p, 200));
       this.add(
         h("div", { class: "label" }, "대상 파일"),
-        h("ul", { class: "paths" }, ...shown.map((p) => h("li", null, safeText(p, 200))), d.file_paths.length > shown.length ? h("li", { class: "hint" }, `외 ${d.file_paths.length - shown.length}개`) : null),
+        h(
+          "ul",
+          { class: "paths" },
+          ...shown.map(item),
+          rest.length > 0 ? h("li", { class: "paths-more" }, h("details", null, h("summary", { class: "hint" }, `외 ${rest.length}개 더 보기`), h("ul", { class: "paths" }, ...rest.map(item)))) : null,
+        ),
       );
     }
     if (d.diff_preview) {
@@ -127,7 +140,7 @@ export class ApprovalCard {
     if (d.truncated) this.add(h("div", { class: "hint" }, "내용이 길어 일부만 보여요."));
 
     if (a.risk.reasons_ko.length > 0) {
-      this.add(h("ul", { class: "reasons" }, ...a.risk.reasons_ko.map((r) => h("li", null, safeText(r, 120)))));
+      this.add(h("div", { class: "reasons-box" }, h("div", { class: "label" }, "위험하다고 본 이유"), h("ul", { class: "reasons" }, ...a.risk.reasons_ko.map((r) => h("li", null, safeText(r, 120))))));
     }
 
     // Critical: re-show the whole command and require an explicit "I checked" box (desktop.md section 6).
@@ -159,15 +172,19 @@ export class ApprovalCard {
     if (denyMeansStop(a)) this.add(h("div", { class: "hint" }, "이 요청은 거부하면 작업이 중단돼요."));
     this.add(this.expiredEl);
 
-    this.handoffBtn = h("button", { type: "button", class: "btn", "data-action": "handoff", onClick: () => void this.handoff() }, "로컬로 처리");
-    const actions = h("div", { class: "actions" }, this.handoffBtn);
+    this.handoffBtn = h("button", { type: "button", class: "btn btn-decision", "data-action": "handoff", onClick: () => void this.handoff() }, "로컬로 처리");
+    // Tab order: safe actions first, allow last and visually separated.
+    const safe = h("div", { class: "actions-safe" }, this.handoffBtn);
+    const actions = h("div", { class: "actions" }, safe);
     for (const dec of ["deny_and_stop", "deny", "allow"] as const) {
       if (!a.allowed_decisions.includes(dec)) continue;
       const btn = this.makeDecisionButton(dec);
       this.buttons.set(dec, btn);
-      actions.append(btn);
+      if (dec === "allow") actions.append(h("div", { class: "actions-allow" }, btn));
+      else safe.append(btn);
     }
-    this.add(actions);
+    this.gateHintEl = h("div", { class: "gate-hint", "data-gate-hint": "1", hidden: true }, "‘내용을 확인했어요’에 체크하면 허용 버튼을 길게 눌러 진행할 수 있어요.");
+    this.add(actions, this.gateHintEl);
   }
 
   private label(dec: Decision, mode: "click" | "hold"): string {
@@ -177,8 +194,8 @@ export class ApprovalCard {
 
   private makeDecisionButton(dec: Decision): HTMLButtonElement {
     const av = decisionAvailability(this.approval, dec, this.ui, this.ctx.clock());
-    const kind = dec === "allow" ? "btn-primary" : "btn-danger";
-    const btn = h("button", { type: "button", class: `btn ${kind}${av.mode === "hold" ? " btn-hold" : ""}`, "data-decision": dec, "data-mode": av.mode }, this.label(dec, av.mode));
+    const kind = dec === "allow" ? "btn-allow" : dec === "deny" ? "btn-deny" : "btn-deny-stop";
+    const btn = h("button", { type: "button", class: `btn btn-decision ${kind}${av.mode === "hold" ? " btn-hold" : ""}`, "data-decision": dec, "data-mode": av.mode }, this.label(dec, av.mode));
     if (av.mode === "click") {
       btn.addEventListener("click", () => void this.perform(dec, false));
       return btn;
@@ -221,6 +238,10 @@ export class ApprovalCard {
       btn.title = av.blockedReason === "reconfirm" ? "아래 '내용을 확인했어요'를 먼저 체크하세요" : "";
     }
     this.handoffBtn.disabled = expired || this.ui.busy;
+    // Say why Allow is greyed out instead of leaving it to a tooltip.
+    const allow = this.buttons.get("allow");
+    const reconfirmBlocked = allow !== undefined && !expired && decisionAvailability(this.approval, "allow", this.ui, nowMs).blockedReason === "reconfirm";
+    this.gateHintEl.hidden = !reconfirmBlocked;
   }
 
   private async perform(dec: Decision, gatePassed: boolean): Promise<void> {

@@ -23,6 +23,25 @@ export function openModal(root: HTMLElement, opts: { title: string; labelId: str
     opts.onClose?.();
   };
   function onKey(e: KeyboardEvent): void {
+    // Keep keyboard focus inside the dialog while it is open (Tab / Shift+Tab wrap around).
+    if (e.key === "Tab") {
+      const items = Array.from(dialog.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])")).filter((x) => !x.hasAttribute("disabled"));
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (first === undefined || last === undefined) {
+        e.preventDefault();
+      } else if (!dialog.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.stopPropagation();
       if (opts.dismissable) close();

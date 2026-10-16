@@ -20,7 +20,7 @@ function manualStep(ctx: ViewCtx, step: CodexOnboardingStep, done: boolean, titl
   const box = h("input", { type: "checkbox", "data-codex-step": step, "data-fid": `codex-step-${step}` });
   box.checked = done;
   box.addEventListener("change", () => void ctx.controller.toggleCodexStep(step));
-  return h("li", { class: `check ${done ? "check-ok" : "check-pending"}` }, h("label", { class: "check-label" }, box, " ", h("strong", null, title)), h("div", { class: "check-detail" }, ...body));
+  return h("li", { class: `check check-stack ${done ? "check-ok" : "check-pending"}` }, h("label", { class: "check-label" }, box, " ", h("strong", null, title)), h("div", { class: "check-detail" }, ...body));
 }
 
 export function codexChecklist(state: AppState, ctx: ViewCtx): HTMLElement {
@@ -46,13 +46,13 @@ export function codexChecklist(state: AppState, ctx: ViewCtx): HTMLElement {
     ]),
     h(
       "li",
-      { class: `check ${lastCodex !== null ? "check-ok" : "check-pending"}`, "data-codex-first-event": "1" },
+      { class: `check check-stack ${lastCodex !== null ? "check-ok" : "check-pending"}`, "data-codex-first-event": "1" },
       h("strong", null, lastCodex !== null ? "첫 이벤트를 받았어요" : "첫 이벤트 수신 확인"),
       h("div", { class: "check-detail" }, lastCodex !== null ? `마지막 수신: ${relativeKo(lastCodex, ctx.clock())}` : "Codex에서 명령을 하나 실행하면 여기에 표시돼요."),
     ),
     h(
       "li",
-      { class: "check check-info" },
+      { class: "check check-stack check-info" },
       h("strong", null, "상태"),
       h(
         "div",

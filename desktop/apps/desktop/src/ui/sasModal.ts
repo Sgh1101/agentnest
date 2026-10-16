@@ -50,6 +50,8 @@ export class SasModal {
       ],
     });
 
+    // Initial focus on the safe choice: a stray Enter/Space rejects instead of approving.
+    this.rejectBtn.focus();
     this.timer = setInterval(() => this.refresh(), 250);
     this.refresh();
   }
