@@ -1,4 +1,2 @@
 # glob [scale%] [colors]
-kongi_gallery_light 60
-kongi_gallery_dark 60
-kongi_anim_* 40
+* 45 64
