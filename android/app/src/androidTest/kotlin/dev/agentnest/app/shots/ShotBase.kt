@@ -59,14 +59,16 @@ object ShotFiles {
     }
 
     /**
-     * Streams the bytes into [PUBLIC_DIR] through a shell process (`cat > file`). Gradle uninstalls the app when the run
+     * Streams the bytes into [PUBLIC_DIR] through a shell process (`dd of=file`). Gradle uninstalls the app when the run
      * ends, which deletes the app's own storage, and the shell cannot read the app's external files directory on
      * recent Android versions; /data/local/tmp survives and `adb pull` can read it.
      */
     private fun pushToShell(fileName: String, bytes: ByteArray) {
         try {
             val ui = InstrumentationRegistry.getInstrumentation().uiAutomation
-            val fds = ui.executeShellCommandRw("sh -c 'mkdir -p $PUBLIC_DIR && cat > $PUBLIC_DIR/$fileName'")
+            // The command string is split on spaces (no shell, no quotes), hence plain `mkdir` and `dd of=`.
+            ParcelFileDescriptor.AutoCloseInputStream(ui.executeShellCommand("mkdir -p $PUBLIC_DIR")).use { it.readBytes() }
+            val fds = ui.executeShellCommandRw("dd of=$PUBLIC_DIR/$fileName")
             ParcelFileDescriptor.AutoCloseOutputStream(fds[1]).use { it.write(bytes) }
             ParcelFileDescriptor.AutoCloseInputStream(fds[0]).use { it.readBytes() }
         } catch (t: Throwable) {

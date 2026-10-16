@@ -21,7 +21,9 @@ status=0
 ./gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain || status=$?
 
 adb pull /data/local/tmp/agentnest-shots/. "$OUT" || echo "adb pull failed"
-adb logcat -d -s AgentNestShots:V | tail -n 40 || true
+adb logcat -d -s AgentNestShots:V > "$OUT/../shots-logcat.txt" || true
+grep -c ' saved ' "$OUT/../shots-logcat.txt" || true
+grep -E 'FAILED|failed|E AgentNestShots' "$OUT/../shots-logcat.txt" | cut -c1-300 | head -40 || true
 echo "$status" > "$OUT/gradle-exit.txt"
 echo "gradle exit code: $status"
 ls "$OUT" | wc -l
