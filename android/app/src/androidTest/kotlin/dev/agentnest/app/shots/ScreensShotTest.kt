@@ -5,14 +5,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
-import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
-import androidx.compose.ui.test.and
 import androidx.compose.ui.test.hasClickAction
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.agentnest.app.approval.AuthAvailability

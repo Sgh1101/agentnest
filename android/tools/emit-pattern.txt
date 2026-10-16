@@ -1,0 +1,3 @@
+# glob [scale%]
+kongi_gallery_light 60
+kongi_gallery_dark 60

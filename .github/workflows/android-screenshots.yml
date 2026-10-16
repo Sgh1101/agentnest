@@ -54,6 +54,10 @@ jobs:
           echo "png count: ${#files[@]}"
           echo "gradle exit: $(cat android/app/build/screenshots/gradle-exit.txt 2>/dev/null || echo unknown)"
 
+      - name: print selected screenshots to the log
+        if: always()
+        run: bash android/tools/emit-shots.sh
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
