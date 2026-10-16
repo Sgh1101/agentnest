@@ -88,9 +88,10 @@ async fn hooks_http_token_mismatch_is_401_for_every_wrong_value() {
 #[tokio::test(flavor = "multi_thread")]
 async fn hooks_http_browser_headers_are_forbidden_even_with_a_valid_token() {
     let t = HttpHarness::new().await;
-    let body = bash_hook("PostToolUse", "s1", "toolu_1", "ls")
-        .to_string()
-        .into_bytes();
+    // The guard answers 403 before it reads the body and then closes the connection. An unread request body makes Windows
+    // reset the connection, so the client could see an abort instead of the 403 (flaky on windows-latest). The decision
+    // does not depend on the body, so these requests carry none.
+    let body: Vec<u8> = Vec::new();
     for hdr in [
         ("Origin", "http://evil.example"),
         ("Origin", "null"),
