@@ -210,6 +210,7 @@ adapters/codex/
 ```
 
 - `commandWindows`(alias `command_windows`) 필드는 설정 스키마에 존재 [검증]; 실제 선택 규칙은 C6.
+- 위 `agentnest-hook` 은 문서용 표기다. 설치본의 사이드카는 앱 exe 옆에만 있고 `PATH` 에 없으므로, 데스크톱이 보여 주는 초안은 데몬이 **절대경로(공백이 있으면 큰따옴표)** 와 현재 TTL(`PermissionRequest` timeout = TTL+30)로 채워 돌려준다(`desktop.md` §3 `hooks_status`). 경로를 쓰는 `command` 문자열을 Codex 가 어떤 셸로 해석하는지는 C6 에서 확인한다 [추정].
 - 설치 후 사용자가 Codex TUI `/hooks`에서 **trust**해야 실행된다 [검증: `HookTrustStatus::Untrusted` 기본]. 온보딩에 절차 안내.
 - `PermissionRequest` 핸들러는 동시 실행, 총 타임아웃 `max_permission_request_timeout` [검증] — 값과 설정 키는 C6.
 

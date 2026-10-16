@@ -331,6 +331,10 @@ export interface HooksStatus {
   installed: boolean;
   path: string | null;
   warnings: string[];
+  /** Codex only: hooks.json draft the daemon built from the real hook program path and the current TTL. */
+  codex_draft: string | null;
+  /** Codex only: the doctor command line with the real hook program path. */
+  doctor_command: string | null;
 }
 
 export interface CodexProbe {
@@ -430,6 +434,11 @@ export interface LinkEvent {
   remote_approval_paused: boolean;
 }
 
+/** Shell-generated: the event pump lost `missed` daemon events, so the UI must re-read its state. */
+export interface ResyncEvent {
+  missed: number;
+}
+
 export type DaemonEvent =
   | { kind: "event"; payload: AgentEvent[] }
   | { kind: "session_state"; payload: SessionState }
@@ -437,6 +446,7 @@ export type DaemonEvent =
   | { kind: "device"; payload: DeviceEvent }
   | { kind: "pairing"; payload: PairingEvent }
   | { kind: "adapter"; payload: AdapterStatus }
-  | { kind: "link"; payload: LinkEvent };
+  | { kind: "link"; payload: LinkEvent }
+  | { kind: "resync"; payload: ResyncEvent };
 
 export const DAEMON_EVENT_NAME = "daemon-event";

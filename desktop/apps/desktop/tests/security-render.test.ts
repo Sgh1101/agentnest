@@ -100,7 +100,7 @@ describe("XSS: every daemon-provided string is rendered as text", () => {
       approvals_history: [{ request_id: "ar_h", title: EVIL, tool_name: EVIL, risk_level: "low", outcome: "allowed", resolved_by: "phone", resolved_device_name: EVIL, resolved_at: "2026-10-15T12:00:00Z" }],
       devices_list: [device],
       events_recent: [{ event_id: "e", seq: 1, ts: "2026-10-15T12:00:00Z", agent_kind: "claude_code", session_key: session.session_key, kind: "k", category: "tool", severity: "info", summary: { headline: EVIL }, redacted: false }],
-      hooks_status: { installed: true, path: EVIL, warnings: [EVIL] },
+      hooks_status: { installed: true, path: EVIL, warnings: [EVIL], codex_draft: null, doctor_command: null },
       codex_probe: { socket_path: EVIL, reachable: true, user_agent: EVIL, threads: 1 },
       settings_get: SETTINGS_WIRE,
       logs_tail: [EVIL],

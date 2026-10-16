@@ -104,7 +104,7 @@ desktop/apps/desktop/                          # 프런트엔드(TypeScript stri
 | `approval_handoff_local` | `(request_id)` → `()` | **"로컬로 처리"**: 즉시 빈 2xx, `handed_off_local`(resolved_by=desktop). 위험 등급과 무관하게 항상 허용(결정을 만들지 않으므로 안전) |
 | `approval_decide_local` | `(request_id, decision, tool_input_sha256, confirm_ack: bool, reason?)` → `()` | 데스크톱 허용/거부. **폰과 같은 브로커 전이**(actor=desktop, 감사). 두 번째 allow 경로 아님. 검증은 `security.md` §6.2.1: 2·3·5(카드의 `tool_input_sha256` 에코)·6·7 필수, `risk.extra_confirmation != none`이면 `confirm_ack == true` 필수(`high`: 길게 누르기, `critical`: 명령 전체 재표시 + 확인 체크 — UI가 거친 뒤에만 true), 1·4·9 해당 없음. 실패는 폰과 같은 사유 코드 |
 | `remote_approval_pause` / `_resume` | → `()` | 트레이 토글과 동일 |
-| `hooks_install` / `hooks_uninstall` / `hooks_status` | `{agent: "claude_code"\|"codex", mode: "http"\|"cli"}` → `{installed, path, warnings[]}` | Claude: settings.json 병합. Codex: C6 전까지 안내만 |
+| `hooks_install` / `hooks_uninstall` / `hooks_status` | `{agent: "claude_code"\|"codex", mode: "http"\|"cli"}` → `{installed, path, warnings[], codex_draft, doctor_command}` | Claude: settings.json 병합. Codex: C6 전까지 안내만 — `codex_draft`(hooks.json 초안)와 `doctor_command`는 **데몬이** 설치된 훅 프로그램의 절대경로(앱 exe 옆 사이드카, `PATH`에 없음; 공백이 있으면 큰따옴표)와 현재 TTL(`PermissionRequest` timeout = TTL+30)로 만들어 돌려준다. 프런트엔드는 프로그램 이름·timeout 상수를 갖지 않는다. Claude 응답에서는 둘 다 `null` |
 | `codex_probe` | → `{socket_path, reachable, user_agent?, threads}` | Phase 0 진단 |
 | `settings_get` / `settings_set` | 키 화이트리스트(`security.md` §9) | 금지 필드는 존재하지 않음 |
 | `logs_open_dir` | → `()` | opener `reveal_item_in_dir` |

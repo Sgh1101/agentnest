@@ -49,14 +49,50 @@ pub fn hooks_json_draft(hook_cli: &str, hook_cli_windows: &str, approval_ttl_s: 
     json!({ "hooks": Value::Object(hooks) })
 }
 
+/// The program of a hook command line: a bare name stays as it is, a path (the installed sidecar lives next to the app
+/// executable and is **not** on `PATH`) is wrapped in double quotes so that spaces in the path survive.
+/// UNVERIFIED (Phase 0 C6): how Codex splits `command` / `commandWindows`.
+pub fn quote_program(program: &str) -> String {
+    let is_path = program.contains(['\\', '/', ' ', '\t']);
+    if is_path {
+        format!("\"{}\"", program.replace('"', "\\\""))
+    } else {
+        program.to_owned()
+    }
+}
+
+/// The Windows form of the hook program: the same path, or the bare name with `.exe`.
+pub fn windows_program(hook_cli: &str) -> String {
+    if hook_cli.to_ascii_lowercase().ends_with(".exe") {
+        hook_cli.to_owned()
+    } else {
+        format!("{hook_cli}.exe")
+    }
+}
+
+/// The draft for the configured hook program (`hook_cli` = the absolute sidecar path when it exists next to the app,
+/// else the bare name) and the current approval TTL; programs are quoted where needed.
+pub fn hooks_json_draft_for(hook_cli: &str, approval_ttl_s: u32) -> Value {
+    hooks_json_draft(
+        &quote_program(hook_cli),
+        &quote_program(&windows_program(hook_cli)),
+        approval_ttl_s,
+    )
+}
+
+/// The `doctor` command line the manual steps tell the user to run.
+pub fn doctor_command(hook_cli: &str) -> String {
+    format!("{} doctor", quote_program(&windows_program(hook_cli)))
+}
+
 /// The manual onboarding steps shown on the desktop until C6 is verified (docs/desktop.md 6.1 item 4).
-pub fn manual_steps_ko() -> Vec<&'static str> {
+pub fn manual_steps_ko(doctor_command: &str) -> Vec<String> {
     vec![
-        "아래 hooks.json 초안을 복사해 %USERPROFILE%\\.codex\\hooks.json 에 저장하세요. (최상위 구조는 Phase 0 C6 확인 전의 초안이에요)",
-        "Codex 에서 /hooks 를 열어 AgentNest 항목을 신뢰(trust)하세요. 신뢰하지 않은 훅은 실행되지 않아요.",
-        "터미널에서 `agentnest-hook doctor` 로 데몬 도달성과 토큰을 점검하세요.",
-        "Codex 에서 명령을 하나 실행해 첫 이벤트가 오는지 확인하세요.",
-        "Codex 승인: 관찰만 (C6 확인 전) · 리뷰 결과: 수집 불가 (hooks 모드)",
+        "아래 hooks.json 초안을 복사해 %USERPROFILE%\\.codex\\hooks.json 에 저장하세요. (최상위 구조는 Phase 0 C6 확인 전의 초안이에요)".to_owned(),
+        "Codex 에서 /hooks 를 열어 AgentNest 항목을 신뢰(trust)하세요. 신뢰하지 않은 훅은 실행되지 않아요.".to_owned(),
+        format!("터미널에서 `{doctor_command}` 로 데몬 도달성과 토큰을 점검하세요."),
+        "Codex 에서 명령을 하나 실행해 첫 이벤트가 오는지 확인하세요.".to_owned(),
+        "Codex 승인: 관찰만 (C6 확인 전) · 리뷰 결과: 수집 불가 (hooks 모드)".to_owned(),
     ]
 }
 
@@ -144,10 +180,42 @@ mod tests {
 
     #[test]
     fn manual_steps_mention_the_trust_step_and_the_observe_only_state() {
-        let steps = manual_steps_ko().join("\n");
+        let steps = manual_steps_ko("agentnest-hook.exe doctor").join("\n");
         assert!(steps.contains("/hooks"));
         assert!(steps.contains("관찰만"));
-        assert!(steps.contains("doctor"));
+        assert!(steps.contains("`agentnest-hook.exe doctor`"));
+    }
+
+    #[test]
+    fn an_installed_sidecar_path_is_used_quoted_and_the_timeout_follows_the_ttl() {
+        let cli = "C:\\Users\\Kim Lee\\AppData\\Local\\AgentNest\\agentnest-hook.exe";
+        let v = hooks_json_draft_for(cli, 90);
+        let hooks = v["hooks"].as_object().unwrap();
+        for (event, entry) in hooks {
+            let h = &entry[0]["hooks"][0];
+            let quoted = format!("\"{cli}\" codex");
+            assert_eq!(h["command"], quoted.as_str(), "{event}");
+            assert_eq!(h["commandWindows"], quoted.as_str(), "{event}");
+        }
+        assert_eq!(hooks["PermissionRequest"][0]["hooks"][0]["timeout"], 120);
+        assert_eq!(
+            doctor_command(cli),
+            format!("\"{cli}\" doctor"),
+            "the doctor line uses the same absolute path"
+        );
+        // the document is still valid JSON after the path went through it
+        let text = serde_json::to_string_pretty(&v).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), v);
+    }
+
+    #[test]
+    fn the_bare_fallback_name_keeps_the_documented_draft() {
+        let v = hooks_json_draft_for("agentnest-hook", 120);
+        let h = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(h["command"], "agentnest-hook codex");
+        assert_eq!(h["commandWindows"], "agentnest-hook.exe codex");
+        assert_eq!(doctor_command("agentnest-hook"), "agentnest-hook.exe doctor");
+        assert_eq!(quote_program("a\"b c"), "\"a\\\"b c\"");
     }
 
     #[cfg(not(feature = "codex-hooks-approval"))]

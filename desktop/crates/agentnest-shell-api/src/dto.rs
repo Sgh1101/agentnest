@@ -155,6 +155,10 @@ pub struct HooksStatusDto {
     pub path: Option<String>,
     /// Korean warnings / instructions.
     pub warnings: Vec<String>,
+    /// Codex: the `hooks.json` draft built by the daemon from the real hook program path and the current TTL.
+    pub codex_draft: Option<String>,
+    /// Codex: the `doctor` command line with the real hook program path.
+    pub doctor_command: Option<String>,
 }
 
 impl From<HooksReport> for HooksStatusDto {
@@ -163,6 +167,8 @@ impl From<HooksReport> for HooksStatusDto {
             installed: r.installed,
             path: (!r.path.is_empty()).then_some(r.path),
             warnings: r.warnings,
+            codex_draft: r.codex_draft,
+            doctor_command: r.doctor_command,
         }
     }
 }
@@ -355,11 +361,19 @@ mod tests {
             path: String::new(),
             warnings: vec!["w".into()],
             hook_timeout_s: None,
+            codex_draft: Some("{}".into()),
+            doctor_command: Some("\"C:\\a b\\agentnest-hook.exe\" doctor".into()),
         };
         let v = serde_json::to_value(HooksStatusDto::from(r)).unwrap();
         assert_eq!(
             v,
-            json!({"installed": false, "path": null, "warnings": ["w"]})
+            json!({
+                "installed": false,
+                "path": null,
+                "warnings": ["w"],
+                "codex_draft": "{}",
+                "doctor_command": "\"C:\\a b\\agentnest-hook.exe\" doctor"
+            })
         );
     }
 

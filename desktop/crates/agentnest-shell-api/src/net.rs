@@ -220,9 +220,26 @@ pub fn validate_exe_path(exe: &str) -> Result<(), PathError> {
     Ok(())
 }
 
-/// A PowerShell single-quoted string literal.
+/// PowerShell treats the ASCII apostrophe **and** U+2018..U+201B (typographic single quotes) as single-quote
+/// characters, so each of them can end a single-quoted literal.
+fn is_ps_single_quote(c: char) -> bool {
+    matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}')
+}
+
+/// A PowerShell single-quoted string literal. Every single-quote character (see [`is_ps_single_quote`]) is doubled, so
+/// a path such as `C:\Users\O’Brien\a.exe` (a legitimate user name) cannot end the literal early. The script that
+/// uses this literal runs elevated after a UAC prompt, so a parse error or an injection here would matter.
 fn ps_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        out.push(c);
+        if is_ps_single_quote(c) {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// The `netsh` argument string that creates the rule (docs/security.md 3.1).
@@ -691,6 +708,54 @@ mod tests {
         assert_eq!(ps_quote("C:\\O'Neil\\a.exe"), "'C:\\O''Neil\\a.exe'");
         let q = firewall_query_script("C:\\O'Neil\\a.exe");
         assert!(q.contains("$exe = 'C:\\O''Neil\\a.exe'"));
+    }
+
+    /// Reads a PowerShell single-quoted literal the way the PowerShell tokenizer does: a single-quote character
+    /// followed by another one is an escaped quote, otherwise it ends the literal. Returns the value and the rest.
+    fn ps_read_literal(src: &str) -> (String, String) {
+        let mut chars = src.chars().peekable();
+        assert!(chars.next().is_some_and(is_ps_single_quote), "{src}");
+        let mut value = String::new();
+        while let Some(c) = chars.next() {
+            if is_ps_single_quote(c) {
+                match chars.peek() {
+                    Some(n) if is_ps_single_quote(*n) => {
+                        value.push(*n);
+                        chars.next();
+                    }
+                    _ => return (value, chars.collect()),
+                }
+            } else {
+                value.push(c);
+            }
+        }
+        panic!("unterminated literal: {src}");
+    }
+
+    #[test]
+    fn typographic_single_quotes_in_a_user_name_cannot_break_out_of_the_literal() {
+        // `O’Brien` is a real user name; U+2018..U+201B are single quotes for PowerShell
+        for q in ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
+            let exe = format!("C:\\Users\\O{q}Brien\\AppData\\AgentNest.exe");
+            validate_exe_path(&exe).expect("a legitimate path stays valid");
+            let lit = ps_quote(&exe);
+            let (value, rest) = ps_read_literal(&lit);
+            assert_eq!(value, exe, "{q:?} round-trips through the tokenizer");
+            assert!(rest.is_empty(), "{q:?}: nothing after the literal: {rest:?}");
+            // an attacker-shaped name: the quote is followed by code
+            let evil = format!("C:\\a{q}; calc; {q}b.exe");
+            let (value, rest) = ps_read_literal(&ps_quote(&evil));
+            assert_eq!(value, evil);
+            assert!(rest.is_empty(), "{rest:?}");
+        }
+        let script = firewall_query_script("C:\\Users\\O\u{2019}Brien\\a.exe");
+        assert!(script.contains("$exe = 'C:\\Users\\O\u{2019}\u{2019}Brien\\a.exe'"));
+        // the same literal is what the elevated script embeds for the netsh arguments
+        let inner = elevated_inner_script(&[netsh_add_rule_args(
+            "C:\\Users\\O\u{2018}Brien\\a.exe",
+            47832,
+        )]);
+        assert!(inner.contains("O\u{2018}\u{2018}Brien"), "{inner}");
     }
 
     #[test]

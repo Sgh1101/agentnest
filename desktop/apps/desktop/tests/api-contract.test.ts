@@ -128,9 +128,9 @@ describe("TauriBackend: exact command names, argument keys and parsing", () => {
       events_recent: [],
       approvals_pending: [sampleApproval()],
       approvals_history: [],
-      hooks_install: { installed: true, path: "p", warnings: [] },
-      hooks_uninstall: { installed: false, path: null, warnings: [] },
-      hooks_status: { installed: true, path: "p", warnings: [] },
+      hooks_install: { installed: true, path: "p", warnings: [], codex_draft: null, doctor_command: null },
+      hooks_uninstall: { installed: false, path: null, warnings: [], codex_draft: null, doctor_command: null },
+      hooks_status: { installed: true, path: "p", warnings: [], codex_draft: null, doctor_command: null },
       codex_probe: { socket_path: null, reachable: false, threads: 0 },
       settings_get: SETTINGS_WIRE,
       settings_set: SETTINGS_WIRE,
@@ -245,8 +245,11 @@ describe("daemon-event payload shapes", () => {
       { kind: "pairing", payload: { op: "ended", pairing_id: "p_1", reason: "expired" } },
       { kind: "adapter", payload: { agent_kind: "codex", status: "connected", mode: "hooks_cli", updated_at: "2026-10-15T00:00:00Z" } },
       { kind: "link", payload: { enabled: true, remote_approval_paused: false } },
+      { kind: "resync", payload: { missed: 12 } },
     ];
     for (const c of cases) expect(parseDaemonEvent(c), JSON.stringify(c).slice(0, 60)).not.toBeNull();
+    expect(parseDaemonEvent({ kind: "resync", payload: { missed: 12 } })).toEqual({ kind: "resync", payload: { missed: 12 } });
+    expect(() => parseDaemonEvent({ kind: "resync", payload: "nope" })).toThrow();
     // single event (not array) is tolerated
     const single = parseDaemonEvent({ kind: "event", payload: (cases[0] as { payload: unknown[] }).payload[0] });
     expect(single?.kind === "event" && single.payload.length).toBe(1);

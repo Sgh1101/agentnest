@@ -58,6 +58,8 @@ interface ActivePairing {
 
 const PAIRING_TTL_MS = 120_000;
 const CLAUDE_HOOK_TIMEOUT_DEFAULT_S = 150;
+/** The demo's installed sidecar location (the real one comes from the daemon). */
+const MOCK_HOOK_CLI = "C:\\Program Files\\AgentNest\\agentnest-hook.exe";
 
 function fakeQrSvg(seed: number): string {
   const n = 25;
@@ -147,6 +149,11 @@ export class MockBackend implements Backend {
   pushApproval(approval: ApprovalPending): void {
     this.approvals = [...this.approvals.filter((a) => a.request_id !== approval.request_id), approval];
     this.emit({ kind: "approval", payload: { op: "requested", approval } });
+  }
+
+  /** Adds an approval without telling subscribers: simulates an event the UI never received (pump lag). */
+  addApprovalSilently(approval: ApprovalPending): void {
+    this.approvals = [...this.approvals.filter((a) => a.request_id !== approval.request_id), approval];
   }
 
   pushEvents(events: AgentEvent[]): void {
@@ -403,27 +410,37 @@ export class MockBackend implements Backend {
   hooksInstall(args: HooksArgs): Promise<HooksStatus> {
     this.rec(COMMANDS.hooksInstall, { ...args });
     if (args.agent === "codex") {
-      return Promise.resolve({ installed: false, path: null, warnings: ["Codex hooks 설치기는 아직 꺼져 있어요. 안내에 따라 직접 설치해 주세요."] });
+      return Promise.resolve({ installed: false, path: null, warnings: ["Codex hooks 설치기는 아직 꺼져 있어요. 안내에 따라 직접 설치해 주세요."], ...this.codexGuide() });
     }
     this.claudeHooksInstalled = true;
     this.hookTimeoutS = this.settings["approval.ttl_s"] + 30;
-    return Promise.resolve({ installed: true, path: "C:\\Users\\me\\.claude\\settings.json", warnings: [] });
+    return Promise.resolve({ installed: true, path: "C:\\Users\\me\\.claude\\settings.json", warnings: [], codex_draft: null, doctor_command: null });
   }
 
   hooksUninstall(args: HooksArgs): Promise<HooksStatus> {
     this.rec(COMMANDS.hooksUninstall, { ...args });
     if (args.agent === "claude_code") this.claudeHooksInstalled = false;
-    return Promise.resolve({ installed: false, path: null, warnings: [] });
+    return Promise.resolve({ installed: false, path: null, warnings: [], codex_draft: null, doctor_command: null });
   }
 
   hooksStatus(args: HooksArgs): Promise<HooksStatus> {
     this.rec(COMMANDS.hooksStatus, { ...args });
-    if (args.agent === "codex") return Promise.resolve({ installed: false, path: null, warnings: ["Codex hooks는 수동 설치예요."] });
+    if (args.agent === "codex") return Promise.resolve({ installed: false, path: null, warnings: ["Codex hooks는 수동 설치예요."], ...this.codexGuide() });
     return Promise.resolve({
       installed: this.claudeHooksInstalled,
       path: this.claudeHooksInstalled ? "C:\\Users\\me\\.claude\\settings.json" : null,
       warnings: [],
+      codex_draft: null,
+      doctor_command: null,
     });
+  }
+
+  /** Like the daemon: the draft and the doctor line carry the absolute hook program path and follow the TTL. */
+  private codexGuide(): { codex_draft: string; doctor_command: string } {
+    const program = `"${MOCK_HOOK_CLI}"`;
+    const entry = (timeout: number): unknown => [{ matcher: "", hooks: [{ type: "command", command: `${program} codex`, commandWindows: `${program} codex`, timeout }] }];
+    const hooks = { SessionStart: entry(5), PermissionRequest: entry(this.settings["approval.ttl_s"] + 30), SessionEnd: entry(3) };
+    return { codex_draft: JSON.stringify({ hooks }, null, 2), doctor_command: `${program} doctor` };
   }
 
   codexProbe(): Promise<CodexProbe> {

@@ -207,6 +207,9 @@ export function reduceDaemonEvent(state: AppState, ev: DaemonEvent, nowMs: numbe
       return { devices: upsertBy(state.devices, ev.payload.device, (d) => d.device_id === ev.payload.device.device_id) };
     case "adapter":
       return { adapters: { ...state.adapters, [ev.payload.agent_kind]: ev.payload } };
+    case "resync":
+      // handled by the controller (it re-reads approvals, sessions, devices and status); nothing to derive here
+      return {};
     case "link": {
       const patch: Partial<AppState> = {};
       if (state.status !== null) {

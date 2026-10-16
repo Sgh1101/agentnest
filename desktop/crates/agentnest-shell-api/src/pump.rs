@@ -31,6 +31,13 @@ pub trait UiSink: Send + Sync + 'static {
     fn tray_changed(&self);
 }
 
+/// The `resync` envelope: the pump lost `missed` daemon events (a slow consumer of the broadcast channel), so the UI
+/// cannot trust what it has seen — most importantly a missed approval request would never show up as a card. The UI
+/// answers by re-reading the approvals, sessions, devices and status (`desktop.md` 3.1).
+pub fn resync_envelope(missed: u64) -> Envelope {
+    Envelope::new("resync", serde_json::json!({ "missed": missed }))
+}
+
 /// Collects `event` payload arrays and releases them as one envelope.
 #[derive(Debug, Default)]
 pub struct EventBatcher {
@@ -151,8 +158,11 @@ pub async fn run_event_pump_with(
             received = rx.recv() => match received {
                 Ok(ev) => pump.handle(ev).await,
                 Err(RecvError::Lagged(missed)) => {
-                    // the UI missed `missed` events; it re-reads state on the next user action
+                    // the UI missed `missed` events (possibly an approval request or a SAS prompt): tell it to
+                    // re-read its state instead of waiting for the next user action
                     tracing::warn!(missed, "the event pump lagged behind the daemon");
+                    pump.flush();
+                    pump.sink.emit(&resync_envelope(missed));
                     pump.tray_dirty = true;
                 }
                 Err(RecvError::Closed) => {
@@ -181,6 +191,14 @@ mod tests {
         assert_eq!(env.kind, "event");
         assert_eq!(env.payload, json!([{"seq": 1}, {"seq": 2}, {"seq": 3}]));
         assert!(b.take().is_none());
+    }
+
+    #[test]
+    fn the_resync_envelope_carries_the_number_of_missed_events() {
+        let env = resync_envelope(7);
+        assert_eq!(env.kind, "resync");
+        assert_eq!(env.payload, json!({"missed": 7}));
+        assert!(crate::commands::EVENT_KINDS.contains(&env.kind));
     }
 
     #[test]

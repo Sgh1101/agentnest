@@ -357,6 +357,8 @@ fn small_result_payloads_match_their_guards() {
         installed: true,
         path: None,
         warnings: vec![],
+        codex_draft: None,
+        doctor_command: None,
     };
     assert_eq!(
         top_keys(&serde_json::to_value(hooks).unwrap()),

@@ -400,6 +400,50 @@ async fn claude_hooks_install_status_uninstall_follow_the_daemon() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_codex_guide_uses_the_configured_hook_program_and_the_current_ttl() {
+    const CLI: &str = "C:\\Program Files\\AgentNest\\agentnest-hook.exe";
+    let dir = tempfile::tempdir().unwrap();
+    let mut options = DaemonOptions::for_dir(dir.path());
+    options.hook_cli = CLI.to_owned();
+    let daemon = Daemon::start_async(AppConfig::default(), options)
+        .await
+        .expect("daemon start");
+    let api = ShellApi::new(
+        Arc::new(daemon),
+        Arc::new(MemoryUiSettings::default()),
+        Arc::new(FakeNetwork::new()),
+        Arc::new(SystemClock),
+        ShellApiOptions {
+            exe_path: PathBuf::from(EXE),
+            codex_home: None,
+            platform_checks: true,
+            self_connect_timeout: Duration::from_secs(2),
+        },
+    );
+    let st = api.hooks_status(HookAgent::Codex).await.unwrap();
+    let draft: Value = serde_json::from_str(st.codex_draft.as_deref().unwrap()).unwrap();
+    let quoted = format!("\"{CLI}\" codex");
+    let hook = &draft["hooks"]["PermissionRequest"][0]["hooks"][0];
+    assert_eq!(hook["command"], quoted.as_str());
+    assert_eq!(hook["commandWindows"], quoted.as_str());
+    assert_eq!(hook["timeout"], 150, "TTL 120 + 30");
+    assert_eq!(
+        st.doctor_command.as_deref(),
+        Some(format!("\"{CLI}\" doctor").as_str())
+    );
+    assert!(st.warnings.iter().any(|w| w.contains(CLI)), "{:?}", st.warnings);
+    // no bare name from a UI constant: the install call returns the same guide
+    let i = api
+        .hooks_install(HookAgent::Codex, HooksMode::Cli)
+        .await
+        .unwrap();
+    assert_eq!(i.codex_draft, st.codex_draft);
+    // the Claude status carries no Codex draft
+    let c = api.hooks_status(HookAgent::ClaudeCode).await.unwrap();
+    assert!(c.codex_draft.is_none() && c.doctor_command.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn diagnostics_reflect_the_network_and_the_listener() {
     let h = harness().await;
     *h.net.state.lock().unwrap() = FirewallState {
@@ -572,6 +616,41 @@ async fn logs_and_the_codex_probe_read_from_disk() {
     std::fs::create_dir_all(&sock).unwrap();
     std::fs::write(sock.join("app-server-control.sock"), b"").unwrap();
     assert!(h.api.codex_probe().await.unwrap().reachable);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lagging_pump_tells_the_ui_to_resync_instead_of_staying_silent() {
+    let h = harness().await;
+    let rec = Arc::new(Recorder::default());
+    // a tiny channel that overflows before the pump reads anything
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<DaemonEvent>(2);
+    for i in 0..6 {
+        tx.send(DaemonEvent::Link(LinkUiEvent::HostsChanged {
+            addresses: vec![format!("10.0.0.{i}")],
+        }))
+        .unwrap();
+    }
+    let (api, sink) = (h.api.clone(), rec.clone());
+    let pump = tokio::spawn(async move {
+        run_event_pump_with(api, &mut rx, sink, Duration::from_millis(20)).await;
+    });
+    let resync = eventually("resync envelope", || rec.emits("resync").into_iter().next()).await;
+    assert_eq!(resync.payload["missed"], 4, "6 sent, 2 kept");
+    // events after the gap still flow, and the resync came before them
+    let all = rec.all();
+    let resync_at = all
+        .iter()
+        .position(|r| matches!(r, Rec::Emit(e) if e.kind == "resync"))
+        .unwrap();
+    assert!(all[..resync_at]
+        .iter()
+        .all(|r| !matches!(r, Rec::Emit(e) if e.kind == "link")));
+    eventually("the tray is refreshed", || {
+        rec.all().contains(&Rec::Tray).then_some(())
+    })
+    .await;
+    drop(tx);
+    pump.await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

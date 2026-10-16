@@ -37,6 +37,8 @@ export class AppController {
     this.unlisten = await this.backend.onEvent((ev) => {
       this.store.update((s) => reduceDaemonEvent(s, ev, this.clock()));
       if (ev.kind === "device" || ev.kind === "pairing") void this.refreshStatusQuiet();
+      // the pump lost events (possibly an approval request): re-read everything it could have carried
+      if (ev.kind === "resync") void this.refreshAll();
     });
     await this.refreshAll();
     const s = this.store.get().settings;
@@ -53,6 +55,8 @@ export class AppController {
   navigate(view: ViewId): void {
     this.store.set({ view });
     if (view === "logs") void this.refreshLogs();
+    // events can be missed (window hidden, pump lag): a fresh read when the approvals page opens
+    if (view === "approvals") void this.refreshApprovals();
     if (view === "diagnostics" && this.store.get().diagnostics === null) void this.runDiagnostics();
   }
 
@@ -304,6 +308,8 @@ export class AppController {
     if (r.ok) this.store.set({ settings: r.value });
     else await this.refreshSettings();
     await this.refreshStatusQuiet();
+    // the Codex hooks.json draft carries the PermissionRequest timeout (TTL + 30)
+    if (r.ok && key === "approval.ttl_s") await this.refreshHooks("codex");
     return r.ok;
   }
 

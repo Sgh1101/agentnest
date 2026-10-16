@@ -292,6 +292,10 @@ pub struct HooksReport {
     pub warnings: Vec<String>,
     /// Installed `PermissionRequest` timeout (Claude).
     pub hook_timeout_s: Option<u32>,
+    /// Codex: the `hooks.json` draft rendered with the real hook program path and the current approval TTL.
+    pub codex_draft: Option<String>,
+    /// Codex: the `doctor` command line with the real hook program path.
+    pub doctor_command: Option<String>,
 }
 
 /// Device row for the UI (no hashes, no keys).
@@ -1464,7 +1468,31 @@ impl Inner {
             path,
             warnings,
             hook_timeout_s: timeout,
+            codex_draft: None,
+            doctor_command: None,
         }
+    }
+
+    /// The Codex manual-installation guide: steps, the draft and the doctor command, all built from the configured
+    /// hook program (`options.hook_cli`, the absolute sidecar path when the shell found it) and the current TTL.
+    fn codex_guide_report(&self) -> HooksReport {
+        use crate::adapters::codex::install as codex_install;
+        let hook_cli = &self.options.hook_cli;
+        let doctor = codex_install::doctor_command(hook_cli);
+        let draft = serde_json::to_string_pretty(&codex_install::hooks_json_draft_for(
+            hook_cli,
+            self.config().approval.ttl_s,
+        ))
+        .ok();
+        let mut report = self.hooks_report(
+            false,
+            "~/.codex/hooks.json".to_owned(),
+            codex_install::manual_steps_ko(&doctor),
+            None,
+        );
+        report.codex_draft = draft;
+        report.doctor_command = Some(doctor);
+        report
     }
 
     async fn hooks_install(
@@ -1473,13 +1501,7 @@ impl Inner {
         mode: HooksMode,
     ) -> Result<HooksReport, CommandError> {
         match agent {
-            HookAgent::Codex => {
-                let steps = crate::adapters::codex::install::manual_steps_ko()
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect();
-                Ok(self.hooks_report(false, "~/.codex/hooks.json".to_owned(), steps, None))
-            }
+            HookAgent::Codex => Ok(self.codex_guide_report()),
             HookAgent::ClaudeCode => {
                 let path = self
                     .settings_path()
@@ -1572,15 +1594,7 @@ impl Inner {
 
     fn hooks_status(&self, agent: HookAgent) -> Result<HooksReport, CommandError> {
         match agent {
-            HookAgent::Codex => Ok(self.hooks_report(
-                false,
-                "~/.codex/hooks.json".to_owned(),
-                crate::adapters::codex::install::manual_steps_ko()
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect(),
-                None,
-            )),
+            HookAgent::Codex => Ok(self.codex_guide_report()),
             HookAgent::ClaudeCode => {
                 let path = self
                     .settings_path()

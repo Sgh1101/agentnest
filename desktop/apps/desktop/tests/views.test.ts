@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sampleApproval, sampleSession } from "../src/api/samples";
 import { ttlWarning } from "../src/views/integrations";
@@ -159,7 +161,8 @@ describe("views (Korean UI, measured status)", () => {
     const list = q(h.root, "[data-codex-checklist]");
     expect(list.textContent).toContain("초안이에요");
     expect(list.textContent).toContain("/hooks");
-    expect(list.textContent).toContain("agentnest-hook doctor");
+    // the doctor line carries the absolute path the daemon reported, never a bare program name from the UI
+    expect(q(list, "[data-codex-doctor]").textContent).toBe('"C:\\Program Files\\AgentNest\\agentnest-hook.exe" doctor');
     expect(list.textContent).toContain("Codex 승인: 관찰만");
     expect(list.textContent).toContain("리뷰 결과: 수집 불가 (hooks 모드)");
     expect(q(list, "[data-codex-first-event]").className).toContain("check-pending");
@@ -168,6 +171,15 @@ describe("views (Korean UI, measured status)", () => {
     expect(writeText).toHaveBeenCalledTimes(1);
     const copied = (writeText.mock.calls as unknown as string[][])[0]?.[0] ?? "";
     expect(JSON.parse(copied)).toHaveProperty("hooks.PermissionRequest");
+    expect(copied).toBe(h.store.get().hooks.codex?.codex_draft);
+    expect(copied).toContain("Program Files");
+    expect(copied).not.toMatch(/"command": "agentnest-hook/);
+
+    // the draft follows the TTL: PermissionRequest timeout = TTL + 30
+    await h.controller.setSetting("approval.ttl_s", 90);
+    await settle();
+    const draft = JSON.parse(h.store.get().hooks.codex?.codex_draft ?? "{}") as { hooks: { PermissionRequest: Array<{ hooks: Array<{ timeout: number }> }> } };
+    expect(draft.hooks.PermissionRequest[0]?.hooks[0]?.timeout).toBe(120);
 
     const step = q<HTMLInputElement>(h.root, "[data-codex-step=trust]");
     step.checked = true;
@@ -180,6 +192,31 @@ describe("views (Korean UI, measured status)", () => {
     await h.controller.refreshStatusQuiet();
     await settle();
     expect(q(h.root, "[data-codex-first-event]").className).toContain("check-ok");
+  });
+
+  it("a resync event (the pump lagged) makes the UI re-read approvals it never saw", async () => {
+    h = await mountHarness({ settings: { seed: true } });
+    h.mock?.addApprovalSilently(sampleApproval({ id: "ar_missed", level: "high", created_at: new Date(T0).toISOString() }));
+    expect(h.store.get().approvals.map((a) => a.request_id)).not.toContain("ar_missed");
+    h.mock?.emit({ kind: "resync", payload: { missed: 3 } });
+    await settle();
+    expect(h.store.get().approvals.map((a) => a.request_id)).toContain("ar_missed");
+  });
+
+  it("opening the approvals page re-reads the pending approvals", async () => {
+    h = await mountHarness({ settings: { seed: true } });
+    h.mock?.addApprovalSilently(sampleApproval({ id: "ar_quiet", level: "low", created_at: new Date(T0).toISOString() }));
+    expect(h.store.get().approvals).toHaveLength(0);
+    await h.go("approvals");
+    expect(h.store.get().approvals.map((a) => a.request_id)).toEqual(["ar_quiet"]);
+  });
+
+  it("the Codex UI sources hold no bare hook program name or timeout constant", () => {
+    for (const file of ["src/integrations/codexDraft.ts", "src/ui/codexChecklist.ts"]) {
+      const text = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(text, file).not.toContain("agentnest-hook");
+      expect(text, file).not.toMatch(/timeout\s*[:=]\s*\d/);
+    }
   });
 
   it("logs page lists redacted lines and can open the folder", async () => {

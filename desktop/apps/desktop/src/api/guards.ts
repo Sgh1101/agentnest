@@ -441,7 +441,13 @@ export function parseDevice(v: unknown): Device {
 
 export function parseHooksStatus(v: unknown): HooksStatus {
   const r = rec(v, "hooks_status");
-  return { installed: reqBool(r, "installed", "hooks_status"), path: optStr(r, "path"), warnings: strArray(r["warnings"], 16) };
+  return {
+    installed: reqBool(r, "installed", "hooks_status"),
+    path: optStr(r, "path"),
+    warnings: strArray(r["warnings"], 16),
+    codex_draft: optStr(r, "codex_draft"),
+    doctor_command: optStr(r, "doctor_command"),
+  };
 }
 
 export function parseCodexProbe(v: unknown): CodexProbe {
@@ -592,6 +598,8 @@ export function parseDaemonEvent(v: unknown): DaemonEvent | null {
       return { kind, payload: parseAdapterStatus(payload) };
     case "link":
       return { kind, payload: parseLinkEvent(payload) };
+    case "resync":
+      return { kind, payload: { missed: optNum(rec(payload, "resync_event"), "missed") ?? 0 } };
     default:
       return null;
   }

@@ -8,8 +8,9 @@
 /// Name of the Tauri event that carries [`crate::Envelope`]s.
 pub const DAEMON_EVENT_NAME: &str = "daemon-event";
 
-/// The `kind` values of the `daemon-event` envelope.
-pub const EVENT_KINDS: [&str; 7] = [
+/// The `kind` values of the `daemon-event` envelope. `resync` is shell-generated (not a daemon event): the pump lagged
+/// behind the daemon and the UI must re-read the approvals, sessions, devices and status (payload `{"missed": n}`).
+pub const EVENT_KINDS: [&str; 8] = [
     "event",
     "session_state",
     "approval",
@@ -17,6 +18,7 @@ pub const EVENT_KINDS: [&str; 7] = [
     "pairing",
     "adapter",
     "link",
+    "resync",
 ];
 
 /// Every Tauri command, in the order of `COMMANDS` in `backend.ts`.
